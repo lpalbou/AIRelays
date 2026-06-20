@@ -34,7 +34,7 @@ validation:
 
 nav:
   - Home: index.md
-  - Docs Index: README.md
+  - Docs Index: docs-index.md
   - Getting Started: getting-started.md
   - Configuration: configuration.md
   - Security: security.md
