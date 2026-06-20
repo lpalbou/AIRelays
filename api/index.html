@@ -1324,8 +1324,12 @@
 </ul>
 <p>Notes:</p>
 <ul>
+<li>AIRelays preserves the general OpenAI Responses request and response envelopes, but parameter parity is not complete on this route</li>
 <li>upstream storage is forced to <code>false</code></li>
+<li><code>conversation</code> accepts a local conversation id string or <code>{ "id": "..." }</code></li>
 <li>missing instructions are adapted to the verified minimal placeholder <code>"."</code></li>
+<li><code>text.format.type=json_schema</code> is normalized to match the stricter verified subscription-backend schema rules</li>
+<li><code>text.format.type=json_object</code> is rejected as unverified</li>
 <li>non-stream requests are reconstructed from streamed upstream output</li>
 <li>unsupported upstream sampling parameters are omitted before the upstream call; when that happens AIRelays adds <code>x-airelays-ignored-parameters</code></li>
 </ul>

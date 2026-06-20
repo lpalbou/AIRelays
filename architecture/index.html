@@ -1051,7 +1051,7 @@
 
 <h1 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h1>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
-<p>AIRelays is a thin compatibility layer between OpenAI-shaped client requests and the ChatGPT Codex subscription backend.</p>
+<p>AIRelays is a thin compatibility layer between OpenAI-shaped client requests and the ChatGPT Codex subscription backend. The route envelopes are intentionally OpenAI-shaped, but some parameter surfaces are narrower because the subscription backend accepts a slightly different contract.</p>
 <p>Request flow:</p>
 <ol>
 <li>FastAPI receives an OpenAI-compatible request.</li>
