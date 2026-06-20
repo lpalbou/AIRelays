@@ -61,6 +61,165 @@ def test_prepare_response_request_rejects_unknown_local_file(store: AppStore) ->
         )
 
 
+def test_prepare_response_request_accepts_conversation_object_id(store: AppStore) -> None:
+    payload, wants_stream, conversation_id = prepare_response_request(
+        {
+            "model": "gpt-5.4-mini",
+            "input": "hello",
+            "conversation": {"id": "conv_123"},
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert wants_stream is False
+    assert conversation_id == "conv_123"
+    assert "conversation" not in payload
+
+
+def test_prepare_response_request_normalizes_json_schema_text_format(store: AppStore) -> None:
+    payload, _, _ = prepare_response_request(
+        {
+            "model": "gpt-5.4-mini",
+            "input": "hello",
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "demo_schema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {"answer": {"type": "string"}},
+                        "required": ["answer"],
+                    },
+                    "strict": True,
+                }
+            },
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert payload["text"]["format"] == {
+        "type": "json_schema",
+        "name": "demo_schema",
+        "schema": {
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+            "required": ["answer"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    }
+
+
+def test_prepare_response_request_normalizes_nested_required_keys_in_text_format(
+    store: AppStore,
+) -> None:
+    payload, _, _ = prepare_response_request(
+        {
+            "model": "gpt-5.4-mini",
+            "input": "hello",
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "nested_schema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "sources": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "title": {"type": "string"},
+                                        "publisher": {"type": "string"},
+                                    },
+                                    "required": ["title"],
+                                },
+                            }
+                        },
+                        "required": ["sources"],
+                    },
+                }
+            },
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert payload["text"]["format"]["schema"] == {
+        "type": "object",
+        "properties": {
+            "sources": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "publisher": {"type": ["string", "null"]},
+                    },
+                    "required": ["title", "publisher"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["sources"],
+        "additionalProperties": False,
+    }
+
+
+def test_prepare_response_request_rejects_true_additional_properties_in_text_format(
+    store: AppStore,
+) -> None:
+    with pytest.raises(TranslationError, match="additionalProperties"):
+        prepare_response_request(
+            {
+                "model": "gpt-5.4-mini",
+                "input": "hello",
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": "bad_schema",
+                        "schema": {
+                            "type": "object",
+                            "properties": {"answer": {"type": "string"}},
+                            "required": ["answer"],
+                            "additionalProperties": True,
+                        },
+                    }
+                },
+            },
+            store,
+            allow_tools=True,
+        )
+
+
+def test_prepare_response_request_rejects_json_object_text_format(store: AppStore) -> None:
+    with pytest.raises(TranslationError, match="json_object"):
+        prepare_response_request(
+            {
+                "model": "gpt-5.4-mini",
+                "input": "hello",
+                "text": {"format": {"type": "json_object"}},
+            },
+            store,
+            allow_tools=True,
+        )
+
+
+def test_prepare_response_request_rejects_tools_on_no_tools_route(store: AppStore) -> None:
+    with pytest.raises(TranslationError, match="disables tools"):
+        prepare_response_request(
+            {
+                "model": "gpt-5.4-mini",
+                "input": "hello",
+                "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object"}}],
+            },
+            store,
+            allow_tools=False,
+        )
+
+
 def test_chat_completions_to_responses_uses_system_messages_as_instructions(
     store: AppStore,
 ) -> None:

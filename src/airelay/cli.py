@@ -42,8 +42,7 @@ def _client_usage_payload(settings: Settings, include_token: bool = False) -> di
         if include_token:
             token = settings.resolve_bearer_token()
             if token:
-                payload["client_api_key"] = token
-                payload["openai_api_key_env"] = f"OPENAI_API_KEY={token}"
+                payload["relay_token"] = token
     else:
         payload["api_key_note"] = (
             "No relay token is required. If your client insists on an api_key value, "
@@ -116,7 +115,6 @@ def _login_payload(settings: Settings, record: AuthRecord) -> dict[str, object]:
         "email": record.email,
         "plan_type": record.plan_type,
         "account_id": record.account_id,
-        "has_openai_api_key": bool(record.openai_api_key),
         "bearer_token_present": bool(settings.resolve_bearer_token()),
         "bearer_token_file": str(settings.bearer_token_file),
         "client": _client_usage_payload(settings),
@@ -141,7 +139,7 @@ def _init_payload(
         "bearer_token_file": str(settings.bearer_token_file),
         "bearer_token_created": token_created,
         "bearer_token_source": settings.bearer_token_source(),
-        "client_api_key": token_to_show,
+        "relay_token": token_to_show,
         "client": _client_usage_payload(settings, include_token=bool(token_to_show)),
         "next_steps": [
             "airelays login",
@@ -154,7 +152,7 @@ def _token_rotate_payload(settings: Settings, token: str) -> dict[str, object]:
     return {
         "bearer_token_file": str(settings.bearer_token_file),
         "bearer_token_source": settings.bearer_token_source(),
-        "client_api_key": token,
+        "relay_token": token,
         "client": _client_usage_payload(settings, include_token=True),
     }
 
@@ -168,7 +166,7 @@ def _token_show_payload(settings: Settings) -> dict[str, object]:
         "bearer_token_present": bool(token),
         "bearer_token_file": str(settings.bearer_token_file),
         "bearer_token_source": settings.bearer_token_source(),
-        "client_api_key": token,
+        "relay_token": token,
         "client": _client_usage_payload(settings, include_token=True),
         "next_steps": next_steps,
     }
@@ -242,8 +240,7 @@ def _print_client_section(client: dict[str, object], *, include_token: bool = Fa
         _print_field("Token file", client.get("token_file"))
         _print_field("Auth header", client.get("authorization_header"))
         if include_token:
-            _print_field("Relay token", client.get("client_api_key"))
-            _print_command("Export key", str(client.get("openai_api_key_env")))
+            _print_field("Relay token", client.get("relay_token"))
         else:
             _print_command("Reveal token", str(client.get("reveal_token_command")))
         _print_command("Rotate token", str(client.get("rotate_token_command")))
@@ -305,7 +302,7 @@ def _print_init_summary(payload: dict[str, object]) -> None:
     else:
         _print_field("Bearer auth", "disabled", kind="warn")
     _print_field("Client base URL", client.get("base_url"))
-    _print_client_section(client, include_token=bool(payload.get("client_api_key")))
+    _print_client_section(client, include_token=bool(payload.get("relay_token")))
     _print_steps([str(step) for step in payload.get("next_steps", [])])
 
 
@@ -389,7 +386,7 @@ def _print_token_show_summary(payload: dict[str, object]) -> None:
         _print_field("Relay token", "not required", kind="warn")
     _print_field("Token source", payload.get("bearer_token_source"))
     _print_field("Token file", payload.get("bearer_token_file"))
-    _print_client_section(client, include_token=bool(payload.get("client_api_key")))
+    _print_client_section(client, include_token=bool(payload.get("relay_token")))
     _print_steps([str(step) for step in payload.get("next_steps", [])])
 
 

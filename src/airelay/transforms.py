@@ -256,6 +256,28 @@ def _translate_chat_response_format(response_format: dict[str, Any]) -> dict[str
     return translated
 
 
+def _normalize_responses_text_format(text_format: Any) -> dict[str, Any]:
+    if not isinstance(text_format, dict):
+        raise TranslationError("`text.format` must be an object when provided.")
+    format_type = text_format.get("type")
+    if format_type == "text":
+        return copy.deepcopy(text_format)
+    if format_type == "json_object":
+        raise TranslationError(
+            "`text.format.type=json_object` is not yet verified against the subscription backend."
+        )
+    if format_type != "json_schema":
+        raise TranslationError("Unsupported `text.format.type` value.")
+
+    translated = copy.deepcopy(text_format)
+    if not isinstance(translated.get("name"), str) or not translated["name"]:
+        raise TranslationError("`text.format.name` must be a non-empty string.")
+    if not isinstance(translated.get("schema"), dict):
+        raise TranslationError("`text.format.schema` must be an object.")
+    translated["schema"] = _normalize_json_schema_object_constraints(translated["schema"])
+    return translated
+
+
 def _is_text_file(content_type: str) -> bool:
     lowered = content_type.lower()
     return lowered.startswith(TEXT_MIME_PREFIXES)
@@ -370,8 +392,10 @@ def prepare_response_request(
     payload = _normalize_responses_input(body, store)
     wants_stream = bool(payload.get("stream"))
     conversation_id = payload.pop("conversation", None)
+    if isinstance(conversation_id, dict):
+        conversation_id = conversation_id.get("id")
     if conversation_id is not None and not isinstance(conversation_id, str):
-        raise TranslationError("`conversation` must be a string when provided.")
+        raise TranslationError("`conversation` must be a string or an object with string `id`.")
     if payload.get("store") not in {None, False}:
         raise TranslationError("The subscription backend requires `store=false`.")
     if not allow_tools and payload.get("tools"):
@@ -381,6 +405,14 @@ def prepare_response_request(
     instructions = payload.get("instructions")
     if not isinstance(instructions, str) or not instructions.strip():
         payload["instructions"] = DEFAULT_MINIMAL_INSTRUCTIONS
+    text = payload.get("text")
+    if text is not None:
+        if not isinstance(text, dict):
+            raise TranslationError("`text` must be an object when provided.")
+        text_format = text.get("format")
+        if text_format is not None:
+            payload["text"] = copy.deepcopy(text)
+            payload["text"]["format"] = _normalize_responses_text_format(text_format)
     payload["store"] = False
     if "tools" not in payload:
         payload["tools"] = []

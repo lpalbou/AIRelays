@@ -141,11 +141,6 @@ class AuthRecord:
     raw: dict[str, Any]
 
     @property
-    def openai_api_key(self) -> str | None:
-        value = self.raw.get("OPENAI_API_KEY")
-        return value if isinstance(value, str) and value else None
-
-    @property
     def tokens(self) -> dict[str, Any] | None:
         value = self.raw.get("tokens")
         return value if isinstance(value, dict) else None
@@ -483,30 +478,25 @@ class AuthManager:
                 "credentials_present": False,
                 "account_bound": False,
                 "ready_for_requests": False,
-                "mode": None,
                 "email": None,
                 "plan_type": None,
                 "account_id": None,
                 "bound_account_id": None,
-                "has_openai_api_key": False,
                 "last_refresh": None,
                 "auth_store_path": str(self.storage.auth_path),
                 "keyring_service": KEYRING_SERVICE,
                 "storage_mode": self.storage.mode,
             }
-        mode = "chatgpt" if record.authenticated else "api_key_only" if record.openai_api_key else None
         account_bound = record.account_matches_binding()
         return {
             "authenticated": record.authenticated,
             "credentials_present": bool(record.tokens),
             "account_bound": account_bound,
             "ready_for_requests": record.authenticated and account_bound,
-            "mode": mode,
             "email": record.email,
             "plan_type": record.plan_type,
             "account_id": record.account_id,
             "bound_account_id": record.bound_account_id,
-            "has_openai_api_key": bool(record.openai_api_key),
             "last_refresh": record.last_refresh.isoformat() if record.last_refresh else None,
             "auth_store_path": str(self.storage.auth_path),
             "keyring_service": KEYRING_SERVICE,
@@ -584,7 +574,6 @@ class AuthManager:
                 id_token=data.get("id_token") or record.id_token,
                 access_token=data.get("access_token") or record.access_token,
                 refresh_token=data.get("refresh_token") or record.refresh_token,
-                openai_api_key=record.openai_api_key,
                 bound_account_id=record.bound_account_id,
             )
             self.storage.save(refreshed)
@@ -643,12 +632,10 @@ class AuthManager:
         account_id = parse_id_token(tokens["id_token"]).get("chatgpt_account_id")
         if workspace_id and account_id != workspace_id:
             raise AuthenticationError(f"Login is restricted to workspace id {workspace_id}.")
-        api_key = await self._exchange_api_key(client_id=client_id, id_token=tokens["id_token"])
         payload = self._build_auth_payload(
             id_token=tokens["id_token"],
             access_token=tokens["access_token"],
             refresh_token=tokens["refresh_token"],
-            openai_api_key=api_key,
             bound_account_id=account_id,
         )
         self.storage.save(payload)
@@ -703,12 +690,10 @@ class AuthManager:
         account_id = parse_id_token(tokens["id_token"]).get("chatgpt_account_id")
         if workspace_id and account_id != workspace_id:
             raise AuthenticationError(f"Login is restricted to workspace id {workspace_id}.")
-        api_key = await self._exchange_api_key(client_id=client_id, id_token=tokens["id_token"])
         payload = self._build_auth_payload(
             id_token=tokens["id_token"],
             access_token=tokens["access_token"],
             refresh_token=tokens["refresh_token"],
-            openai_api_key=api_key,
             bound_account_id=account_id,
         )
         self.storage.save(payload)
@@ -745,32 +730,11 @@ class AuthManager:
             "refresh_token": payload["refresh_token"],
         }
 
-    async def _exchange_api_key(self, client_id: str, id_token: str) -> str | None:
-        data = {
-            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-            "client_id": client_id,
-            "requested_token": "openai-api-key",
-            "subject_token": id_token,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
-        }
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{self.issuer_base_url}/oauth/token",
-                data=data,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-        if response.status_code >= 400:
-            return None
-        payload = response.json()
-        value = payload.get("access_token")
-        return value if isinstance(value, str) and value else None
-
     def _build_auth_payload(
         self,
         id_token: str | None,
         access_token: str | None,
         refresh_token: str | None,
-        openai_api_key: str | None,
         bound_account_id: str | None = None,
     ) -> dict[str, Any]:
         if not id_token or not access_token or not refresh_token:
@@ -778,7 +742,6 @@ class AuthManager:
         parsed = parse_id_token(id_token)
         parsed_account_id = parsed.get("chatgpt_account_id")
         return {
-            "OPENAI_API_KEY": openai_api_key,
             "bound_account_id": bound_account_id or parsed_account_id,
             "tokens": {
                 "id_token": id_token,

@@ -2,6 +2,8 @@
 
 `AIRelays` is an independent local OpenAI-compatible HTTP server backed by a ChatGPT subscription login that AIRelays stores independently. It exposes the verified OpenAI-shaped routes this upstream can support, protects the local relay with its own bearer token, and logs every transit to hourly JSONL files.
 
+`POST /v1/responses` keeps the general OpenAI Responses envelope, but parameter parity is not complete. Some fields pass through unchanged, some are adapted for the subscription backend, and unsupported fields are rejected or omitted explicitly.
+
 `AIRelays` does not require a user-supplied OpenAI platform API key for upstream inference. Instead, it uses the same upstream ChatGPT login protocol that Codex uses while keeping AIRelays auth storage separate from Codex storage. Clients that call `AIRelays` should use the relay bearer token as the local client credential they present to AIRelays.
 
 ## Independence And Intended Use
@@ -197,18 +199,20 @@ curl http://127.0.0.1:8080/v1/responses \
   }'
 ```
 
-Shell example with the OpenAI Python SDK environment variables:
+Shell example with a relay-token environment variable:
 
 ```bash
 export OPENAI_BASE_URL='http://127.0.0.1:8080/v1'
-export OPENAI_API_KEY="$(tr -d '\n' < ~/.airelays/relay-token)"
+export AIRELAYS_TOKEN="$(tr -d '\n' < ~/.airelays/relay-token)"
 ```
 
-Open local relay mode with a placeholder key for SDKs that insist on one:
+If your SDK insists on an `api_key` argument, pass the relay token from `AIRELAYS_TOKEN`.
+
+Open local relay mode with a placeholder value for SDKs that insist on one:
 
 ```bash
 export OPENAI_BASE_URL='http://127.0.0.1:8080/v1'
-export OPENAI_API_KEY='local-open-relay'
+export AIRELAYS_CLIENT_PLACEHOLDER='local-open-relay'
 ```
 
 ## Verified Compatibility Boundary

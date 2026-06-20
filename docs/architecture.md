@@ -2,7 +2,7 @@
 
 ## Overview
 
-AIRelays is a thin compatibility layer between OpenAI-shaped client requests and the ChatGPT Codex subscription backend.
+AIRelays is a thin compatibility layer between OpenAI-shaped client requests and the ChatGPT Codex subscription backend. The route envelopes are intentionally OpenAI-shaped, but some parameter surfaces are narrower because the subscription backend accepts a slightly different contract.
 
 Request flow:
 

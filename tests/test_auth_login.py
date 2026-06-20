@@ -110,10 +110,6 @@ async def test_browser_login_uses_localhost_redirect_uri(tmp_path, monkeypatch) 
             "refresh_token": "refresh-token",
         }
 
-    async def fake_exchange_api_key(self, client_id: str, id_token: str) -> str | None:
-        del self, client_id, id_token
-        return None
-
     monkeypatch.setattr(auth_module, "LoginCallbackServer", FakeCallbackServer)
     monkeypatch.setattr(auth_module, "_generate_state", lambda: "test-state")
     monkeypatch.setattr(
@@ -121,7 +117,6 @@ async def test_browser_login_uses_localhost_redirect_uri(tmp_path, monkeypatch) 
         "_exchange_code_for_tokens",
         fake_exchange_code_for_tokens,
     )
-    monkeypatch.setattr(AuthManager, "_exchange_api_key", fake_exchange_api_key)
 
     manager = AuthManager(tmp_path / "airelay", "file", "https://auth.openai.com")
     record = await manager.browser_login(

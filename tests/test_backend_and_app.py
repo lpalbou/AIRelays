@@ -199,6 +199,71 @@ def test_responses_route_reports_unknown_local_file_as_422(tmp_path) -> None:
     assert "Unknown local file id `file_missing`" in response.json()["detail"]
 
 
+def test_responses_route_ignores_unsupported_sampling_parameters_and_sets_header(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    captured: dict[str, object] = {}
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del request_id, session_id
+        captured["payload"] = payload
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.4",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+
+    with TestClient(app) as client:
+        client.app.state.backend.collect_response = fake_collect_response
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "gpt-5.4",
+                "input": "hello",
+                "stream": False,
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "presence_penalty": 0.1,
+                "frequency_penalty": 0.2,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["x-airelays-ignored-parameters"] == (
+        "temperature,top_p,presence_penalty,frequency_penalty"
+    )
+    assert "temperature" not in captured["payload"]
+    assert "top_p" not in captured["payload"]
+    assert "presence_penalty" not in captured["payload"]
+    assert "frequency_penalty" not in captured["payload"]
+
+
+def test_no_tools_responses_route_rejects_tool_requests(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/no-tools/v1/responses",
+            json={
+                "model": "gpt-5.4-mini",
+                "input": "hello",
+                "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object"}}],
+            },
+        )
+
+    assert response.status_code == 422
+    assert "disables tools" in response.json()["detail"]
+
+
 def test_subscription_status_route_returns_normalized_windows_and_raw_alias(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)

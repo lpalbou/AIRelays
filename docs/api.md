@@ -65,8 +65,12 @@ Supported behavior:
 
 Notes:
 
+- AIRelays preserves the general OpenAI Responses request and response envelopes, but parameter parity is not complete on this route
 - upstream storage is forced to `false`
+- `conversation` accepts a local conversation id string or `{ "id": "..." }`
 - missing instructions are adapted to the verified minimal placeholder `"."`
+- `text.format.type=json_schema` is normalized to match the stricter verified subscription-backend schema rules
+- `text.format.type=json_object` is rejected as unverified
 - non-stream requests are reconstructed from streamed upstream output
 - unsupported upstream sampling parameters are omitted before the upstream call; when that happens AIRelays adds `x-airelays-ignored-parameters`
 

@@ -1,6 +1,6 @@
 # AIRelays
 
-AIRelays is a local OpenAI-compatible HTTP server backed by a ChatGPT subscription login that AIRelays stores independently. It does not require a user-supplied OpenAI platform API key for upstream inference. Instead, it uses the same upstream login protocol that Codex uses while keeping AIRelays auth storage separate from Codex storage.
+AIRelays is a local OpenAI-compatible HTTP server backed by a ChatGPT subscription login that AIRelays stores independently. It does not require a user-supplied OpenAI platform API key for upstream inference. Instead, it uses the same upstream login protocol that Codex uses while keeping AIRelays auth storage separate from Codex storage. `/v1/responses` preserves the general OpenAI Responses envelope, with explicit parameter adaptations and limits where the subscription backend differs.
 
 Clients that call AIRelays should use the relay bearer token as the local client credential they present to AIRelays in the default protected mode. AIRelays can also run in open local relay mode with bearer auth disabled for the server process.
 

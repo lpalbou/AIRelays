@@ -90,9 +90,9 @@ def test_auth_storage_auto_migrates_legacy_keyring_payload(tmp_path, monkeypatch
     assert ("delete", "AIRelay Auth", username) in calls
 
 
-def test_auth_manager_status_treats_api_key_only_state_as_not_ready(tmp_path) -> None:
+def test_auth_manager_status_without_tokens_is_not_ready(tmp_path) -> None:
     storage_root = tmp_path / "airelay"
-    _write_auth_payload(storage_root, {"OPENAI_API_KEY": "sk-test"})
+    _write_auth_payload(storage_root, {})
 
     manager = AuthManager(storage_root, "file", "https://auth.openai.com")
     status = manager.status()
@@ -101,8 +101,8 @@ def test_auth_manager_status_treats_api_key_only_state_as_not_ready(tmp_path) ->
     assert status["credentials_present"] is False
     assert status["account_bound"] is False
     assert status["ready_for_requests"] is False
-    assert status["mode"] == "api_key_only"
-    assert status["has_openai_api_key"] is True
+    assert status["email"] is None
+    assert status["plan_type"] is None
 
 
 @pytest.mark.asyncio
@@ -228,7 +228,6 @@ def test_cli_init_generates_token_once_and_hides_existing_token(
     assert "Client Setup" in first
     assert "Authorization: Bearer <AIRelays token>" in first
     assert str(data_dir / "relay-token") in first
-    assert "OPENAI_API_KEY=" in first
 
     args = parser.parse_args(
         ["init", "--json", "--config", str(config_path), "--data-dir", str(data_dir)]
@@ -238,7 +237,7 @@ def test_cli_init_generates_token_once_and_hides_existing_token(
 
     assert second["config_created"] is False
     assert second["bearer_token_created"] is False
-    assert second["client_api_key"] is None
+    assert second["relay_token"] is None
     assert second["client"]["reveal_token_command"] == "airelays token show"
 
 
@@ -315,7 +314,7 @@ def test_cli_token_show_displays_existing_token_and_supports_json(
 
     assert "AIRelays Token" in human
     assert "token-value" in human
-    assert "OPENAI_API_KEY=token-value" in human
+    assert "Reveal token" not in human
 
     args = parser.parse_args(
         ["token", "show", "--json", "--config", str(config_path), "--data-dir", str(data_dir)]
@@ -324,7 +323,7 @@ def test_cli_token_show_displays_existing_token_and_supports_json(
     machine = json.loads(capsys.readouterr().out)
 
     assert machine["bearer_token_present"] is True
-    assert machine["client_api_key"] == "token-value"
+    assert machine["relay_token"] == "token-value"
     assert machine["client"]["reveal_token_command"] == "airelays token show"
 
 

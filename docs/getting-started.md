@@ -207,14 +207,16 @@ Shell example:
 
 ```bash
 export OPENAI_BASE_URL='http://127.0.0.1:8080/v1'
-export OPENAI_API_KEY="$(tr -d '\n' < ~/.airelays/relay-token)"
+export AIRELAYS_TOKEN="$(tr -d '\n' < ~/.airelays/relay-token)"
 ```
 
-Open local relay mode with a placeholder client key:
+If your SDK insists on an `api_key` argument, pass the relay token from `AIRELAYS_TOKEN`.
+
+Open local relay mode with a placeholder client value:
 
 ```bash
 export OPENAI_BASE_URL='http://127.0.0.1:8080/v1'
-export OPENAI_API_KEY='local-open-relay'
+export AIRELAYS_CLIENT_PLACEHOLDER='local-open-relay'
 ```
 
 ## Show The Relay Token

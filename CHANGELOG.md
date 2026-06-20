@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3
+
+- Removed the remaining OpenAI API-key exchange, storage, and setup hints so AIRelays stays strictly subscription-backed for upstream inference.
+- Improved native `POST /v1/responses` compatibility by normalizing direct `text.format.type=json_schema` requests and accepting `conversation` as either a string id or `{ "id": "..." }`.
+- Clarified the `/v1/responses` compatibility boundary across the user documentation and LLM index files.
+
 ## 0.2.2
 
 - Reused and migrated legacy AIRelay macOS keychain sessions so existing subscription logins continue to work after upgrading to AIRelays.
