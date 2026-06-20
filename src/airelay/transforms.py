@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import mimetypes
 from datetime import datetime, timezone
 from typing import Any
 
@@ -288,6 +289,47 @@ def _data_url(content_type: str, body: bytes) -> str:
     return f"data:{content_type};base64,{encoded}"
 
 
+def _guess_file_content_type(filename: str | None, raw: bytes | None = None) -> str | None:
+    if isinstance(filename, str) and filename:
+        guessed, _ = mimetypes.guess_type(filename)
+        if guessed:
+            return guessed
+    if raw:
+        if raw.startswith(b"%PDF-"):
+            return "application/pdf"
+        if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if raw.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if raw.startswith(b"GIF87a") or raw.startswith(b"GIF89a"):
+            return "image/gif"
+        if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+            return "image/webp"
+    return None
+
+
+def _normalize_input_file_item(item: dict[str, Any]) -> dict[str, Any]:
+    normalized = copy.deepcopy(item)
+    if normalized.get("type") != "input_file":
+        return normalized
+    file_data = normalized.get("file_data")
+    if not isinstance(file_data, str) or not file_data:
+        return normalized
+    if file_data.startswith("data:"):
+        return normalized
+    filename = normalized.get("filename")
+    if filename is not None and not isinstance(filename, str):
+        raise TranslationError("`input_file.filename` must be a string when provided.")
+    content_type = _guess_file_content_type(filename)
+    if content_type is None:
+        raise TranslationError(
+            "Raw `input_file.file_data` requires a recognizable filename extension so AIRelays "
+            "can translate it for the subscription backend."
+        )
+    normalized["file_data"] = f"data:{content_type};base64,{file_data}"
+    return normalized
+
+
 def _content_to_text(content: Any) -> str:
     if content is None:
         return ""
@@ -348,6 +390,14 @@ def _expand_local_file(content_item: dict[str, Any], store: AppStore) -> list[di
                 "detail": content_item.get("detail", "auto"),
             }
         ]
+    if kind in {"input_file", "file"}:
+        return [
+            {
+                "type": "input_file",
+                "filename": filename,
+                "file_data": _data_url(content_type, raw),
+            }
+        ]
     if _is_text_file(content_type):
         if len(raw) > INLINE_TEXT_FILE_MAX_BYTES:
             raise TranslationError(
@@ -379,7 +429,8 @@ def _normalize_responses_input(payload: dict[str, Any], store: AppStore) -> dict
         for item in content:
             if not isinstance(item, dict):
                 raise TranslationError("Each content item must be an object.")
-            expanded.extend(_expand_local_file(item, store))
+            normalized_item = _normalize_input_file_item(item)
+            expanded.extend(_expand_local_file(normalized_item, store))
         message["content"] = expanded
     return normalized
 
@@ -398,6 +449,10 @@ def prepare_response_request(
         raise TranslationError("`conversation` must be a string or an object with string `id`.")
     if payload.get("store") not in {None, False}:
         raise TranslationError("The subscription backend requires `store=false`.")
+    if "max_output_tokens" in payload:
+        raise TranslationError(
+            "The verified subscription backend does not currently support `max_output_tokens` on `/v1/responses`."
+        )
     if not allow_tools and payload.get("tools"):
         raise TranslationError("This route disables tools.")
     if not allow_tools and payload.get("tool_choice") not in {None, "none"}:
@@ -621,7 +676,10 @@ def chat_completions_to_responses(
     if "frequency_penalty" in body:
         payload["frequency_penalty"] = body["frequency_penalty"]
     if "max_completion_tokens" in body:
-        payload["max_output_tokens"] = body["max_completion_tokens"]
+        raise TranslationError(
+            "The verified subscription backend does not currently support "
+            "`max_completion_tokens` on `/v1/chat/completions`."
+        )
     if "metadata" in body:
         payload["metadata"] = body["metadata"]
     if "service_tier" in body:
@@ -696,7 +754,10 @@ def completions_to_responses(body: dict[str, Any]) -> tuple[dict[str, Any], bool
     if "frequency_penalty" in body:
         payload["frequency_penalty"] = body["frequency_penalty"]
     if "max_tokens" in body:
-        payload["max_output_tokens"] = body["max_tokens"]
+        raise TranslationError(
+            "The verified subscription backend does not currently support "
+            "`max_tokens` on `/v1/completions`."
+        )
     if "stop" in body:
         payload["stop"] = body["stop"]
     if "metadata" in body:

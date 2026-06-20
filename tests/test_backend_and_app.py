@@ -11,7 +11,7 @@ from airelay import __version__
 from airelay.app import create_app
 from airelay.backend import BackendError, ChatGptCodexBackend, SSEEvent
 from airelay.config import Settings
-from airelay.traffic import TrafficLogger
+from airelay.traffic import TrafficLogger, snapshot_body
 
 
 class FakeBackend(ChatGptCodexBackend):
@@ -197,6 +197,128 @@ def test_responses_route_reports_unknown_local_file_as_422(tmp_path) -> None:
 
     assert response.status_code == 422
     assert "Unknown local file id `file_missing`" in response.json()["detail"]
+
+
+def test_responses_route_rejects_max_output_tokens_locally(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "gpt-5.4",
+                "input": "hello",
+                "stream": False,
+                "max_output_tokens": 20,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "max_output_tokens" in response.json()["detail"]
+
+
+def test_chat_completions_route_rejects_max_completion_tokens_locally(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.4",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+                "max_completion_tokens": 20,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "max_completion_tokens" in response.json()["detail"]
+
+
+def test_completions_route_rejects_max_tokens_locally(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/completions",
+            json={
+                "model": "gpt-5.4",
+                "prompt": "hello",
+                "stream": False,
+                "max_tokens": 20,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "max_tokens" in response.json()["detail"]
+
+
+def test_responses_route_rewrites_local_pdf_file_id_as_input_file(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    captured: dict[str, object] = {}
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del request_id, session_id
+        captured["payload"] = payload
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.4",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+
+    with TestClient(app) as client:
+        record = client.app.state.store.create_file(
+            filename="sample.pdf",
+            purpose="user_data",
+            content_type="application/pdf",
+            data=b"%PDF-1.4\nsample\n",
+            sha256="abc123",
+        )
+        client.app.state.backend.collect_response = fake_collect_response
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "gpt-5.4",
+                "stream": False,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_file", "file_id": record["id"]}],
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    assert captured["payload"]["input"][0]["content"] == [  # type: ignore[index]
+        {
+            "type": "input_file",
+            "filename": "sample.pdf",
+            "file_data": "data:application/pdf;base64,JVBERi0xLjQKc2FtcGxlCg==",
+        }
+    ]
+
+
+def test_snapshot_body_redacts_inline_file_data() -> None:
+    snapshot = snapshot_body(
+        "application/json",
+        b'{"input":[{"type":"input_file","file_data":"data:application/pdf;base64,JVBERi0xLjQKc2FtcGxlCg=="}]}',
+    )
+
+    assert snapshot["kind"] == "json"
+    assert snapshot["json"]["input"][0]["file_data"] == "[REDACTED]"
 
 
 def test_responses_route_ignores_unsupported_sampling_parameters_and_sets_header(tmp_path) -> None:

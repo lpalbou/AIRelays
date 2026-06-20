@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 import pytest
 
 from airelay.store import AppStore
@@ -55,6 +57,89 @@ def test_prepare_response_request_rejects_unknown_local_file(store: AppStore) ->
                         "content": [{"type": "input_image", "file_id": "file_missing"}],
                     }
                 ],
+            },
+            store,
+            allow_tools=True,
+        )
+
+
+def test_prepare_response_request_rewrites_local_pdf_file_id_as_input_file(
+    store: AppStore,
+) -> None:
+    record = store.create_file(
+        filename="sample.pdf",
+        purpose="user_data",
+        content_type="application/pdf",
+        data=b"%PDF-1.4\nsample\n",
+        sha256="abc123",
+    )
+
+    payload, _, _ = prepare_response_request(
+        {
+            "model": "gpt-5.4-mini",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_file", "file_id": record["id"]}],
+                }
+            ],
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert payload["input"][0]["content"] == [
+        {
+            "type": "input_file",
+            "filename": "sample.pdf",
+            "file_data": "data:application/pdf;base64,JVBERi0xLjQKc2FtcGxlCg==",
+        }
+    ]
+
+
+def test_prepare_response_request_normalizes_raw_base64_input_file_to_data_url(
+    store: AppStore,
+) -> None:
+    encoded = base64.b64encode(b"%PDF-1.4\nsample\n").decode("ascii")
+
+    payload, _, _ = prepare_response_request(
+        {
+            "model": "gpt-5.4-mini",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_file",
+                            "filename": "sample.pdf",
+                            "file_data": encoded,
+                        }
+                    ],
+                }
+            ],
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert payload["input"][0]["content"] == [
+        {
+            "type": "input_file",
+            "filename": "sample.pdf",
+            "file_data": f"data:application/pdf;base64,{encoded}",
+        }
+    ]
+
+
+def test_prepare_response_request_rejects_max_output_tokens(store: AppStore) -> None:
+    with pytest.raises(TranslationError, match="max_output_tokens"):
+        prepare_response_request(
+            {
+                "model": "gpt-5.4-mini",
+                "input": "hello",
+                "max_output_tokens": 20,
             },
             store,
             allow_tools=True,
@@ -651,7 +736,6 @@ def test_completions_to_responses_supports_legacy_prompt_shape() -> None:
             "model": "gpt-5.4-mini",
             "prompt": "Say hello.",
             "stream": False,
-            "max_tokens": 32,
         }
     )
 
@@ -659,7 +743,30 @@ def test_completions_to_responses_supports_legacy_prompt_shape() -> None:
     assert conversation_id is None
     assert payload["instructions"] == "."
     assert payload["input"][0]["content"][0]["text"] == "Say hello."
-    assert payload["max_output_tokens"] == 32
+
+
+def test_chat_completions_to_responses_rejects_max_completion_tokens(store: AppStore) -> None:
+    with pytest.raises(TranslationError, match="max_completion_tokens"):
+        chat_completions_to_responses(
+            {
+                "model": "gpt-5.4-mini",
+                "messages": [{"role": "user", "content": "hello"}],
+                "max_completion_tokens": 32,
+            },
+            store,
+            allow_tools=True,
+        )
+
+
+def test_completions_to_responses_rejects_max_tokens() -> None:
+    with pytest.raises(TranslationError, match="max_tokens"):
+        completions_to_responses(
+            {
+                "model": "gpt-5.4-mini",
+                "prompt": "Say hello.",
+                "max_tokens": 32,
+            }
+        )
 
 
 def test_strip_unsupported_response_parameters_removes_sampling_parameters() -> None:

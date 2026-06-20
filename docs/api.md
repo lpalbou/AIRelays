@@ -42,11 +42,12 @@ Supported behavior:
 - legacy prompt-in, text-out shape
 - `stream=true|false`
 - `conversation`
-- common generation controls such as `max_tokens`, `stop`, `metadata`, and `user`
+- common generation controls such as `stop`, `metadata`, and `user`
 
 Currently rejected:
 
 - `n` other than `1`
+- `max_tokens`
 - `best_of`
 - `echo`
 - `logprobs`
@@ -61,17 +62,22 @@ Supported behavior:
 - `stream=true|false`
 - `conversation` for local stateful sessions
 - `tools` when using the normal route
-- local file expansion through `file_id` content items
+- file inputs by external `file_url`
+- raw Base64 `input_file.file_data` when `filename` is provided
+- AIRelays local `file_id` values from `POST /v1/files`
 
 Notes:
 
 - AIRelays preserves the general OpenAI Responses request and response envelopes, but parameter parity is not complete on this route
 - upstream storage is forced to `false`
 - `conversation` accepts a local conversation id string or `{ "id": "..." }`
+- `max_output_tokens` is rejected explicitly because the verified subscription backend does not currently accept it on this route
 - missing instructions are adapted to the verified minimal placeholder `"."`
 - `text.format.type=json_schema` is normalized to match the stricter verified subscription-backend schema rules
 - `text.format.type=json_object` is rejected as unverified
 - non-stream requests are reconstructed from streamed upstream output
+- raw `input_file.file_data` is normalized into inline data URLs for the subscription backend when AIRelays can determine the content type from `filename`
+- AIRelays local uploaded-file ids are expanded into inline file or image inputs before the upstream call
 - unsupported upstream sampling parameters are omitted before the upstream call; when that happens AIRelays adds `x-airelays-ignored-parameters`
 
 ### `POST /no-tools/v1/responses`
@@ -87,11 +93,12 @@ Supported behavior:
 - assistant function tool calls and tool outputs are mapped into upstream function call items
 - `stream=true|false`
 - `conversation`
-- common generation parameters such as `max_completion_tokens`, `metadata`, `service_tier`, and `user`
+- common generation parameters such as `metadata`, `service_tier`, and `user`
 
 Currently rejected:
 
 - `n` other than `1`
+- `max_completion_tokens`
 - `audio`
 - `modalities`
 - `prediction`
@@ -168,7 +175,7 @@ Rules:
 
 - text-like files larger than 1 MB are rejected
 - images are passed as `input_image`
-- unsupported binary files are rejected
+- local `input_file` references are expanded into inline file data so PDFs and other supported document types can be reused on `/v1/responses`
 
 ## Relay Auth
 

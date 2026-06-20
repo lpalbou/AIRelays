@@ -1,6 +1,6 @@
 # AIRelays
 
-AIRelays is a local OpenAI-compatible HTTP server backed by a ChatGPT subscription login that AIRelays stores independently. It protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default, can also run in open local relay mode, logs every transit to JSONL, and exposes only the routes that were verified against the subscription backend. `/v1/responses` preserves the general OpenAI envelope, with explicit parameter adaptations and limits where the subscription backend differs.
+AIRelays is a local OpenAI-compatible HTTP server backed by a ChatGPT subscription login that AIRelays stores independently. It protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default, can also run in open local relay mode, logs every transit to JSONL, and exposes only the routes that were verified against the subscription backend. `/v1/responses` preserves the general OpenAI envelope, accepts verified `input_file` forms including local AIRelays `file_id` values, and keeps explicit parameter adaptations and limits where the subscription backend differs.
 
 ## Key Docs
 

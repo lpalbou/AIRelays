@@ -19,6 +19,7 @@ REDACTED_KEYS = {
     "code",
     "bearer_token",
     "relay_token",
+    "file_data",
 }
 
 

@@ -65,3 +65,22 @@ No. The current verified upstream is the ChatGPT Codex subscription backend. The
 ## Why do some OpenAI parameters disappear?
 
 The ChatGPT subscription backend rejects some OpenAI sampling parameters. AIRelays omits the known unsupported fields and reports that explicitly in `x-airelays-ignored-parameters`.
+
+## Why do token-limit parameters return `422`?
+
+The verified subscription backend does not currently accept the OpenAI token-limit parameters on AIRelays' OpenAI-shaped text-generation routes. AIRelays rejects them explicitly instead of passing them through and surfacing a less clear upstream failure:
+
+- `max_output_tokens` on `/v1/responses`
+- `max_completion_tokens` on `/v1/chat/completions`
+- `max_tokens` on `/v1/completions`
+
+## How do file inputs work on `/v1/responses`?
+
+AIRelays supports the OpenAI-style `input_file` shapes that were verified against the subscription backend:
+
+- external `file_url`
+- inline data URLs in `file_data`
+- raw Base64 `file_data` when `filename` is present so AIRelays can determine the content type
+- AIRelays local `file_id` values returned by `POST /v1/files`
+
+When you reuse a local AIRelays `file_id`, AIRelays expands it into an inline file or image input before sending the request upstream.

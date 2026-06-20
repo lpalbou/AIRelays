@@ -223,9 +223,11 @@ This server is intentionally explicit about what is and is not verified.
 - Subscription status uses `https://chatgpt.com/backend-api/wham/usage`.
 - The upstream requires `stream=true`, so non-stream OpenAI responses are reconstructed locally from streamed event sequences.
 - The upstream requires `store=false`, so requests that try to enable upstream storage are rejected with `422`.
+- The verified subscription backend does not currently accept output-token limit parameters on the OpenAI-shaped text-generation routes, so AIRelays rejects `max_output_tokens` on `/v1/responses`, `max_completion_tokens` on `/v1/chat/completions`, and `max_tokens` on `/v1/completions` explicitly with `422`.
 - The upstream requires non-empty `instructions`, so the compatibility layer injects the minimal verified placeholder `"."` only when the caller omitted instructions entirely.
 - Image input is supported.
-- Text and JSON-like document input is supported by local inlining up to 1 MB.
+- `input_file` supports external `file_url`, inline data URLs, raw Base64 plus `filename`, and AIRelays local `file_id` values from `POST /v1/files`.
+- Text and JSON-like document input is also supported by local inlining up to 1 MB when callers use local text-file references on chat-style routes.
 - Local file uploads are capped at 32 MiB each and 256 MiB total by default.
 - Audio input, embeddings, image generation, realtime sessions, and other unverified routes return explicit `501 unsupported_error`.
 
