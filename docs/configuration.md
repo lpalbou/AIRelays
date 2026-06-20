@@ -8,6 +8,8 @@ AIRelays resolves settings from these sources, highest precedence first:
 4. `~/.config/airelays/config.toml`
 5. built-in defaults
 
+If an earlier AIRelay config already exists at `~/.config/airelay/config.toml`, AIRelays can continue using that path for compatibility.
+
 ## Default Paths
 
 - config: `~/.config/airelays/config.toml`
@@ -144,5 +146,16 @@ AIRELAYS_REQUIRE_BEARER_AUTH=false airelays serve --port 8080
 - `airelays init --no-auth` writes config with bearer auth disabled and skips relay-token creation.
 - `AIRELAYS_BEARER_TOKEN` overrides the token file for the current process.
 - `auth.storage = "auto"` prefers the AIRelays keyring namespace and falls back to `~/.airelays/auth.json` when keyring access is unavailable.
+- `auth.storage = "auto"` also recognizes earlier `AIRelay Auth` keychain entries and migrates them into the AIRelays-owned namespace when they are encountered.
 - `AIRELAYS_TRUST_X_FORWARDED_FOR` should stay `false` unless you intentionally run behind a trusted proxy.
 - The listener remains loopback-only by default. Change `host` explicitly if you need broader access.
+
+## Legacy Compatibility
+
+AIRelays keeps compatibility with earlier singular AIRelay naming where it matters for local upgrades:
+
+- legacy config path: `~/.config/airelay/config.toml`
+- legacy data dir: `~/.airelay`
+- legacy keychain service name: `AIRelay Auth`
+
+If those paths or entries already exist, AIRelays can continue using or importing them instead of forcing a fresh login or a manual migration.

@@ -7,9 +7,9 @@ AIRelays is a local OpenAI-compatible HTTP server backed by a ChatGPT subscripti
 - [README.md](README.md)
   - project overview, install paths, quick start, supported routes, and security defaults
 - [docs/getting-started.md](docs/getting-started.md)
-  - install options plus first-run workflow with protected and open local relay modes
+  - install options, first-run workflow, legacy-state compatibility, and protected/open verification commands
 - [docs/configuration.md](docs/configuration.md)
-  - config file, environment overrides, and path conventions
+  - config file, environment overrides, path conventions, and legacy AIRelay compatibility
 - [docs/security.md](docs/security.md)
   - bearer-token protection, open local relay mode, rate limits, protected diagnostics, upload ceilings, and logging
 - [docs/api.md](docs/api.md)
@@ -34,6 +34,7 @@ AIRelays is a local OpenAI-compatible HTTP server backed by a ChatGPT subscripti
 - upstream auth fallback file: `~/.airelays/auth.json`
 - relay token: `~/.airelays/relay-token`
 - logs: `~/.airelays/logs`
+- earlier singular AIRelay config, data-dir, and keychain naming remain compatible for local upgrades
 - server token override: `AIRELAYS_BEARER_TOKEN` or `--bearer-token-file`
 - open local relay override: `AIRELAYS_REQUIRE_BEARER_AUTH=false` or `airelays serve --no-auth`
 

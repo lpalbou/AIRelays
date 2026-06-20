@@ -4,6 +4,10 @@
 
 No. AIRelays uses an AIRelays-owned ChatGPT subscription login for upstream inference.
 
+## Will earlier AIRelay local state still work?
+
+Yes. AIRelays keeps compatibility with earlier singular-path local state such as `~/.config/airelay`, `~/.airelay`, and older `AIRelay Auth` keychain entries.
+
 ## Is the AIRelays project affiliated with OpenAI?
 
 No. AIRelays is an independent third-party project. Provider and product names are used only to describe compatibility targets and upstream behavior.

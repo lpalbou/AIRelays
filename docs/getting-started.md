@@ -16,6 +16,7 @@ python -m pip install airelays
 
 Open local relay mode uses the same package and login flow. The difference is whether you keep the default bearer-token protection or disable it for the running process.
 It does not bypass the upstream ChatGPT login. Run `airelays login` before expecting model routes to succeed.
+If you already have earlier AIRelay local state under singular paths such as `~/.config/airelay` or `~/.airelay`, AIRelays can continue using it for compatibility.
 
 ## Initialize AIRelays
 
@@ -81,6 +82,7 @@ airelays login
 ```
 
 By default, AIRelays prints the login URL so you can open it in the browser profile you choose. Set `AIRELAYS_BROWSER_OPEN=true` if you want AIRelays to try opening the browser automatically.
+Existing macOS keychain sessions stored under the earlier `AIRelay Auth` service name are recognized automatically.
 
 If the browser flow cannot bind `localhost:1455`, use device-code login instead:
 
@@ -155,6 +157,41 @@ curl \
 
 `/healthz` is intentionally minimal. Use `/v1/relay/status` when you need protected config, auth, storage, and limiter details.
 If you launched with `--no-auth`, the same `/v1/relay/status` request works without the `Authorization` header.
+
+Protected model listing:
+
+```bash
+curl \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
+  http://127.0.0.1:8080/v1/models
+```
+
+Protected simple query:
+
+```bash
+curl \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
+  -H 'content-type: application/json' \
+  http://127.0.0.1:8080/v1/chat/completions \
+  -d '{
+    "model": "gpt-5.5",
+    "messages": [{"role": "user", "content": "Reply with exactly: AIRelays OK"}]
+  }'
+```
+
+Open local relay equivalents:
+
+```bash
+curl http://127.0.0.1:8080/v1/models
+
+curl \
+  -H 'content-type: application/json' \
+  http://127.0.0.1:8080/v1/chat/completions \
+  -d '{
+    "model": "gpt-5.5",
+    "messages": [{"role": "user", "content": "Reply with exactly: AIRelays OK"}]
+  }'
+```
 
 ## Point Your Client
 

@@ -30,6 +30,8 @@ Install from a published package:
 python -m pip install airelays
 ```
 
+Earlier AIRelay local state under singular paths such as `~/.config/airelay` and `~/.airelay` remains compatible.
+
 1. `airelays init`
    - writes `~/.config/airelays/config.toml` if needed
    - creates `~/.airelays/relay-token` if needed
@@ -76,6 +78,34 @@ curl http://127.0.0.1:8080/v1/relay/status \
 
 In open local relay mode, the same `/v1/relay/status` request works without the `Authorization` header.
 
+Protected model listing and simple query:
+
+```bash
+curl http://127.0.0.1:8080/v1/models \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
+
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "gpt-5.5",
+    "messages": [{"role": "user", "content": "Reply with exactly: AIRelays OK"}]
+  }'
+```
+
+Open local relay equivalents:
+
+```bash
+curl http://127.0.0.1:8080/v1/models
+
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "gpt-5.5",
+    "messages": [{"role": "user", "content": "Reply with exactly: AIRelays OK"}]
+  }'
+```
+
 ## Client Configuration
 
 - base URL: `http://127.0.0.1:8080/v1`
@@ -119,15 +149,18 @@ Security-relevant events are written to the normal hourly log files. Raw bearer 
 - logs: `~/.airelays/logs`
 - upstream auth fallback file: `~/.airelays/auth.json`
 - server token override: `AIRELAYS_BEARER_TOKEN` or `--bearer-token-file`
+- legacy config path: `~/.config/airelay/config.toml`
+- legacy data dir: `~/.airelay`
+- legacy keychain service name: `AIRelay Auth`
 
 ## Documentation Map
 
 - `README.md`
   - overview, quick start, supported routes, security defaults, and publication surface
 - `docs/getting-started.md`
-  - first-run setup and basic commands
+  - first-run setup, basic commands, and protected/open verification examples
 - `docs/configuration.md`
-  - config file layout, env overrides, and important paths
+  - config file layout, env overrides, important paths, and legacy compatibility
 - `docs/security.md`
   - route protection, rate limits, token rotation, and logging
 - `DISCLAIMER.md`

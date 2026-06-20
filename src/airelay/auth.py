@@ -28,6 +28,7 @@ from airelay.config import OPENAI_SUBSCRIPTION_CLIENT_ID
 
 TOKEN_REFRESH_INTERVAL_DAYS = 8
 KEYRING_SERVICE = "AIRelays Auth"
+LEGACY_KEYRING_SERVICES = ("AIRelay Auth",)
 DEFAULT_ORIGINATOR = "codex_cli_rs"
 BROWSER_CALLBACK_PORT = 1455
 BROWSER_LOGIN_SCOPE = "openid profile email offline_access"
@@ -288,36 +289,72 @@ class AuthStorage:
         return True
 
     def _load_keyring(self) -> dict[str, Any] | None:
+        username = _compute_store_key(self.storage_root)
         try:
-            serialized = keyring.get_password(
-                KEYRING_SERVICE, _compute_store_key(self.storage_root)
-            )
+            serialized = keyring.get_password(KEYRING_SERVICE, username)
         except KeyringError as exc:
             raise RuntimeError(str(exc)) from exc
         if not serialized:
-            return None
+            serialized = self._migrate_legacy_keyring_payload(username)
+            if not serialized:
+                return None
         return json.loads(serialized)
 
     def _save_keyring(self, payload: dict[str, Any]) -> None:
+        username = _compute_store_key(self.storage_root)
+        serialized = json.dumps(payload, ensure_ascii=True)
         try:
-            keyring.set_password(
-                KEYRING_SERVICE,
-                _compute_store_key(self.storage_root),
-                json.dumps(payload, ensure_ascii=True),
-            )
+            keyring.set_password(KEYRING_SERVICE, username, serialized)
         except KeyringError as exc:
             raise RuntimeError(str(exc)) from exc
+        self._delete_legacy_keyring(username)
 
     def _delete_keyring(self) -> bool:
+        username = _compute_store_key(self.storage_root)
         try:
-            username = _compute_store_key(self.storage_root)
             existing = keyring.get_password(KEYRING_SERVICE, username)
-            if existing is None:
-                return False
-            keyring.delete_password(KEYRING_SERVICE, username)
-            return True
+            deleted_current = False
+            if existing is not None:
+                keyring.delete_password(KEYRING_SERVICE, username)
+                deleted_current = True
+            deleted_legacy = self._delete_legacy_keyring(username)
+            return deleted_current or deleted_legacy
         except KeyringError:
             return False
+
+    def _migrate_legacy_keyring_payload(self, username: str) -> str | None:
+        for service in LEGACY_KEYRING_SERVICES:
+            try:
+                serialized = keyring.get_password(service, username)
+            except KeyringError:
+                continue
+            if not serialized:
+                continue
+            try:
+                keyring.set_password(KEYRING_SERVICE, username, serialized)
+            except KeyringError:
+                return serialized
+            self._delete_legacy_keyring(username, services=(service,))
+            return serialized
+        return None
+
+    def _delete_legacy_keyring(
+        self,
+        username: str,
+        *,
+        services: tuple[str, ...] = LEGACY_KEYRING_SERVICES,
+    ) -> bool:
+        deleted = False
+        for service in services:
+            try:
+                existing = keyring.get_password(service, username)
+                if existing is None:
+                    continue
+                keyring.delete_password(service, username)
+                deleted = True
+            except KeyringError:
+                continue
+        return deleted
 
 
 class LoginCallbackServer:

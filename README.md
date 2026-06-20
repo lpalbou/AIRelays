@@ -35,6 +35,8 @@ airelays serve --no-auth --port 8080
 
 This disables only the AIRelays client token gate. Model routes still require a valid upstream ChatGPT login from `airelays login`.
 
+Existing local AIRelay state is recognized for compatibility. If you already have singular-path state such as `~/.config/airelay`, `~/.airelay`, or an older `AIRelay Auth` keychain entry, AIRelays can continue using it without sharing runtime state with Codex.
+
 Smoke test the public and protected surfaces:
 
 ```bash
@@ -44,6 +46,34 @@ curl http://127.0.0.1:8080/v1/relay/status \
 ```
 
 In open local relay mode, the same `GET /v1/relay/status` request works without the `Authorization` header.
+
+Verify protected model access and a simple query:
+
+```bash
+curl http://127.0.0.1:8080/v1/models \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
+
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "gpt-5.5",
+    "messages": [{"role": "user", "content": "Reply with exactly: AIRelays OK"}]
+  }'
+```
+
+Verify the same calls in open local relay mode:
+
+```bash
+curl http://127.0.0.1:8080/v1/models
+
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "gpt-5.5",
+    "messages": [{"role": "user", "content": "Reply with exactly: AIRelays OK"}]
+  }'
+```
 
 Inspect the resolved relay and upstream-auth state at any point:
 
@@ -220,6 +250,7 @@ AIRelays reads configuration in this order:
 5. built-in defaults
 
 `auth.storage = "auto"` prefers the AIRelays keyring namespace and falls back to `~/.airelays/auth.json` when keyring access is unavailable.
+If earlier AIRelay config or data directories already exist, AIRelays keeps using them for compatibility. In keyring-backed setups, AIRelays also recognizes earlier `AIRelay Auth` entries and migrates them into the AIRelays-owned namespace when they are encountered.
 
 Important paths:
 

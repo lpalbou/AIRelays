@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from airelay.auth import AuthManager, AuthStorage
+from airelay.auth import AuthManager, AuthStorage, _compute_store_key
 from airelay.cli import _base_settings, build_parser
 
 
@@ -53,6 +53,41 @@ def test_auth_storage_auto_falls_back_to_file_when_keyring_fails(tmp_path, monke
     monkeypatch.setattr(storage, "_load_keyring", _raise_runtime_error)
 
     assert storage.load() == payload
+
+
+def test_auth_storage_auto_migrates_legacy_keyring_payload(tmp_path, monkeypatch) -> None:
+    storage_root = tmp_path / "airelay"
+    payload = {"tokens": {"access_token": "access", "refresh_token": "refresh"}}
+    serialized = json.dumps(payload)
+    calls: list[tuple[str, str, str | None]] = []
+    username = _compute_store_key(storage_root)
+
+    def fake_get_password(service: str, username: str) -> str | None:
+        calls.append(("get", service, username))
+        if service == "AIRelays Auth":
+            return None
+        if service == "AIRelay Auth":
+            return serialized
+        return None
+
+    def fake_set_password(service: str, username: str, value: str) -> None:
+        calls.append(("set", service, username))
+        assert service == "AIRelays Auth"
+        assert value == serialized
+
+    def fake_delete_password(service: str, username: str) -> None:
+        calls.append(("delete", service, username))
+        assert service == "AIRelay Auth"
+
+    monkeypatch.setattr("airelay.auth.keyring.get_password", fake_get_password)
+    monkeypatch.setattr("airelay.auth.keyring.set_password", fake_set_password)
+    monkeypatch.setattr("airelay.auth.keyring.delete_password", fake_delete_password)
+
+    storage = AuthStorage(storage_root, "auto")
+
+    assert storage.load() == payload
+    assert ("set", "AIRelays Auth", username) in calls
+    assert ("delete", "AIRelay Auth", username) in calls
 
 
 def test_auth_manager_status_treats_api_key_only_state_as_not_ready(tmp_path) -> None:

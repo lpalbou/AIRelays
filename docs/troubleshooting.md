@@ -23,6 +23,7 @@ Checks:
 - run `airelays status`
 - confirm the Upstream Session section shows `Ready: yes`
 - if not, run `airelays login`
+- if you upgraded from earlier AIRelay local state, AIRelays can reuse singular-path config or data directories and older `AIRelay Auth` keychain entries automatically
 - if `airelays login` cannot bind `localhost:1455`, retry later or use `airelays login --device`
 
 ## `429 Too many invalid authentication attempts from this IP`

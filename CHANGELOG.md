@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- Reused and migrated legacy AIRelay macOS keychain sessions so existing subscription logins continue to work after upgrading to AIRelays.
+- Clarified compatibility with earlier AIRelay config, data-dir, and keychain naming in the user documentation.
+- Added explicit protected-mode and open-mode `curl` verification examples for listing models and sending a simple query.
+
 ## 0.2.1
 
 - Added first-class open local relay mode through `airelays init --no-auth`, `airelays serve --no-auth`, and `AIRELAYS_REQUIRE_BEARER_AUTH=false`.
