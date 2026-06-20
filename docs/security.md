@@ -71,6 +71,7 @@ In this mode:
 - rate limits and concurrent-request caps still apply
 - the default loopback listener is the safest way to run it
 - if a client library insists on an API key field, any non-empty placeholder string is acceptable
+- the upstream ChatGPT login from `airelays login` is still required for model requests
 
 Rotate the token with:
 

@@ -184,4 +184,4 @@ Authorization: Bearer YOUR_AIRELAYS_TOKEN
 OpenAI-compatible SDKs will do this automatically when you set the AIRelays token as the client credential for the AIRelays base URL.
 Requests that omit the token, or use the wrong token, return `401`. Repeating that mistake enough times from the same IP triggers a temporary `429` block.
 
-If you start AIRelays with `airelays serve --no-auth` or `AIRELAYS_REQUIRE_BEARER_AUTH=false`, these route families become openly accessible for that server process. In that mode, the relay does not require `Authorization`, though some client SDKs may still need a non-empty placeholder `api_key` value on their side.
+If you start AIRelays with `airelays serve --no-auth` or `AIRELAYS_REQUIRE_BEARER_AUTH=false`, these route families become openly accessible for that server process. In that mode, the relay does not require `Authorization`, though some client SDKs may still need a non-empty placeholder `api_key` value on their side. Upstream ChatGPT login is still required; when it is missing, AIRelays returns a `503 authentication_error` instead of treating the problem as a local client-token failure.

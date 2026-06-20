@@ -15,6 +15,7 @@ python -m pip install airelays
 ```
 
 Open local relay mode uses the same package and login flow. The difference is whether you keep the default bearer-token protection or disable it for the running process.
+It does not bypass the upstream ChatGPT login. Run `airelays login` before expecting model routes to succeed.
 
 ## Initialize AIRelays
 
@@ -134,6 +135,7 @@ AIRELAYS_REQUIRE_BEARER_AUTH=false airelays serve --host 127.0.0.1 --port 8080
 ```
 
 When bearer auth is disabled, clients can call `/v1/*` and `/no-tools/v1/*` without `Authorization`. If a client library insists on an API key field, use any non-empty placeholder string.
+If `airelays login` has not completed yet, model routes still fail because AIRelays has no upstream ChatGPT session to use.
 
 ## Verify The Server
 
@@ -215,7 +217,7 @@ curl \
   'http://127.0.0.1:8080/v1/subscription/status?raw=true'
 ```
 
-If you launched with `--no-auth`, those same requests work without the `Authorization` header.
+If you launched with `--no-auth`, those same requests work without the `Authorization` header after `airelays login` has created an upstream session.
 
 See [Subscription Status](subscription-status.md) for field details.
 

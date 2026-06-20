@@ -33,6 +33,8 @@ airelays login
 airelays serve --no-auth --port 8080
 ```
 
+This disables only the AIRelays client token gate. Model routes still require a valid upstream ChatGPT login from `airelays login`.
+
 Smoke test the public and protected surfaces:
 
 ```bash

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from airelay import __version__
 from airelay.app import create_app
-from airelay.backend import ChatGptCodexBackend, SSEEvent
+from airelay.backend import BackendError, ChatGptCodexBackend, SSEEvent
 from airelay.config import Settings
 from airelay.traffic import TrafficLogger
 
@@ -489,6 +489,45 @@ def test_relay_status_is_open_when_bearer_auth_is_disabled(tmp_path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["security"]["require_bearer_auth"] is False
+    assert payload["ready"]["relay_token"] is True
+
+
+def test_models_route_without_upstream_login_returns_upstream_auth_error_not_local_auth(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=False,
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        response = client.get("/v1/models")
+
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["error"]["type"] == "authentication_error"
+    assert payload["error"]["code"] == "upstream_auth_missing"
+    assert response.headers["x-airelays-upstream-auth"] == "missing"
+
+
+def test_models_route_maps_upstream_401_to_upstream_auth_error(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=False,
+    )
+    app = create_app(settings)
+
+    async def fake_list_models(request_id: str):
+        del request_id
+        raise BackendError(401, '{"detail":"unauthorized"}')
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        response = client.get("/v1/models")
+
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["error"]["code"] == "upstream_auth_rejected"
+    assert response.headers["x-airelays-upstream-auth"] == "rejected"
 
 
 def test_protected_route_rejects_missing_bearer_token(tmp_path) -> None:

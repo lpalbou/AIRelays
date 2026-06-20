@@ -34,7 +34,9 @@ BROWSER_LOGIN_SCOPE = "openid profile email offline_access"
 
 
 class AuthenticationError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str = "upstream_auth_error") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _utcnow() -> datetime:
@@ -480,19 +482,29 @@ class AuthManager:
     async def ensure_fresh_tokens(self) -> AuthRecord:
         record = self.load()
         if record is None or not record.tokens:
-            raise AuthenticationError("No ChatGPT login found. Run `airelays login` first.")
+            raise AuthenticationError(
+                "No ChatGPT login found. Run `airelays login` first.",
+                code="upstream_auth_missing",
+            )
         if not record.access_token:
             if not record.refresh_token:
-                raise AuthenticationError("Stored auth does not include an access token or refresh token.")
+                raise AuthenticationError(
+                    "Stored auth does not include an access token or refresh token.",
+                    code="upstream_auth_incomplete",
+                )
             record = await self.refresh_tokens(force=True)
         last_refresh = record.last_refresh
         if last_refresh is None or last_refresh < _utcnow() - timedelta(days=TOKEN_REFRESH_INTERVAL_DAYS):
             record = await self.refresh_tokens(force=False)
         if not record.access_token:
-            raise AuthenticationError("Stored auth does not include a usable access token.")
+            raise AuthenticationError(
+                "Stored auth does not include a usable access token.",
+                code="upstream_auth_incomplete",
+            )
         if not record.account_matches_binding():
             raise AuthenticationError(
-                "Stored AIRelays auth is bound to a different upstream account than the active token."
+                "Stored AIRelays auth is bound to a different upstream account than the active token.",
+                code="upstream_auth_account_mismatch",
             )
         return record
 
@@ -500,7 +512,10 @@ class AuthManager:
         async with self._refresh_lock:
             record = self.load()
             if record is None or not record.refresh_token:
-                raise AuthenticationError("Stored auth does not include a refresh token.")
+                raise AuthenticationError(
+                    "Stored auth does not include a refresh token.",
+                    code="upstream_auth_incomplete",
+                )
             last_refresh = record.last_refresh
             if (
                 not force
@@ -524,7 +539,8 @@ class AuthManager:
                 )
             if response.status_code >= 400:
                 raise AuthenticationError(
-                    f"Token refresh failed: {response.status_code} {response.text}"
+                    f"Token refresh failed: {response.status_code} {response.text}",
+                    code="upstream_auth_refresh_failed",
                 )
             data = response.json()
             refreshed = self._build_auth_payload(

@@ -48,6 +48,7 @@ airelays serve --no-auth --port 8080
 
 You can also use `AIRELAYS_REQUIRE_BEARER_AUTH=false`.
 If you disable relay auth, keep the listener on loopback unless you fully understand the exposure consequences.
+This disables only the AIRelays client token gate. It does not remove the need for `airelays login`.
 
 ## Is AIRelays meant for shared or multi-user use?
 

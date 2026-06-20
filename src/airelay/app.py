@@ -51,9 +51,14 @@ def _http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, HTTPException):
         return exc
     if isinstance(exc, BackendError):
+        if exc.status_code == 401:
+            return AuthenticationError(
+                "Upstream ChatGPT login is missing or expired. Run `airelays login` first.",
+                code="upstream_auth_rejected",
+            )
         return HTTPException(status_code=exc.status_code, detail=exc.detail)
     if isinstance(exc, AuthenticationError):
-        return HTTPException(status_code=401, detail=str(exc))
+        return exc
     if isinstance(exc, TranslationError):
         return HTTPException(status_code=422, detail=str(exc))
     raise HTTPException(status_code=500, detail=str(exc))
@@ -119,6 +124,39 @@ def create_app(settings: Settings) -> FastAPI:
         await backend.close()
 
     app = FastAPI(title=APP_NAME, version=__version__, lifespan=lifespan)
+
+    def authentication_error_payload(exc: AuthenticationError) -> tuple[int, dict[str, Any], dict[str, str] | None]:
+        message = str(exc)
+        code = getattr(exc, "code", "upstream_auth_error")
+        headers: dict[str, str] | None = None
+        if code == "upstream_auth_missing" or message.startswith("No ChatGPT login found."):
+            code = "upstream_auth_missing"
+            headers = {"x-airelays-upstream-auth": "missing"}
+        elif code == "upstream_auth_refresh_failed" or message.startswith("Token refresh failed:"):
+            code = "upstream_auth_refresh_failed"
+            headers = {"x-airelays-upstream-auth": "refresh_failed"}
+        elif code == "upstream_auth_incomplete" or message.startswith("Stored auth does not include"):
+            code = "upstream_auth_incomplete"
+            headers = {"x-airelays-upstream-auth": "incomplete"}
+        elif code == "upstream_auth_account_mismatch" or "bound to a different upstream account" in message:
+            code = "upstream_auth_account_mismatch"
+            headers = {"x-airelays-upstream-auth": "account_mismatch"}
+        elif code == "upstream_auth_rejected":
+            headers = {"x-airelays-upstream-auth": "rejected"}
+        payload = {
+            "error": {
+                "message": message,
+                "type": "authentication_error",
+                "code": code,
+            }
+        }
+        return 503, payload, headers
+
+    @app.exception_handler(AuthenticationError)
+    async def authentication_error_handler(request: Request, exc: AuthenticationError) -> JSONResponse:
+        request_id = _request_id(request)
+        status_code, payload, headers = authentication_error_payload(exc)
+        return logged_json(request_id, payload, status_code=status_code, headers=headers)
 
     @app.middleware("http")
     async def guard_requests(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -282,7 +320,7 @@ def create_app(settings: Settings) -> FastAPI:
             "version": __version__,
             "ready": {
                 "upstream_auth": bool(auth_status.get("ready_for_requests")),
-                "relay_token": bool(settings.resolve_bearer_token()),
+                "relay_token": (not settings.require_bearer_auth) or bool(settings.resolve_bearer_token()),
             },
             "auth": auth_status,
             "relay": settings.summary(),

@@ -47,7 +47,8 @@ def _client_usage_payload(settings: Settings, include_token: bool = False) -> di
     else:
         payload["api_key_note"] = (
             "No relay token is required. If your client insists on an api_key value, "
-            "any non-empty placeholder string is acceptable."
+            "any non-empty placeholder string is acceptable. Upstream ChatGPT login "
+            "from `airelays login` is still required."
         )
     return payload
 
@@ -413,6 +414,12 @@ def _print_serve_banner(settings: Settings, auth_ready: bool) -> None:
     _print_section("Upstream Session")
     _print_bool("ChatGPT login", auth_ready, true_text="ready", false_text="missing")
     if not auth_ready:
+        if not settings.require_bearer_auth:
+            _print_field(
+                "Open mode note",
+                "Local relay token is disabled, but upstream ChatGPT login is still required.",
+                kind="warn",
+            )
         _print_command("Next command", "airelays login")
     print()
 
@@ -540,7 +547,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--no-auth",
         action="store_true",
-        help="Disable relay bearer auth for this server process",
+        help="Disable AIRelays local bearer auth for this server process; upstream ChatGPT login is still required",
     )
     serve.set_defaults(func=_run_serve)
 
@@ -554,7 +561,7 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument(
         "--no-auth",
         action="store_true",
-        help="Write config with bearer auth disabled and skip relay-token creation",
+        help="Write config with local bearer auth disabled and skip relay-token creation; upstream ChatGPT login is still required",
     )
     init.add_argument(
         "--show-token",

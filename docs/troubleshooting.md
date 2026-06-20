@@ -14,7 +14,7 @@ Checks:
 - use `airelays status --json` if you want field-based checks in automation
 - if you intended an open local relay, restart with `airelays serve --no-auth` or `AIRELAYS_REQUIRE_BEARER_AUTH=false`
 
-## `401 No ChatGPT login found`
+## `503 No ChatGPT login found`
 
 AIRelays could not find reusable upstream auth.
 
