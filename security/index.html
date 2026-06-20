@@ -975,6 +975,7 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <li>rate limits and concurrent-request caps still apply</li>
 <li>the default loopback listener is the safest way to run it</li>
 <li>if a client library insists on an API key field, any non-empty placeholder string is acceptable</li>
+<li>the upstream ChatGPT login from <code>airelays login</code> is still required for model requests</li>
 </ul>
 <p>Rotate the token with:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>token<span class="w"> </span>rotate

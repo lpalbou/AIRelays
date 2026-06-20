@@ -538,10 +538,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#401-no-chatgpt-login-found" class="md-nav__link">
+  <a href="#503-no-chatgpt-login-found" class="md-nav__link">
     <span class="md-ellipsis">
       
-        401 No ChatGPT login found
+        503 No ChatGPT login found
       
     </span>
   </a>
@@ -853,10 +853,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#401-no-chatgpt-login-found" class="md-nav__link">
+  <a href="#503-no-chatgpt-login-found" class="md-nav__link">
     <span class="md-ellipsis">
       
-        401 No ChatGPT login found
+        503 No ChatGPT login found
       
     </span>
   </a>
@@ -962,13 +962,14 @@
 <li>use <code>airelays status --json</code> if you want field-based checks in automation</li>
 <li>if you intended an open local relay, restart with <code>airelays serve --no-auth</code> or <code>AIRELAYS_REQUIRE_BEARER_AUTH=false</code></li>
 </ul>
-<h2 id="401-no-chatgpt-login-found"><code>401 No ChatGPT login found</code><a class="headerlink" href="#401-no-chatgpt-login-found" title="Permanent link">&para;</a></h2>
+<h2 id="503-no-chatgpt-login-found"><code>503 No ChatGPT login found</code><a class="headerlink" href="#503-no-chatgpt-login-found" title="Permanent link">&para;</a></h2>
 <p>AIRelays could not find reusable upstream auth.</p>
 <p>Checks:</p>
 <ul>
 <li>run <code>airelays status</code></li>
 <li>confirm the Upstream Session section shows <code>Ready: yes</code></li>
 <li>if not, run <code>airelays login</code></li>
+<li>if you upgraded from earlier AIRelay local state, AIRelays can reuse singular-path config or data directories and older <code>AIRelay Auth</code> keychain entries automatically</li>
 <li>if <code>airelays login</code> cannot bind <code>localhost:1455</code>, retry later or use <code>airelays login --device</code></li>
 </ul>
 <h2 id="429-too-many-invalid-authentication-attempts-from-this-ip"><code>429 Too many invalid authentication attempts from this IP</code><a class="headerlink" href="#429-too-many-invalid-authentication-attempts-from-this-ip" title="Permanent link">&para;</a></h2>

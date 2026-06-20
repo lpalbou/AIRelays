@@ -1023,7 +1023,9 @@
 <p>From a published package:</p>
 <div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>airelays
 </code></pre></div>
-<p>Open local relay mode uses the same package and login flow. The difference is whether you keep the default bearer-token protection or disable it for the running process.</p>
+<p>Open local relay mode uses the same package and login flow. The difference is whether you keep the default bearer-token protection or disable it for the running process.
+It does not bypass the upstream ChatGPT login. Run <code>airelays login</code> before expecting model routes to succeed.
+If you already have earlier AIRelay local state under singular paths such as <code>~/.config/airelay</code> or <code>~/.airelay</code>, AIRelays can continue using it for compatibility.</p>
 <h2 id="initialize-airelays">Initialize AIRelays<a class="headerlink" href="#initialize-airelays" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init
 </code></pre></div>
@@ -1069,7 +1071,8 @@ Next Steps
 <p>Browser login:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>login
 </code></pre></div>
-<p>By default, AIRelays prints the login URL so you can open it in the browser profile you choose. Set <code>AIRELAYS_BROWSER_OPEN=true</code> if you want AIRelays to try opening the browser automatically.</p>
+<p>By default, AIRelays prints the login URL so you can open it in the browser profile you choose. Set <code>AIRELAYS_BROWSER_OPEN=true</code> if you want AIRelays to try opening the browser automatically.
+Existing macOS keychain sessions stored under the earlier <code>AIRelay Auth</code> service name are recognized automatically.</p>
 <p>If the browser flow cannot bind <code>localhost:1455</code>, use device-code login instead:</p>
 <p>Device-code login:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>login<span class="w"> </span>--device
@@ -1099,7 +1102,8 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <p>To do the same through environment or config:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">AIRELAYS_REQUIRE_BEARER_AUTH</span><span class="o">=</span><span class="nb">false</span><span class="w"> </span>airelays<span class="w"> </span>serve<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
-<p>When bearer auth is disabled, clients can call <code>/v1/*</code> and <code>/no-tools/v1/*</code> without <code>Authorization</code>. If a client library insists on an API key field, use any non-empty placeholder string.</p>
+<p>When bearer auth is disabled, clients can call <code>/v1/*</code> and <code>/no-tools/v1/*</code> without <code>Authorization</code>. If a client library insists on an API key field, use any non-empty placeholder string.
+If <code>airelays login</code> has not completed yet, model routes still fail because AIRelays has no upstream ChatGPT session to use.</p>
 <h2 id="verify-the-server">Verify The Server<a class="headerlink" href="#verify-the-server" title="Permanent link">&para;</a></h2>
 <p>Public liveness:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/healthz
@@ -1111,6 +1115,32 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 </code></pre></div>
 <p><code>/healthz</code> is intentionally minimal. Use <code>/v1/relay/status</code> when you need protected config, auth, storage, and limiter details.
 If you launched with <code>--no-auth</code>, the same <code>/v1/relay/status</code> request works without the <code>Authorization</code> header.</p>
+<p>Protected model listing:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>http://127.0.0.1:8080/v1/models
+</code></pre></div>
+<p>Protected simple query:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;content-type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>http://127.0.0.1:8080/v1/chat/completions<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<span class="s1">    &quot;model&quot;: &quot;gpt-5.5&quot;,</span>
+<span class="s1">    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Reply with exactly: AIRelays OK&quot;}]</span>
+<span class="s1">  }&#39;</span>
+</code></pre></div>
+<p>Open local relay equivalents:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/v1/models
+
+curl<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;content-type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>http://127.0.0.1:8080/v1/chat/completions<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<span class="s1">    &quot;model&quot;: &quot;gpt-5.5&quot;,</span>
+<span class="s1">    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Reply with exactly: AIRelays OK&quot;}]</span>
+<span class="s1">  }&#39;</span>
+</code></pre></div>
 <h2 id="point-your-client">Point Your Client<a class="headerlink" href="#point-your-client" title="Permanent link">&para;</a></h2>
 <p>Base URL:</p>
 <div class="highlight"><pre><span></span><code>http://127.0.0.1:8080/v1
@@ -1145,7 +1175,7 @@ Use <code>airelays token rotate --json</code> if you need the new token in machi
 <span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="s1">&#39;http://127.0.0.1:8080/v1/subscription/status?raw=true&#39;</span>
 </code></pre></div>
-<p>If you launched with <code>--no-auth</code>, those same requests work without the <code>Authorization</code> header.</p>
+<p>If you launched with <code>--no-auth</code>, those same requests work without the <code>Authorization</code> header after <code>airelays login</code> has created an upstream session.</p>
 <p>See <a href="../subscription-status/">Subscription Status</a> for field details.</p>
 <h2 id="useful-commands">Useful Commands<a class="headerlink" href="#useful-commands" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init

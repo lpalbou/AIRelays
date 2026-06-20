@@ -430,6 +430,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#legacy-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legacy Compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -885,6 +896,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#legacy-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legacy Compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -914,6 +936,7 @@
 <li><code>~/.config/airelays/config.toml</code></li>
 <li>built-in defaults</li>
 </ol>
+<p>If an earlier AIRelay config already exists at <code>~/.config/airelay/config.toml</code>, AIRelays can continue using that path for compatibility.</p>
 <h2 id="default-paths">Default Paths<a class="headerlink" href="#default-paths" title="Permanent link">&para;</a></h2>
 <ul>
 <li>config: <code>~/.config/airelays/config.toml</code></li>
@@ -1029,9 +1052,18 @@
 <li><code>airelays init --no-auth</code> writes config with bearer auth disabled and skips relay-token creation.</li>
 <li><code>AIRELAYS_BEARER_TOKEN</code> overrides the token file for the current process.</li>
 <li><code>auth.storage = "auto"</code> prefers the AIRelays keyring namespace and falls back to <code>~/.airelays/auth.json</code> when keyring access is unavailable.</li>
+<li><code>auth.storage = "auto"</code> also recognizes earlier <code>AIRelay Auth</code> keychain entries and migrates them into the AIRelays-owned namespace when they are encountered.</li>
 <li><code>AIRELAYS_TRUST_X_FORWARDED_FOR</code> should stay <code>false</code> unless you intentionally run behind a trusted proxy.</li>
 <li>The listener remains loopback-only by default. Change <code>host</code> explicitly if you need broader access.</li>
 </ul>
+<h2 id="legacy-compatibility">Legacy Compatibility<a class="headerlink" href="#legacy-compatibility" title="Permanent link">&para;</a></h2>
+<p>AIRelays keeps compatibility with earlier singular AIRelay naming where it matters for local upgrades:</p>
+<ul>
+<li>legacy config path: <code>~/.config/airelay/config.toml</code></li>
+<li>legacy data dir: <code>~/.airelay</code></li>
+<li>legacy keychain service name: <code>AIRelay Auth</code></li>
+</ul>
+<p>If those paths or entries already exist, AIRelays can continue using or importing them instead of forcing a fresh login or a manual migration.</p>
 
 
 

@@ -511,6 +511,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#will-earlier-airelay-local-state-still-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Will earlier AIRelay local state still work?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#is-the-airelays-project-affiliated-with-openai" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -886,6 +897,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#will-earlier-airelay-local-state-still-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Will earlier AIRelay local state still work?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#is-the-airelays-project-affiliated-with-openai" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1018,6 +1040,8 @@
 <h1 id="faq">FAQ<a class="headerlink" href="#faq" title="Permanent link">&para;</a></h1>
 <h2 id="does-the-airelays-relay-use-my-openai-platform-api-key">Does the AIRelays relay use my OpenAI platform API key?<a class="headerlink" href="#does-the-airelays-relay-use-my-openai-platform-api-key" title="Permanent link">&para;</a></h2>
 <p>No. AIRelays uses an AIRelays-owned ChatGPT subscription login for upstream inference.</p>
+<h2 id="will-earlier-airelay-local-state-still-work">Will earlier AIRelay local state still work?<a class="headerlink" href="#will-earlier-airelay-local-state-still-work" title="Permanent link">&para;</a></h2>
+<p>Yes. AIRelays keeps compatibility with earlier singular-path local state such as <code>~/.config/airelay</code>, <code>~/.airelay</code>, and older <code>AIRelay Auth</code> keychain entries.</p>
 <h2 id="is-the-airelays-project-affiliated-with-openai">Is the AIRelays project affiliated with OpenAI?<a class="headerlink" href="#is-the-airelays-project-affiliated-with-openai" title="Permanent link">&para;</a></h2>
 <p>No. AIRelays is an independent third-party project. Provider and product names are used only to describe compatibility targets and upstream behavior.</p>
 <h2 id="what-api-key-do-i-give-my-client">What API key do I give my client?<a class="headerlink" href="#what-api-key-do-i-give-my-client" title="Permanent link">&para;</a></h2>
@@ -1043,7 +1067,8 @@
 airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
 <p>You can also use <code>AIRELAYS_REQUIRE_BEARER_AUTH=false</code>.
-If you disable relay auth, keep the listener on loopback unless you fully understand the exposure consequences.</p>
+If you disable relay auth, keep the listener on loopback unless you fully understand the exposure consequences.
+This disables only the AIRelays client token gate. It does not remove the need for <code>airelays login</code>.</p>
 <h2 id="is-airelays-meant-for-shared-or-multi-user-use">Is AIRelays meant for shared or multi-user use?<a class="headerlink" href="#is-airelays-meant-for-shared-or-multi-user-use" title="Permanent link">&para;</a></h2>
 <p>No. AIRelays is designed and documented for a single user operating a local relay for personal convenience. It is not presented as a shared, pooled, multi-user, or resale service.</p>
 <h2 id="does-airelays-support-anthropic-or-gemini-today">Does AIRelays support Anthropic or Gemini today?<a class="headerlink" href="#does-airelays-support-anthropic-or-gemini-today" title="Permanent link">&para;</a></h2>
