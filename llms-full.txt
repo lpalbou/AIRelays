@@ -1,0 +1,163 @@
+# AIRelays
+
+AIRelays is a local OpenAI-compatible HTTP server backed by a ChatGPT subscription login that AIRelays stores independently. It does not require a user-supplied OpenAI platform API key for upstream inference. Instead, it uses the same upstream login protocol that Codex uses while keeping AIRelays auth storage separate from Codex storage.
+
+Clients that call AIRelays should use the relay bearer token as the local client credential they present to AIRelays in the default protected mode. AIRelays can also run in open local relay mode with bearer auth disabled for the server process.
+
+AIRelays is an independent third-party project. It is not affiliated with, endorsed by, or sponsored by OpenAI. Provider and product names are used only to describe compatibility targets and upstream behavior. AIRelays is designed for a single user operating a local relay for personal convenience, not as a shared or resale service.
+
+## Project Summary
+
+- local OpenAI-compatible endpoint
+- ChatGPT subscription-backed upstream access
+- separate local relay bearer token
+- optional open local relay mode with no client bearer token
+- route-level protection for `/v1/*` and `/no-tools/v1/*`
+- JSONL traffic logging with redaction
+- explicit compatibility limits instead of silent fallback
+
+## First-Run Workflow
+
+Install from a source checkout:
+
+```bash
+python -m pip install .
+```
+
+Install from a published package:
+
+```bash
+python -m pip install airelays
+```
+
+1. `airelays init`
+   - writes `~/.config/airelays/config.toml` if needed
+   - creates `~/.airelays/relay-token` if needed
+   - reveals the token only when it was newly created
+2. `airelays init --no-auth`
+   - writes config with bearer auth disabled
+   - skips relay-token creation
+3. `airelays login`
+   - creates an AIRelays-owned ChatGPT subscription session
+4. `airelays serve --port 8080`
+   - starts the protected local server
+   - fails fast if bearer auth is enabled but no relay token is configured
+   - prints the client base URL, token file path, and required `Authorization` header shape
+5. `airelays serve --no-auth --port 8080`
+   - starts an open local server with no relay-token check
+
+Inspect current state with:
+
+```bash
+airelays status
+```
+
+The CLI defaults to readable terminal output. Use `--json` on `airelays init`, `airelays status`, `airelays logout`, `airelays token show`, or `airelays token rotate` when you need machine-readable output.
+
+Show the current relay token with:
+
+```bash
+airelays token show
+```
+
+Rotate the relay token with:
+
+```bash
+airelays token rotate
+```
+
+Smoke tests:
+
+```bash
+curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:8080/v1/relay/status \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
+```
+
+In open local relay mode, the same `/v1/relay/status` request works without the `Authorization` header.
+
+## Client Configuration
+
+- base URL: `http://127.0.0.1:8080/v1`
+- client credential: the AIRelays relay token
+
+Standard OpenAI SDKs work because they send `Authorization: Bearer <api-key>`.
+
+In open local relay mode, the relay does not require `Authorization`. If an SDK still insists on an `api_key` field, any non-empty placeholder string is acceptable.
+
+## Verified Compatibility Boundary
+
+- inference upstream: `https://chatgpt.com/backend-api/codex`
+- subscription-status upstream: `https://chatgpt.com/backend-api/wham/usage`
+- non-stream responses are reconstructed from streamed upstream events
+- `store=true` is rejected
+- empty instructions are adapted to `"."`
+- local text and JSON-like files up to 1 MB can be inlined
+- local image files can be expanded into `input_image`
+- local uploads are capped at 32 MiB per file and 256 MiB total by default
+- embeddings, image generation, audio, and realtime routes currently return explicit `501 unsupported_error`
+
+## Relay Security
+
+- default listener: `127.0.0.1:8080`
+- protected routes: `/v1/*` and `/no-tools/v1/*`
+- public liveness: `GET /healthz`
+- protected diagnostics: `GET /v1/relay/status`
+- relay token file: `~/.airelays/relay-token`
+- open local relay override: `AIRELAYS_REQUIRE_BEARER_AUTH=false` or `airelays serve --no-auth`
+- default request rate limit: `120` requests/minute per IP
+- default burst: `40`
+- default concurrent-request cap: `8` per IP
+- default repeated-auth-failure block: `8` bad attempts in `300` seconds -> `900` second block
+
+Security-relevant events are written to the normal hourly log files. Raw bearer tokens are not written to logs.
+
+## Important Paths
+
+- config: `~/.config/airelays/config.toml`
+- data dir: `~/.airelays`
+- logs: `~/.airelays/logs`
+- upstream auth fallback file: `~/.airelays/auth.json`
+- server token override: `AIRELAYS_BEARER_TOKEN` or `--bearer-token-file`
+
+## Documentation Map
+
+- `README.md`
+  - overview, quick start, supported routes, security defaults, and publication surface
+- `docs/getting-started.md`
+  - first-run setup and basic commands
+- `docs/configuration.md`
+  - config file layout, env overrides, and important paths
+- `docs/security.md`
+  - route protection, rate limits, token rotation, and logging
+- `DISCLAIMER.md`
+  - independence, non-endorsement, and intended single-user local use
+- `docs/api.md`
+  - supported routes and explicit unsupported routes
+- `docs/architecture.md`
+  - package boundaries and request flow
+- `docs/subscription-status.md`
+  - normalized subscription-status payload
+- `docs/faq.md`
+  - common usage and policy questions
+- `docs/troubleshooting.md`
+  - auth, token, and rate-limit recovery
+- `docs/adr/README.md`
+  - ADR index
+
+## Python Package Surface
+
+- `airelays.config`
+  - config resolution, local paths, token bootstrap
+- `airelays.security`
+  - bearer-token enforcement and in-memory abuse controls
+- `airelays.auth`
+  - AIRelays-owned upstream ChatGPT subscription auth and refresh
+- `airelays.backend`
+  - upstream inference and usage calls
+- `airelays.transforms`
+  - OpenAI-shape request/response translation
+- `airelays.store`
+  - local files and local conversation state
+- `airelays.traffic`
+  - redacted JSONL traffic logging

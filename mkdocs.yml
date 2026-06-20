@@ -1,0 +1,51 @@
+site_name: AIRelays
+site_description: AIRelays is an independent local relay that exposes an OpenAI-compatible API over a subscription-backed upstream login.
+site_url: https://lpalbou.github.io/AIRelays/
+repo_url: https://github.com/lpalbou/AIRelays
+repo_name: lpalbou/AIRelays
+
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.highlight
+
+plugins:
+  - search
+
+validation:
+  nav:
+    omitted_files: ignore
+  links:
+    not_found: ignore
+    unrecognized_links: ignore
+
+nav:
+  - Home: index.md
+  - Docs Index: README.md
+  - Getting Started: getting-started.md
+  - Configuration: configuration.md
+  - Security: security.md
+  - API Notes: api.md
+  - Architecture: architecture.md
+  - Subscription Status: subscription-status.md
+  - FAQ: faq.md
+  - Troubleshooting: troubleshooting.md
+  - Disclaimer: disclaimer.md
+  - Design:
+      - ADR Index: adr/README.md
+      - No Silent Degradation: adr/0001-no-silent-degradation-truncation-or-budget-invention.md
+      - Subscription Compatibility Boundary: adr/0002-chatgpt-subscription-backend-compatibility-boundary.md
+      - Local Config And Relay Security: adr/0003-local-config-and-default-deny-relay-security.md
