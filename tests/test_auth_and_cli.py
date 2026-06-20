@@ -334,6 +334,8 @@ def test_cli_serve_prints_client_auth_guidance(tmp_path, monkeypatch, capsys) ->
     assert "http://127.0.0.1:8090/v1" in output
     assert "Authorization: Bearer <AIRelays token>" in output
     assert "airelays token show" in output
+    assert "ChatGPT login" in output
+    assert "airelays login" in output
     assert captured["port"] == 8090
 
 
@@ -369,4 +371,6 @@ def test_cli_serve_no_auth_starts_open_mode_without_token(tmp_path, monkeypatch,
     assert "AIRelays Server" in output
     assert "disabled" in output
     assert "optional placeholder only" in output
+    assert "ChatGPT login" in output
+    assert "airelays login" in output
     assert captured["port"] == 8090

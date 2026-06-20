@@ -392,7 +392,7 @@ def _print_token_show_summary(payload: dict[str, object]) -> None:
     _print_steps([str(step) for step in payload.get("next_steps", [])])
 
 
-def _print_serve_banner(settings: Settings) -> None:
+def _print_serve_banner(settings: Settings, auth_ready: bool) -> None:
     _print_title("AIRelays Server")
     _print_section("Listener")
     _print_field("Base URL", settings.client_base_url())
@@ -410,6 +410,10 @@ def _print_serve_banner(settings: Settings) -> None:
         _print_field("Bearer auth", "disabled", kind="warn")
         _print_field("Access mode", "open", kind="warn")
         _print_field("Client key", "optional placeholder only", kind="warn")
+    _print_section("Upstream Session")
+    _print_bool("ChatGPT login", auth_ready, true_text="ready", false_text="missing")
+    if not auth_ready:
+        _print_command("Next command", "airelays login")
     print()
 
 
@@ -501,7 +505,8 @@ def _run_serve(args: argparse.Namespace) -> None:
                 "Bearer authentication is enabled, but no relay token is configured. "
                 "Run `airelays init` or set AIRELAYS_BEARER_TOKEN."
             )
-    _print_serve_banner(settings)
+    auth_ready = bool(_auth_manager(settings).status().get("ready_for_requests"))
+    _print_serve_banner(settings, auth_ready)
     app = create_app(settings)
     uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
 
