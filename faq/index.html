@@ -631,6 +631,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#why-do-token-limit-parameters-return-422" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why do token-limit parameters return 422?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-do-file-inputs-work-on-v1responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How do file inputs work on /v1/responses?
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1017,6 +1039,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#why-do-token-limit-parameters-return-422" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why do token-limit parameters return 422?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-do-file-inputs-work-on-v1responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How do file inputs work on /v1/responses?
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1075,6 +1119,22 @@ This disables only the AIRelays client token gate. It does not remove the need f
 <p>No. The current verified upstream is the ChatGPT Codex subscription backend. The package and config surface were cleaned up so future provider adapters are easier to add, but they are not part of the shipped runtime yet.</p>
 <h2 id="why-do-some-openai-parameters-disappear">Why do some OpenAI parameters disappear?<a class="headerlink" href="#why-do-some-openai-parameters-disappear" title="Permanent link">&para;</a></h2>
 <p>The ChatGPT subscription backend rejects some OpenAI sampling parameters. AIRelays omits the known unsupported fields and reports that explicitly in <code>x-airelays-ignored-parameters</code>.</p>
+<h2 id="why-do-token-limit-parameters-return-422">Why do token-limit parameters return <code>422</code>?<a class="headerlink" href="#why-do-token-limit-parameters-return-422" title="Permanent link">&para;</a></h2>
+<p>The verified subscription backend does not currently accept the OpenAI token-limit parameters on AIRelays' OpenAI-shaped text-generation routes. AIRelays rejects them explicitly instead of passing them through and surfacing a less clear upstream failure:</p>
+<ul>
+<li><code>max_output_tokens</code> on <code>/v1/responses</code></li>
+<li><code>max_completion_tokens</code> on <code>/v1/chat/completions</code></li>
+<li><code>max_tokens</code> on <code>/v1/completions</code></li>
+</ul>
+<h2 id="how-do-file-inputs-work-on-v1responses">How do file inputs work on <code>/v1/responses</code>?<a class="headerlink" href="#how-do-file-inputs-work-on-v1responses" title="Permanent link">&para;</a></h2>
+<p>AIRelays supports the OpenAI-style <code>input_file</code> shapes that were verified against the subscription backend:</p>
+<ul>
+<li>external <code>file_url</code></li>
+<li>inline data URLs in <code>file_data</code></li>
+<li>raw Base64 <code>file_data</code> when <code>filename</code> is present so AIRelays can determine the content type</li>
+<li>AIRelays local <code>file_id</code> values returned by <code>POST /v1/files</code></li>
+</ul>
+<p>When you reuse a local AIRelays <code>file_id</code>, AIRelays expands it into an inline file or image input before sending the request upstream.</p>
 
 
 

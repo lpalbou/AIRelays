@@ -1302,11 +1302,12 @@
 <li>legacy prompt-in, text-out shape</li>
 <li><code>stream=true|false</code></li>
 <li><code>conversation</code></li>
-<li>common generation controls such as <code>max_tokens</code>, <code>stop</code>, <code>metadata</code>, and <code>user</code></li>
+<li>common generation controls such as <code>stop</code>, <code>metadata</code>, and <code>user</code></li>
 </ul>
 <p>Currently rejected:</p>
 <ul>
 <li><code>n</code> other than <code>1</code></li>
+<li><code>max_tokens</code></li>
 <li><code>best_of</code></li>
 <li><code>echo</code></li>
 <li><code>logprobs</code></li>
@@ -1320,17 +1321,22 @@
 <li><code>stream=true|false</code></li>
 <li><code>conversation</code> for local stateful sessions</li>
 <li><code>tools</code> when using the normal route</li>
-<li>local file expansion through <code>file_id</code> content items</li>
+<li>file inputs by external <code>file_url</code></li>
+<li>raw Base64 <code>input_file.file_data</code> when <code>filename</code> is provided</li>
+<li>AIRelays local <code>file_id</code> values from <code>POST /v1/files</code></li>
 </ul>
 <p>Notes:</p>
 <ul>
 <li>AIRelays preserves the general OpenAI Responses request and response envelopes, but parameter parity is not complete on this route</li>
 <li>upstream storage is forced to <code>false</code></li>
 <li><code>conversation</code> accepts a local conversation id string or <code>{ "id": "..." }</code></li>
+<li><code>max_output_tokens</code> is rejected explicitly because the verified subscription backend does not currently accept it on this route</li>
 <li>missing instructions are adapted to the verified minimal placeholder <code>"."</code></li>
 <li><code>text.format.type=json_schema</code> is normalized to match the stricter verified subscription-backend schema rules</li>
 <li><code>text.format.type=json_object</code> is rejected as unverified</li>
 <li>non-stream requests are reconstructed from streamed upstream output</li>
+<li>raw <code>input_file.file_data</code> is normalized into inline data URLs for the subscription backend when AIRelays can determine the content type from <code>filename</code></li>
+<li>AIRelays local uploaded-file ids are expanded into inline file or image inputs before the upstream call</li>
 <li>unsupported upstream sampling parameters are omitted before the upstream call; when that happens AIRelays adds <code>x-airelays-ignored-parameters</code></li>
 </ul>
 <h3 id="post-no-toolsv1responses"><code>POST /no-tools/v1/responses</code><a class="headerlink" href="#post-no-toolsv1responses" title="Permanent link">&para;</a></h3>
@@ -1343,11 +1349,12 @@
 <li>assistant function tool calls and tool outputs are mapped into upstream function call items</li>
 <li><code>stream=true|false</code></li>
 <li><code>conversation</code></li>
-<li>common generation parameters such as <code>max_completion_tokens</code>, <code>metadata</code>, <code>service_tier</code>, and <code>user</code></li>
+<li>common generation parameters such as <code>metadata</code>, <code>service_tier</code>, and <code>user</code></li>
 </ul>
 <p>Currently rejected:</p>
 <ul>
 <li><code>n</code> other than <code>1</code></li>
+<li><code>max_completion_tokens</code></li>
 <li><code>audio</code></li>
 <li><code>modalities</code></li>
 <li><code>prediction</code></li>
@@ -1402,7 +1409,7 @@
 <ul>
 <li>text-like files larger than 1 MB are rejected</li>
 <li>images are passed as <code>input_image</code></li>
-<li>unsupported binary files are rejected</li>
+<li>local <code>input_file</code> references are expanded into inline file data so PDFs and other supported document types can be reused on <code>/v1/responses</code></li>
 </ul>
 <h2 id="relay-auth">Relay Auth<a class="headerlink" href="#relay-auth" title="Permanent link">&para;</a></h2>
 <p>AIRelays protects <code>/v1/*</code> and <code>/no-tools/v1/*</code>.</p>
