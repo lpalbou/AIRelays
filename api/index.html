@@ -1,0 +1,1478 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="AIRelays is an independent local relay that exposes an OpenAI-compatible API over a subscription-backed upstream login.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AIRelays/api/">
+      
+      
+        <link rel="prev" href="../security/">
+      
+      
+        <link rel="next" href="../architecture/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>API Notes - AIRelays</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#api-notes" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AIRelays" class="md-header__button md-logo" aria-label="AIRelays" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AIRelays
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              API Notes
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/AIRelays" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/AIRelays
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AIRelays" class="md-nav__button md-logo" aria-label="AIRelays" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AIRelays
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/AIRelays" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/AIRelays
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../README.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docs Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Notes
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#supported-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Routes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Supported Routes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-v1models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/models
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1subscriptionstatus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/subscription/status
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1accountrate_limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/account/rate_limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1relaystatus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/relay/status
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-v1completions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/completions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-v1responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/responses
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-no-toolsv1responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /no-tools/v1/responses
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-v1chatcompletions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/chat/completions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-no-toolsv1chatcompletions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /no-tools/v1/chat/completions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-v1files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1filesfile_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/files/{file_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1filesfile_idcontent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/files/{file_id}/content
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-v1filesfile_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DELETE /v1/files/{file_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-v1conversations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/conversations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1conversationsconversation_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/conversations/{conversation_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-v1conversationsconversation_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/conversations/{conversation_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-v1conversationsconversation_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DELETE /v1/conversations/{conversation_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#explicitly-unsupported-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explicitly Unsupported Routes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-expansion-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File Expansion Rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relay-auth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relay Auth
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../subscription-status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subscription Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../disclaimer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Disclaimer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
+        
+          
+          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_12">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Design
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADR Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0001-no-silent-degradation-truncation-or-budget-invention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    No Silent Degradation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0002-chatgpt-subscription-backend-compatibility-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subscription Compatibility Boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0003-local-config-and-default-deny-relay-security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Config And Relay Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#supported-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Routes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Supported Routes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-v1models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/models
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1subscriptionstatus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/subscription/status
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1accountrate_limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/account/rate_limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1relaystatus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/relay/status
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-v1completions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/completions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-v1responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/responses
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-no-toolsv1responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /no-tools/v1/responses
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-v1chatcompletions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/chat/completions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-no-toolsv1chatcompletions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /no-tools/v1/chat/completions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-v1files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1filesfile_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/files/{file_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1filesfile_idcontent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/files/{file_id}/content
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-v1filesfile_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DELETE /v1/files/{file_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-v1conversations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/conversations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-v1conversationsconversation_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/conversations/{conversation_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-v1conversationsconversation_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/conversations/{conversation_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-v1conversationsconversation_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DELETE /v1/conversations/{conversation_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#explicitly-unsupported-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explicitly Unsupported Routes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-expansion-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File Expansion Rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relay-auth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relay Auth
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="api-notes">API Notes<a class="headerlink" href="#api-notes" title="Permanent link">&para;</a></h1>
+<h2 id="supported-routes">Supported Routes<a class="headerlink" href="#supported-routes" title="Permanent link">&para;</a></h2>
+<h3 id="get-v1models"><code>GET /v1/models</code><a class="headerlink" href="#get-v1models" title="Permanent link">&para;</a></h3>
+<p>Returns an OpenAI-style models list built from the subscription backend catalog.</p>
+<h3 id="get-v1subscriptionstatus"><code>GET /v1/subscription/status</code><a class="headerlink" href="#get-v1subscriptionstatus" title="Permanent link">&para;</a></h3>
+<p>Returns the current ChatGPT subscription snapshot from the verified upstream usage endpoint.</p>
+<p>Supported behavior:</p>
+<ul>
+<li>fetches usage from <code>chatgpt.com/backend-api/wham/usage</code></li>
+<li>normalized account summary</li>
+<li>normalized primary and secondary windows</li>
+<li>normalized additional named rate limits when the upstream exposes them</li>
+<li>normalized credits and spend-control information</li>
+<li><code>?raw=true</code> to include the raw upstream payload alongside the normalized summary</li>
+</ul>
+<h3 id="get-v1accountrate_limits"><code>GET /v1/account/rate_limits</code><a class="headerlink" href="#get-v1accountrate_limits" title="Permanent link">&para;</a></h3>
+<p>Alias of <code>/v1/subscription/status</code>.</p>
+<h3 id="get-v1relaystatus"><code>GET /v1/relay/status</code><a class="headerlink" href="#get-v1relaystatus" title="Permanent link">&para;</a></h3>
+<p>Returns protected AIRelays diagnostics for operators.</p>
+<p>Supported behavior:</p>
+<ul>
+<li>readiness flags for upstream auth and relay-token presence</li>
+<li>resolved relay config summary</li>
+<li>protected auth summary</li>
+<li>limiter diagnostics for the current client IP</li>
+<li>local storage counters for files and conversations</li>
+</ul>
+<h3 id="post-v1completions"><code>POST /v1/completions</code><a class="headerlink" href="#post-v1completions" title="Permanent link">&para;</a></h3>
+<p>Supported behavior:</p>
+<ul>
+<li>legacy prompt-in, text-out shape</li>
+<li><code>stream=true|false</code></li>
+<li><code>conversation</code></li>
+<li>common generation controls such as <code>max_tokens</code>, <code>stop</code>, <code>metadata</code>, and <code>user</code></li>
+</ul>
+<p>Currently rejected:</p>
+<ul>
+<li><code>n</code> other than <code>1</code></li>
+<li><code>best_of</code></li>
+<li><code>echo</code></li>
+<li><code>logprobs</code></li>
+<li><code>suffix</code></li>
+<li>upstream <code>store=true</code></li>
+</ul>
+<h3 id="post-v1responses"><code>POST /v1/responses</code><a class="headerlink" href="#post-v1responses" title="Permanent link">&para;</a></h3>
+<p>Supported behavior:</p>
+<ul>
+<li><code>input</code> as string, object, or array</li>
+<li><code>stream=true|false</code></li>
+<li><code>conversation</code> for local stateful sessions</li>
+<li><code>tools</code> when using the normal route</li>
+<li>local file expansion through <code>file_id</code> content items</li>
+</ul>
+<p>Notes:</p>
+<ul>
+<li>upstream storage is forced to <code>false</code></li>
+<li>missing instructions are adapted to the verified minimal placeholder <code>"."</code></li>
+<li>non-stream requests are reconstructed from streamed upstream output</li>
+<li>unsupported upstream sampling parameters are omitted before the upstream call; when that happens AIRelays adds <code>x-airelays-ignored-parameters</code></li>
+</ul>
+<h3 id="post-no-toolsv1responses"><code>POST /no-tools/v1/responses</code><a class="headerlink" href="#post-no-toolsv1responses" title="Permanent link">&para;</a></h3>
+<p>Same as <code>/v1/responses</code>, but rejects tool-bearing requests.</p>
+<h3 id="post-v1chatcompletions"><code>POST /v1/chat/completions</code><a class="headerlink" href="#post-v1chatcompletions" title="Permanent link">&para;</a></h3>
+<p>Supported behavior:</p>
+<ul>
+<li>system and developer messages are folded into upstream <code>instructions</code></li>
+<li>user and assistant messages are mapped into upstream input items</li>
+<li>assistant function tool calls and tool outputs are mapped into upstream function call items</li>
+<li><code>stream=true|false</code></li>
+<li><code>conversation</code></li>
+<li>common generation parameters such as <code>max_completion_tokens</code>, <code>metadata</code>, <code>service_tier</code>, and <code>user</code></li>
+</ul>
+<p>Currently rejected:</p>
+<ul>
+<li><code>n</code> other than <code>1</code></li>
+<li><code>audio</code></li>
+<li><code>modalities</code></li>
+<li><code>prediction</code></li>
+<li><code>response_format.type=json_object</code></li>
+<li>upstream <code>store=true</code></li>
+</ul>
+<h3 id="post-no-toolsv1chatcompletions"><code>POST /no-tools/v1/chat/completions</code><a class="headerlink" href="#post-no-toolsv1chatcompletions" title="Permanent link">&para;</a></h3>
+<p>Same as <code>/v1/chat/completions</code>, but rejects tool-bearing requests.</p>
+<h3 id="post-v1files"><code>POST /v1/files</code><a class="headerlink" href="#post-v1files" title="Permanent link">&para;</a></h3>
+<p>Stores a file locally and returns an OpenAI-style file record.</p>
+<p>Upload limits:</p>
+<ul>
+<li><code>32</code> MiB per file by default</li>
+<li><code>256</code> MiB total stored file bytes by default</li>
+<li><code>413</code> when either ceiling would be exceeded</li>
+</ul>
+<h3 id="get-v1files"><code>GET /v1/files</code><a class="headerlink" href="#get-v1files" title="Permanent link">&para;</a></h3>
+<p>Lists locally stored file metadata.</p>
+<h3 id="get-v1filesfile_id"><code>GET /v1/files/{file_id}</code><a class="headerlink" href="#get-v1filesfile_id" title="Permanent link">&para;</a></h3>
+<p>Returns file metadata.</p>
+<h3 id="get-v1filesfile_idcontent"><code>GET /v1/files/{file_id}/content</code><a class="headerlink" href="#get-v1filesfile_idcontent" title="Permanent link">&para;</a></h3>
+<p>Returns the raw stored file content.</p>
+<h3 id="delete-v1filesfile_id"><code>DELETE /v1/files/{file_id}</code><a class="headerlink" href="#delete-v1filesfile_id" title="Permanent link">&para;</a></h3>
+<p>Deletes the locally stored file.</p>
+<h3 id="post-v1conversations"><code>POST /v1/conversations</code><a class="headerlink" href="#post-v1conversations" title="Permanent link">&para;</a></h3>
+<p>Creates a local conversation container with optional metadata and seed items.</p>
+<h3 id="get-v1conversationsconversation_id"><code>GET /v1/conversations/{conversation_id}</code><a class="headerlink" href="#get-v1conversationsconversation_id" title="Permanent link">&para;</a></h3>
+<p>Returns the stored local conversation state.</p>
+<h3 id="post-v1conversationsconversation_id"><code>POST /v1/conversations/{conversation_id}</code><a class="headerlink" href="#post-v1conversationsconversation_id" title="Permanent link">&para;</a></h3>
+<p>Merges new metadata into a stored local conversation.</p>
+<h3 id="delete-v1conversationsconversation_id"><code>DELETE /v1/conversations/{conversation_id}</code><a class="headerlink" href="#delete-v1conversationsconversation_id" title="Permanent link">&para;</a></h3>
+<p>Deletes a stored local conversation.</p>
+<h2 id="explicitly-unsupported-routes">Explicitly Unsupported Routes<a class="headerlink" href="#explicitly-unsupported-routes" title="Permanent link">&para;</a></h2>
+<p>These currently return <code>501 unsupported_error</code>:</p>
+<ul>
+<li><code>POST /v1/embeddings</code></li>
+<li><code>POST /v1/images/{operation}</code></li>
+<li><code>POST /v1/audio/{operation}</code></li>
+<li><code>POST /v1/realtime/sessions</code></li>
+</ul>
+<h2 id="file-expansion-rules">File Expansion Rules<a class="headerlink" href="#file-expansion-rules" title="Permanent link">&para;</a></h2>
+<p>Text-like MIME types:</p>
+<ul>
+<li><code>text/*</code></li>
+<li><code>application/json</code></li>
+<li><code>application/xml</code></li>
+<li><code>application/yaml</code></li>
+<li><code>application/x-yaml</code></li>
+<li><code>application/csv</code></li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li>text-like files larger than 1 MB are rejected</li>
+<li>images are passed as <code>input_image</code></li>
+<li>unsupported binary files are rejected</li>
+</ul>
+<h2 id="relay-auth">Relay Auth<a class="headerlink" href="#relay-auth" title="Permanent link">&para;</a></h2>
+<p>AIRelays protects <code>/v1/*</code> and <code>/no-tools/v1/*</code>.</p>
+<p>Public routes:</p>
+<ul>
+<li><code>GET /</code></li>
+<li><code>GET /healthz</code></li>
+</ul>
+<p>Clients should send:</p>
+<div class="highlight"><pre><span></span><code><span class="err">Authorization: Bearer YOUR_AIRELAYS_TOKEN</span>
+</code></pre></div>
+<p>OpenAI-compatible SDKs will do this automatically when you set the AIRelays token as the client credential for the AIRelays base URL.
+Requests that omit the token, or use the wrong token, return <code>401</code>. Repeating that mistake enough times from the same IP triggers a temporary <code>429</code> block.</p>
+<p>If you start AIRelays with <code>airelays serve --no-auth</code> or <code>AIRELAYS_REQUIRE_BEARER_AUTH=false</code>, these route families become openly accessible for that server process. In that mode, the relay does not require <code>Authorization</code>, though some client SDKs may still need a non-empty placeholder <code>api_key</code> value on their side.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
