@@ -1,6 +1,6 @@
 site_name: AIRelays
 site_description: AIRelays is an independent local relay that exposes an OpenAI-compatible API over a subscription-backed upstream login.
-site_url: https://lpalbou.github.io/AIRelays/
+site_url: https://www.lpalbou.info/AIRelays/
 repo_url: https://github.com/lpalbou/AIRelays
 repo_name: lpalbou/AIRelays
 

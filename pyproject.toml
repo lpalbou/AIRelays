@@ -50,7 +50,7 @@ airelays = "airelays.cli:main"
 
 [project.urls]
 "GitHub" = "https://github.com/lpalbou/AIRelays"
-"Documentation" = "https://lpalbou.github.io/AIRelays/"
+"Documentation" = "https://www.lpalbou.info/AIRelays/"
 "Changelog" = "https://github.com/lpalbou/AIRelays/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]

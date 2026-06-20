@@ -252,7 +252,7 @@ See [Configuration](docs/configuration.md) for field details and a sample config
 - [Configuration](docs/configuration.md)
 - [Security](docs/security.md)
 - [Disclaimer](DISCLAIMER.md)
-- [Hosted Docs](https://lpalbou.github.io/AIRelays/)
+- [Hosted Docs](https://www.lpalbou.info/AIRelays/)
 - [API Notes](docs/api.md)
 - [Architecture](docs/architecture.md)
 - [Subscription Status](docs/subscription-status.md)
