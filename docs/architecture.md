@@ -2,85 +2,82 @@
 
 ## Overview
 
-AIRelays is a thin compatibility layer between OpenAI-shaped client requests and the ChatGPT Codex subscription backend. The route envelopes are intentionally OpenAI-shaped, but some parameter surfaces are narrower because the subscription backend accepts a slightly different contract.
+AIRelays is an OpenAI-shaped edge over provider-specific local runtimes.
 
-Request flow:
+- The default runtime uses the ChatGPT Codex subscription backend.
+- The experimental Claude runtime uses isolated local `claude -p` subprocesses.
 
-1. FastAPI receives an OpenAI-compatible request.
-2. Endpoint middleware enforces bearer auth and local abuse controls for protected routes.
-3. The compatibility layer validates and translates the request into the subscription backend format.
-4. Upstream auth is loaded from AIRelays-owned storage under the AIRelays data directory or AIRelays keyring namespace.
-5. Inference requests are sent to `chatgpt.com/backend-api/codex`, while subscription-status requests are sent to `chatgpt.com/backend-api/wham/usage`.
-6. Upstream SSE events are either streamed through directly or aggregated into a final JSON response.
-7. Every ingress and egress step is logged to hourly JSONL files.
+## Request Flow
 
-## Components
+1. FastAPI receives an OpenAI-shaped request.
+2. Middleware enforces relay auth and local abuse controls.
+3. AIRelays resolves the request model id to a provider runtime.
+4. Claude-specific validation and invocation stay inside the Claude runtime, while the OpenAI runtime currently uses shared request/response transforms plus the OpenAI backend adapter.
+5. The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope.
+6. AIRelays logs the request, runtime selection, and result.
+
+## Main Components
 
 ### `airelays.config`
 
-- resolves config from CLI flags, env, config file, and defaults
-- owns local paths and relay-security defaults
-- resolves the relay bearer token from explicit override or token file
-- supports explicit token generation through `airelays init` and optional startup auto-generation when configured
+- config resolution
+- local paths
+- relay token state
+- provider toggles and runtime guardrails
 
 ### `airelays.security`
 
-- enforces route protection on `/v1/*` and `/no-tools/v1/*`
-- validates the relay bearer token
-- applies per-IP rate limits and temporary blocks after repeated bad tokens
-- emits security events to the normal traffic log
+- relay bearer auth
+- per-IP limits
+- temporary bad-token blocks
 
 ### `airelays.auth`
 
-- loads upstream ChatGPT subscription auth from AIRelays-owned file, keyring, or auto mode
-- refreshes tokens
-- supports browser and device login
-- keeps login protocol compatibility without sharing Codex-owned storage
+- AIRelays-owned OpenAI subscription auth
+- browser and device login
+- token refresh
 
 ### `airelays.backend`
 
-- calls the verified subscription backend routes for inference, model listing, and usage introspection
-- normalizes streamed event handling
-- reconstructs non-stream responses from SSE output items
-- logs usage summaries from `response.completed`
+- OpenAI runtime HTTP calls to the verified ChatGPT backend
+
+### `airelays.providers`
+
+- provider registry
+- provider model catalogs
+- provider readiness
+- experimental Claude runtime
 
 ### `airelays.transforms`
 
-- maps OpenAI-compatible requests into the upstream request shape
-- maps response payloads back into `chat.completions`
-- expands local uploaded images and text files
-- rejects unverified fields explicitly
+- OpenAI runtime request and response translation
 
 ### `airelays.store`
 
-- stores uploaded files locally with explicit per-file and total-byte ceilings enforced at ingress
-- stores local conversation metadata and latest upstream response ids
-- provides the opt-in stateful session layer
+- local files
+- local OpenAI conversation state
 
 ### `airelays.traffic`
 
-- writes redacted JSONL logs
-- stores text bodies directly
-- stores binary payload summaries explicitly with SHA-256 digests
+- redacted JSONL logging
 
-## Session Model
+## State Model
 
-Stateless requests omit `conversation`.
+OpenAI runtime:
 
-Stateful requests create a local conversation and pass that local id back on later `responses` or `chat.completions` requests. The server reuses that id as the upstream `session_id` header and tracks the latest response id locally.
+- supports AIRelays local conversations
+- supports local file reuse
 
-## Security Model
+Claude experimental runtime:
 
-- upstream provider login is separate from relay-client authorization
-- the relay bearer token is local-only and is used by callers of AIRelays
-- route protection is middleware-level so local-only routes such as files and conversations are covered too
-- current rate limiting is in-memory and single-process by design
-- public HTTP is limited to the landing page and a minimal `/healthz`; detailed relay diagnostics live behind relay auth at `/v1/relay/status`
+- stateless only
+- no local conversation reuse
+- no file reuse
 
 ## Intentional Boundaries
 
+- no silent fallback across providers
+- no blanket parity claim across providers
 - no silent truncation
 - no fake token budgets
-- no silent fallback for unsupported endpoints
-- no claim of parity beyond routes verified against the subscription backend
 - no reuse of upstream subscription auth as relay-client auth

@@ -1,24 +1,22 @@
 # Documentation
 
-Start here if you are setting up, operating, or evaluating `AIRelays`.
-
 - [Getting Started](getting-started.md)
-  - installation, first-run setup, login, token generation, and local serving
+  - installation, OpenAI setup, Claude setup, and verification
 - [Configuration](configuration.md)
-  - config file shape, environment overrides, and path conventions
+  - config file shape, environment overrides, and provider toggles
 - [Security](security.md)
-  - bearer-token protection, open local relay mode, rate limits, and token rotation
+  - relay auth, open local relay mode, and Claude guardrails
 - [API Notes](api.md)
-  - supported routes, explicit limits, and compatibility behavior
+  - supported routes and provider-scoped limits
 - [Architecture](architecture.md)
-  - package layout, request flow, and intentional boundaries
+  - request flow and module boundaries
 - [Subscription Status](subscription-status.md)
-  - normalized `GET /v1/subscription/status` fields
+  - OpenAI runtime subscription-status behavior
 - [FAQ](faq.md)
-  - common usage and policy questions
+  - common usage and provider questions
 - [Troubleshooting](troubleshooting.md)
-  - auth errors, token failures, rate-limit recovery, and route limitations
+  - auth, provider, and route troubleshooting
 - [disclaimer.md](disclaimer.md)
-  - independence, non-endorsement, and intended single-user local use
+  - independence and intended use
 - [ADR Index](adr/README.md)
-  - durable design decisions and policy records
+  - durable design decisions

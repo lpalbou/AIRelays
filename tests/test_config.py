@@ -14,6 +14,8 @@ def test_config_file_round_trip(tmp_path) -> None:
         data_dir=tmp_path / "data",
         logs_dir=tmp_path / "logs",
         bearer_token_file=tmp_path / "data" / "relay-token",
+        enable_claude_experimental=True,
+        claude_models=("claude:sonnet",),
     )
 
     assert settings.write_config_file(force=True) is True
@@ -26,6 +28,8 @@ def test_config_file_round_trip(tmp_path) -> None:
     assert loaded.auth_file() == tmp_path / "data" / "auth.json"
     assert loaded.logs_dir == tmp_path / "logs"
     assert loaded.bearer_token_file == tmp_path / "data" / "relay-token"
+    assert loaded.enable_claude_experimental is True
+    assert loaded.claude_models == ("claude:sonnet",)
 
 
 def test_env_overrides_config_file(tmp_path, monkeypatch) -> None:
@@ -78,3 +82,21 @@ logs_dir = "/tmp/airelay-logs"
     assert loaded.data_dir == Path("/tmp/airelay-data")
     assert loaded.auth_file() == Path("/tmp/airelay-data/auth.json")
     assert "codex_home" not in loaded.render_config_toml()
+
+
+def test_claude_guardrails_require_loopback_and_bearer_auth(tmp_path) -> None:
+    settings = Settings(
+        host="127.0.0.1",
+        data_dir=tmp_path / "data",
+        logs_dir=tmp_path / "logs",
+        bearer_token_file=tmp_path / "data" / "relay-token",
+        require_bearer_auth=False,
+        enable_claude_experimental=True,
+    )
+
+    try:
+        settings.validate_provider_guardrails()
+    except RuntimeError as exc:
+        assert "requires AIRelays bearer auth" in str(exc)
+    else:
+        raise AssertionError("Expected Claude guardrails to reject open mode")

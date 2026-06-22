@@ -2,56 +2,48 @@
 
 AIRelays separates two authority domains:
 
-- upstream provider auth: the ChatGPT subscription login stored in AIRelays-owned auth storage
-- relay auth: the local bearer token required to call AIRelays itself
+- upstream provider auth
+- local client access to AIRelays itself
 
-The upstream login is not the relay access credential.
+The upstream subscription login is not the relay access credential.
 
 ## Protected Routes
 
-AIRelays protects these route families by default:
+Protected by default:
 
 - `/v1/*`
 - `/no-tools/v1/*`
 
-Public routes remain:
+Public:
 
 - `/`
-- `/healthz`
+- `GET /healthz`
 
-`/healthz` is intentionally minimal. Use the protected `GET /v1/relay/status` route when you need detailed relay diagnostics.
+Detailed diagnostics live behind `GET /v1/relay/status` unless you intentionally launch an open local relay.
 
 ## Relay Token
 
-`airelays init` creates a strong bearer token and stores it at:
+The normal path is:
 
-```text
-~/.airelays/relay-token
+```bash
+airelays init
 ```
 
-Use that token as the client credential when you point OpenAI SDKs or HTTP clients at AIRelays.
-
-Show the current token with:
+Show the current token:
 
 ```bash
 airelays token show
 ```
 
-If you want to launch the server with a specific token value instead of the default token file:
+Rotate it:
 
 ```bash
-AIRELAYS_BEARER_TOKEN='YOUR_AIRELAYS_TOKEN' airelays serve --port 8080
-```
-
-If you want to launch the server with a specific token file:
-
-```bash
-airelays serve --bearer-token-file /path/to/relay-token --port 8080
+airelays token rotate
 ```
 
 ## Open Local Relay Mode
 
-If you want AIRelays to accept client requests without a relay bearer token:
+Open local relay mode is available only when the Claude experimental runtime is disabled.
 
 ```bash
 airelays init --no-auth
@@ -64,58 +56,40 @@ Equivalent environment override:
 AIRELAYS_REQUIRE_BEARER_AUTH=false airelays serve --port 8080
 ```
 
-In this mode:
+## Claude Experimental Guardrails
 
-- `/v1/*` and `/no-tools/v1/*` are accessible without `Authorization`
-- `GET /v1/relay/status` is also accessible without `Authorization`
-- rate limits and concurrent-request caps still apply
-- the default loopback listener is the safest way to run it
-- if a client library insists on an API key field, any non-empty placeholder string is acceptable
-- the upstream ChatGPT login from `airelays login` is still required for model requests
+When the Claude runtime is enabled:
 
-Rotate the token with:
-
-```bash
-airelays token rotate
-```
+- bearer auth is required
+- loopback binding is required
+- `trust_x_forwarded_for` is rejected
+- the runtime is stateless
+- the runtime is local-only
 
 ## Rate Limits
 
 Default single-process protections:
 
 - `120` requests/minute per IP
-- burst capacity `40`
+- burst `40`
 - `8` concurrent requests per IP
-- `8` failed auth attempts inside `300` seconds
-- temporary block for `900` seconds after repeated failed auth
-
-Repeated requests without the relay token, or with the wrong token, first return `401` and then trigger a temporary `429` block once the failed-auth threshold is exceeded.
-
-These settings are configurable through `config.toml` or `AIRELAYS_*` overrides.
+- temporary IP block after repeated bad tokens
 
 ## Upload Ceilings
-
-Local uploads are bounded by default:
 
 - `32` MiB per file
 - `256` MiB total stored file bytes
 
-AIRelays rejects uploads that would exceed either limit with `413`.
-
 ## Logging
 
-Security-relevant events are logged to the normal hourly JSONL traffic log:
+AIRelays logs:
 
-- endpoint auth failures
+- inbound requests
+- provider resolution
 - endpoint rejects
-- token bootstrap at startup
-- upstream and downstream request flow
+- provider and upstream requests
+- provider and upstream responses
+- provider stream lines
+- usage summaries
 
-Raw bearer tokens are never written to logs. Request headers are redacted before persistence.
-
-## Operational Notes
-
-- Keep the default loopback listener unless you intentionally need remote access.
-- If you bind to a broader interface, keep bearer auth enabled.
-- Do not enable `trust_x_forwarded_for` unless a trusted proxy is in front of AIRelays.
-- Use `GET /v1/relay/status` to inspect relay auth, storage, and limiter state. Keep bearer auth enabled if you do not want that route exposed.
+Request and response contents, including prompts and model outputs, can be written to the local AIRelays log files. Raw bearer tokens are redacted.

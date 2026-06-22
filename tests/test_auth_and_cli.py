@@ -280,7 +280,7 @@ def test_cli_status_defaults_to_human_output_and_supports_json(
     human = capsys.readouterr().out
 
     assert "AIRelays Status" in human
-    assert "Upstream Session" in human
+    assert "OpenAI Session" in human
     assert "Client Setup" in human
     assert "airelays login" in human
 
@@ -293,6 +293,79 @@ def test_cli_status_defaults_to_human_output_and_supports_json(
     assert machine["relay"]["bearer_token_present"] is True
     assert machine["auth"]["ready_for_requests"] is False
     assert machine["next_steps"] == ["airelays login"]
+
+
+def test_cli_status_prefers_serve_when_claude_is_ready(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    _clear_airelay_env(monkeypatch)
+    parser = build_parser()
+    config_path = tmp_path / "config.toml"
+    data_dir = tmp_path / "state"
+    (data_dir / "relay-token").parent.mkdir(parents=True, exist_ok=True)
+    (data_dir / "relay-token").write_text("token\n", encoding="utf-8")
+    config_path.write_text(
+        """
+[providers.openai]
+enabled = true
+
+[providers.claude]
+enabled = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    class _FakeRegistry:
+        @staticmethod
+        def provider_statuses() -> dict[str, object]:
+            return {
+                "openai": {
+                    "enabled": True,
+                    "ready_for_requests": False,
+                },
+                "claude": {
+                    "enabled": True,
+                    "ready_for_requests": True,
+                    "experimental": True,
+                },
+            }
+
+    monkeypatch.setattr("airelay.cli._provider_registry", lambda settings, manager: _FakeRegistry())
+
+    args = parser.parse_args(
+        ["status", "--json", "--config", str(config_path), "--data-dir", str(data_dir)]
+    )
+    args.func(args)
+    machine = json.loads(capsys.readouterr().out)
+
+    assert machine["next_steps"] == ["airelays serve --host 127.0.0.1 --port 8080"]
+
+
+def test_cli_init_claude_only_skips_openai_login_hint(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    _clear_airelay_env(monkeypatch)
+    parser = build_parser()
+    config_path = tmp_path / "config.toml"
+    data_dir = tmp_path / "state"
+
+    args = parser.parse_args(
+        [
+            "init",
+            "--json",
+            "--config",
+            str(config_path),
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    monkeypatch.setenv("AIRELAYS_ENABLE_OPENAI", "false")
+    monkeypatch.setenv("AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL", "true")
+    args.func(args)
+    payload = json.loads(capsys.readouterr().out)
+
+    assert "airelays login" not in payload["next_steps"]
+    assert "claude auth login --claudeai" in payload["next_steps"]
 
 
 def test_cli_token_show_displays_existing_token_and_supports_json(
@@ -408,3 +481,59 @@ def test_cli_serve_no_auth_starts_open_mode_without_token(tmp_path, monkeypatch,
     assert "ChatGPT login" in output
     assert "airelays login" in output
     assert captured["port"] == 8090
+
+
+def test_cli_serve_rejects_no_auth_when_claude_experimental_is_enabled(
+    tmp_path, monkeypatch
+) -> None:
+    _clear_airelay_env(monkeypatch)
+    parser = build_parser()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[providers.claude]
+enabled = true
+""".strip(),
+        encoding="utf-8",
+    )
+    args = parser.parse_args(
+        [
+            "serve",
+            "--no-auth",
+            "--config",
+            str(config_path),
+            "--data-dir",
+            str(tmp_path / "state"),
+        ]
+    )
+
+    with pytest.raises(SystemExit, match="requires AIRelays bearer auth"):
+        args.func(args)
+
+
+def test_cli_init_rejects_no_auth_when_claude_experimental_is_enabled(
+    tmp_path, monkeypatch
+) -> None:
+    _clear_airelay_env(monkeypatch)
+    parser = build_parser()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[providers.claude]
+enabled = true
+""".strip(),
+        encoding="utf-8",
+    )
+    args = parser.parse_args(
+        [
+            "init",
+            "--no-auth",
+            "--config",
+            str(config_path),
+            "--data-dir",
+            str(tmp_path / "state"),
+        ]
+    )
+
+    with pytest.raises(SystemExit, match="requires AIRelays bearer auth"):
+        args.func(args)

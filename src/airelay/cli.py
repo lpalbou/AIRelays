@@ -11,6 +11,7 @@ import uvicorn
 from airelay.app import create_app
 from airelay.auth import AuthManager, AuthRecord
 from airelay.config import APP_NAME, Settings
+from airelay.providers import ProviderRegistry
 from airelay.terminal import accent, bad, bold, good, muted, warn
 
 
@@ -91,25 +92,42 @@ def _auth_manager(settings: Settings) -> AuthManager:
     )
 
 
+def _provider_registry(settings: Settings, manager: AuthManager) -> ProviderRegistry:
+    return ProviderRegistry(settings, openai_auth=manager)
+
+
 def _status_payload(settings: Settings, manager: AuthManager) -> dict[str, object]:
-    auth_status = manager.status()
+    provider_statuses = _provider_registry(settings, manager).provider_statuses()
+    auth_status = dict(provider_statuses.get("openai", {}))
+    claude_status = dict(provider_statuses.get("claude", {}))
     next_steps: list[str] = []
+    any_provider_ready = any(
+        bool(status.get("ready_for_requests"))
+        for status in provider_statuses.values()
+        if status.get("enabled")
+    )
     token_ready = bool(settings.resolve_bearer_token()) or not settings.require_bearer_auth
     if settings.require_bearer_auth and not token_ready:
         next_steps.append("airelays init")
-    if not auth_status.get("ready_for_requests"):
-        next_steps.append("airelays login")
-    if auth_status.get("ready_for_requests") and token_ready:
+    if not any_provider_ready:
+        if settings.enable_openai_provider and not auth_status.get("ready_for_requests"):
+            next_steps.append("airelays login")
+        if settings.enable_claude_experimental and not claude_status.get("ready_for_requests"):
+            next_steps.append("claude auth login --claudeai")
+            next_steps.append("claude setup-token")
+    if any_provider_ready and token_ready:
         next_steps.append(_serve_command(settings))
     return {
         "relay": settings.summary(),
         "auth": auth_status,
+        "providers": provider_statuses,
         "client": _client_usage_payload(settings),
         "next_steps": next_steps,
     }
 
 
 def _login_payload(settings: Settings, record: AuthRecord) -> dict[str, object]:
+    provider_statuses = _provider_registry(settings, _auth_manager(settings)).provider_statuses()
     return {
         "authenticated": record.authenticated,
         "email": record.email,
@@ -117,6 +135,7 @@ def _login_payload(settings: Settings, record: AuthRecord) -> dict[str, object]:
         "account_id": record.account_id,
         "bearer_token_present": bool(settings.resolve_bearer_token()),
         "bearer_token_file": str(settings.bearer_token_file),
+        "providers": provider_statuses,
         "client": _client_usage_payload(settings),
         "next_step": (
             "airelays init"
@@ -132,6 +151,13 @@ def _init_payload(
     token_created: bool,
     token_to_show: str | None,
 ) -> dict[str, object]:
+    next_steps: list[str] = []
+    if settings.enable_openai_provider:
+        next_steps.append("airelays login")
+    if settings.enable_claude_experimental:
+        next_steps.append("claude auth login --claudeai")
+        next_steps.append("claude setup-token")
+    next_steps.append(_serve_command(settings))
     return {
         "app_name": APP_NAME,
         "config_path": str(settings.config_path),
@@ -141,10 +167,7 @@ def _init_payload(
         "bearer_token_source": settings.bearer_token_source(),
         "relay_token": token_to_show,
         "client": _client_usage_payload(settings, include_token=bool(token_to_show)),
-        "next_steps": [
-            "airelays login",
-            _serve_command(settings),
-        ],
+        "next_steps": next_steps,
     }
 
 
@@ -264,7 +287,7 @@ def _print_device_prompt(verification_url: str, user_code: str) -> None:
 
 def _print_login_summary(payload: dict[str, object]) -> None:
     print()
-    _print_section("Upstream Session")
+    _print_section("OpenAI Session")
     _print_bool("Authenticated", bool(payload.get("authenticated")))
     _print_field("Email", payload.get("email"))
     _print_field("Plan", payload.get("plan_type"))
@@ -309,6 +332,7 @@ def _print_init_summary(payload: dict[str, object]) -> None:
 def _print_status_summary(payload: dict[str, object]) -> None:
     relay = dict(payload.get("relay", {}))
     auth = dict(payload.get("auth", {}))
+    providers = dict(payload.get("providers", {}))
     client = dict(payload.get("client", {}))
 
     _print_title("AIRelays Status")
@@ -338,16 +362,39 @@ def _print_status_summary(payload: dict[str, object]) -> None:
     _print_field("Rate limit", f"{relay.get('rate_limit_per_minute')}/min + burst {relay.get('rate_limit_burst')}")
     _print_field("Concurrent/IP", relay.get("concurrent_requests_per_ip"))
 
-    _print_section("Upstream Session")
-    _print_bool("Ready", bool(auth.get("ready_for_requests")))
-    _print_bool("Authenticated", bool(auth.get("authenticated")))
-    _print_bool("Account bound", bool(auth.get("account_bound")))
-    _print_field("Email", auth.get("email"))
-    _print_field("Plan", auth.get("plan_type"))
-    _print_field("Account ID", auth.get("account_id"))
-    _print_field("Last refresh", auth.get("last_refresh"))
-    _print_field("Storage mode", auth.get("storage_mode"))
-    _print_field("Auth store", auth.get("auth_store_path"))
+    openai_provider = dict(providers.get("openai", {}))
+    _print_section("OpenAI Session")
+    _print_field("Enabled", "yes" if openai_provider.get("enabled") else "no")
+    if openai_provider.get("enabled"):
+        _print_bool("Ready", bool(auth.get("ready_for_requests")))
+        _print_bool("Authenticated", bool(auth.get("authenticated")))
+        _print_bool("Account bound", bool(auth.get("account_bound")))
+        _print_field("Email", auth.get("email"))
+        _print_field("Plan", auth.get("plan_type"))
+        _print_field("Account ID", auth.get("account_id"))
+        _print_field("Last refresh", auth.get("last_refresh"))
+        _print_field("Storage mode", auth.get("storage_mode"))
+        _print_field("Auth store", auth.get("auth_store_path"))
+
+    _print_section("Providers")
+    _print_field("OpenAI enabled", "yes" if openai_provider.get("enabled") else "no")
+    _print_field(
+        "OpenAI ready",
+        "yes" if openai_provider.get("ready_for_requests") else "no",
+        kind="good" if openai_provider.get("ready_for_requests") else "warn",
+    )
+    claude_provider = dict(providers.get("claude", {}))
+    _print_field("Claude enabled", "yes" if claude_provider.get("enabled") else "no")
+    if claude_provider.get("enabled"):
+        _print_field(
+            "Claude ready",
+            "yes" if claude_provider.get("ready_for_requests") else "no",
+            kind="good" if claude_provider.get("ready_for_requests") else "warn",
+        )
+        _print_field("Claude experimental", "yes", kind="warn")
+        _print_field("Claude CLI", claude_provider.get("cli_version"))
+        _print_field("Claude email", claude_provider.get("email"))
+        _print_field("Claude auth", claude_provider.get("auth_method"))
 
     _print_client_section(client)
     _print_steps([str(step) for step in payload.get("next_steps", [])])
@@ -356,9 +403,9 @@ def _print_status_summary(payload: dict[str, object]) -> None:
 def _print_logout_summary(deleted: bool) -> None:
     _print_title("AIRelays Logout")
     if deleted:
-        _print_field("Upstream auth", "deleted", kind="good")
+        _print_field("OpenAI session", "deleted", kind="good")
     else:
-        _print_field("Upstream auth", "already empty", kind="warn")
+        _print_field("OpenAI session", "already empty", kind="warn")
     _print_steps(["airelays login"])
 
 
@@ -390,7 +437,7 @@ def _print_token_show_summary(payload: dict[str, object]) -> None:
     _print_steps([str(step) for step in payload.get("next_steps", [])])
 
 
-def _print_serve_banner(settings: Settings, auth_ready: bool) -> None:
+def _print_serve_banner(settings: Settings, provider_statuses: dict[str, object]) -> None:
     _print_title("AIRelays Server")
     _print_section("Listener")
     _print_field("Base URL", settings.client_base_url())
@@ -408,21 +455,45 @@ def _print_serve_banner(settings: Settings, auth_ready: bool) -> None:
         _print_field("Bearer auth", "disabled", kind="warn")
         _print_field("Access mode", "open", kind="warn")
         _print_field("Client key", "optional placeholder only", kind="warn")
-    _print_section("Upstream Session")
-    _print_bool("ChatGPT login", auth_ready, true_text="ready", false_text="missing")
-    if not auth_ready:
-        if not settings.require_bearer_auth:
-            _print_field(
-                "Open mode note",
-                "Local relay token is disabled, but upstream ChatGPT login is still required.",
-                kind="warn",
-            )
-        _print_command("Next command", "airelays login")
+    _print_section("Providers")
+    openai_provider = dict(provider_statuses.get("openai", {}))
+    _print_field("OpenAI", "enabled" if openai_provider.get("enabled") else "disabled")
+    if openai_provider.get("enabled"):
+        _print_field(
+            "OpenAI ready",
+            "yes" if openai_provider.get("ready_for_requests") else "no",
+            kind="good" if openai_provider.get("ready_for_requests") else "warn",
+        )
+        _print_field(
+            "ChatGPT login",
+            "ready" if openai_provider.get("ready_for_requests") else "missing",
+            kind="good" if openai_provider.get("ready_for_requests") else "warn",
+        )
+    claude_provider = dict(provider_statuses.get("claude", {}))
+    _print_field("Claude", "enabled" if claude_provider.get("enabled") else "disabled")
+    if claude_provider.get("enabled"):
+        _print_field("Claude mode", "experimental local adapter", kind="warn")
+        _print_field(
+            "Claude ready",
+            "yes" if claude_provider.get("ready_for_requests") else "no",
+            kind="good" if claude_provider.get("ready_for_requests") else "warn",
+        )
+        _print_field("Claude CLI", claude_provider.get("cli_version"))
+    if openai_provider.get("enabled") and not openai_provider.get("ready_for_requests"):
+        _print_command("OpenAI login", "airelays login")
+    if claude_provider.get("enabled") and not claude_provider.get("ready_for_requests"):
+        _print_command("Claude login", "claude auth login --claudeai")
+        _print_command("Claude headless", "claude setup-token")
     print()
 
 
 async def _run_login(args: argparse.Namespace) -> None:
     settings = _base_settings(args)
+    if not settings.enable_openai_provider:
+        raise SystemExit(
+            "The OpenAI subscription runtime is disabled for this AIRelays process. "
+            "Enable `[providers.openai].enabled` to use `airelays login`."
+        )
     manager = _auth_manager(settings)
     if args.device:
         record = await manager.device_login(
@@ -445,6 +516,10 @@ async def _run_login(args: argparse.Namespace) -> None:
 
 def _run_init(args: argparse.Namespace) -> None:
     settings = _base_settings(args)
+    try:
+        settings.validate_provider_guardrails()
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     created_config = settings.write_config_file(force=args.force)
     token = settings.resolve_bearer_token()
     token_created = False
@@ -501,6 +576,10 @@ def _run_token_show(args: argparse.Namespace) -> None:
 
 def _run_serve(args: argparse.Namespace) -> None:
     settings = _base_settings(args)
+    try:
+        settings.validate_provider_guardrails()
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     if settings.require_bearer_auth and not settings.resolve_bearer_token():
         if settings.auto_generate_bearer_token:
             settings.ensure_bearer_token()
@@ -509,8 +588,8 @@ def _run_serve(args: argparse.Namespace) -> None:
                 "Bearer authentication is enabled, but no relay token is configured. "
                 "Run `airelays init` or set AIRELAYS_BEARER_TOKEN."
             )
-    auth_ready = bool(_auth_manager(settings).status().get("ready_for_requests"))
-    _print_serve_banner(settings, auth_ready)
+    provider_statuses = _provider_registry(settings, _auth_manager(settings)).provider_statuses()
+    _print_serve_banner(settings, provider_statuses)
     app = create_app(settings)
     uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
 
@@ -527,7 +606,7 @@ def build_parser() -> argparse.ArgumentParser:
     shared.add_argument(
         "--auth-storage",
         choices=("auto", "file", "keyring"),
-        help="Where to load and store reused upstream auth",
+        help="Where to load and store AIRelays-owned OpenAI subscription auth",
     )
     shared.add_argument("--bearer-token-file", help="Path to the relay bearer token file")
 
@@ -544,7 +623,10 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--no-auth",
         action="store_true",
-        help="Disable AIRelays local bearer auth for this server process; upstream ChatGPT login is still required",
+        help=(
+            "Disable AIRelays local bearer auth for this server process; upstream provider login "
+            "is still required and Claude experimental mode rejects this option"
+        ),
     )
     serve.set_defaults(func=_run_serve)
 
@@ -558,7 +640,10 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument(
         "--no-auth",
         action="store_true",
-        help="Write config with local bearer auth disabled and skip relay-token creation; upstream ChatGPT login is still required",
+        help=(
+            "Write config with local bearer auth disabled and skip relay-token creation; "
+            "upstream provider login is still required and Claude experimental mode rejects this option"
+        ),
     )
     init.add_argument(
         "--show-token",
@@ -580,7 +665,7 @@ def build_parser() -> argparse.ArgumentParser:
     status = subparsers.add_parser(
         "status",
         parents=[shared],
-        help="Show relay and upstream-auth status",
+        help="Show relay, OpenAI-session, and provider-runtime status",
     )
     _add_json_argument(status)
     status.set_defaults(func=_run_status)
@@ -588,7 +673,7 @@ def build_parser() -> argparse.ArgumentParser:
     logout = subparsers.add_parser(
         "logout",
         parents=[shared],
-        help="Delete stored upstream auth",
+        help="Delete AIRelays-owned OpenAI subscription auth",
     )
     _add_json_argument(logout)
     logout.set_defaults(func=_run_logout)

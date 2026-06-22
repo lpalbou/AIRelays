@@ -679,6 +679,44 @@ def test_relay_status_is_open_when_bearer_auth_is_disabled(tmp_path) -> None:
     assert payload["ready"]["relay_token"] is True
 
 
+def test_relay_status_reports_any_provider_ready_when_claude_is_ready(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=True,
+        bearer_token="secret-token",
+        enable_openai_provider=False,
+        enable_claude_experimental=True,
+    )
+    app = create_app(settings)
+
+    def fake_provider_statuses() -> dict[str, object]:
+        return {
+            "openai": {
+                "enabled": False,
+                "ready_for_requests": False,
+            },
+            "claude": {
+                "enabled": True,
+                "ready_for_requests": True,
+                "experimental": True,
+            },
+        }
+
+    with TestClient(app) as client:
+        client.app.state.providers.provider_statuses = fake_provider_statuses
+        response = client.get(
+            "/v1/relay/status",
+            headers={"authorization": "Bearer secret-token"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ready"]["upstream_auth"] is True
+    assert payload["ready"]["any_provider"] is True
+    assert payload["ready"]["openai_upstream_auth"] is False
+    assert payload["ready"]["providers"]["claude"] is True
+
+
 def test_models_route_without_upstream_login_returns_upstream_auth_error_not_local_auth(tmp_path) -> None:
     settings = make_settings(
         tmp_path,
@@ -717,6 +755,179 @@ def test_models_route_maps_upstream_401_to_upstream_auth_error(tmp_path) -> None
     assert response.headers["x-airelays-upstream-auth"] == "rejected"
 
 
+def test_models_route_returns_claude_models_when_openai_auth_is_missing(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=True,
+        enable_claude_experimental=True,
+        claude_models=("claude:sonnet",),
+    )
+    settings.write_bearer_token("relay-token")
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/v1/models",
+            headers={"authorization": "Bearer relay-token"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert any(item["id"] == "claude:sonnet" for item in payload["data"])
+    claude_model = next(item for item in payload["data"] if item["id"] == "claude:sonnet")
+    assert claude_model["airelays"]["provider"] == "claude"
+    assert claude_model["airelays"]["experimental"] is True
+
+
+def test_responses_route_rejects_claude_models_locally(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=True,
+        enable_claude_experimental=True,
+        claude_models=("claude:sonnet",),
+    )
+    settings.write_bearer_token("relay-token")
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"authorization": "Bearer relay-token"},
+            json={
+                "model": "claude:sonnet",
+                "input": "hello",
+                "stream": False,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "/v1/chat/completions" in response.json()["detail"]
+
+
+def test_chat_completions_route_dispatches_claude_model(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=True,
+        enable_claude_experimental=True,
+        claude_models=("claude:sonnet",),
+    )
+    settings.write_bearer_token("relay-token")
+    app = create_app(settings)
+
+    async def fake_create_chat_completion(body, request_id):
+        assert body["model"] == "claude:sonnet"
+        assert request_id.startswith("req_")
+        return {
+            "id": "chatcmpl_claude",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "claude:sonnet",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Claude OK"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+        }
+
+    with TestClient(app) as client:
+        client.app.state.providers.claude.create_chat_completion = fake_create_chat_completion
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"authorization": "Bearer relay-token"},
+            json={
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["model"] == "claude:sonnet"
+    assert payload["choices"][0]["message"]["content"] == "Claude OK"
+
+
+def test_chat_completions_route_streams_claude_model(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=True,
+        enable_claude_experimental=True,
+        claude_models=("claude:sonnet",),
+    )
+    settings.write_bearer_token("relay-token")
+    app = create_app(settings)
+
+    async def fake_stream_chat_completion(body, request_id):
+        del body, request_id
+        yield b"data: first\n\n"
+        yield b"data: [DONE]\n\n"
+
+    with TestClient(app) as client:
+        client.app.state.providers.claude.stream_chat_completion = fake_stream_chat_completion
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"authorization": "Bearer relay-token"},
+            json={
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": True,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.text == "data: first\n\ndata: [DONE]\n\n"
+
+
+def test_completions_route_dispatches_claude_model(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=True,
+        enable_claude_experimental=True,
+        claude_models=("claude:sonnet",),
+    )
+    settings.write_bearer_token("relay-token")
+    app = create_app(settings)
+
+    async def fake_create_completion(body, request_id):
+        assert body["model"] == "claude:sonnet"
+        assert request_id.startswith("req_")
+        return {
+            "id": "cmpl_claude",
+            "object": "text_completion",
+            "created": 1,
+            "model": "claude:sonnet",
+            "choices": [
+                {
+                    "text": "Claude OK",
+                    "index": 0,
+                    "logprobs": None,
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+        }
+
+    with TestClient(app) as client:
+        client.app.state.providers.claude.create_completion = fake_create_completion
+        response = client.post(
+            "/v1/completions",
+            headers={"authorization": "Bearer relay-token"},
+            json={
+                "model": "claude:sonnet",
+                "prompt": "hello",
+                "stream": False,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["model"] == "claude:sonnet"
+    assert payload["choices"][0]["text"] == "Claude OK"
+
+
 def test_protected_route_rejects_missing_bearer_token(tmp_path) -> None:
     settings = make_settings(
         tmp_path,
@@ -751,6 +962,24 @@ def test_protected_route_accepts_valid_bearer_token_for_local_route(tmp_path) ->
 
     assert response.status_code == 200
     assert response.json()["object"] == "conversation"
+
+
+def test_openai_only_local_routes_reject_when_openai_runtime_is_disabled(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=False,
+        enable_openai_provider=False,
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        files_response = client.get("/v1/files")
+        conversations_response = client.post("/v1/conversations", json={"metadata": {"name": "demo"}})
+
+    assert files_response.status_code == 501
+    assert "OpenAI runtime is enabled" in files_response.json()["detail"]
+    assert conversations_response.status_code == 501
+    assert "OpenAI runtime is enabled" in conversations_response.json()["detail"]
 
 
 def test_wrong_token_attempts_trigger_temporary_ip_block(tmp_path) -> None:

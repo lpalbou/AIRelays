@@ -1,53 +1,38 @@
 # AIRelays
 
-AIRelays is a local OpenAI-compatible HTTP server backed by a ChatGPT subscription login that AIRelays stores independently. It protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default, can also run in open local relay mode, logs every transit to JSONL, and exposes only the routes that were verified against the subscription backend. `/v1/responses` preserves the general OpenAI envelope, accepts verified `input_file` forms including local AIRelays `file_id` values, and keeps explicit parameter adaptations and limits where the subscription backend differs.
+AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes. The default runtime uses an AIRelays-owned ChatGPT subscription login. An optional experimental Claude runtime uses the local `claude` CLI for explicit `claude:*` text models. AIRelays protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default and can run in open local relay mode only when the Claude runtime is disabled.
 
 ## Key Docs
 
 - [README.md](README.md)
-  - project overview, install paths, quick start, supported routes, and security defaults
 - [docs/getting-started.md](docs/getting-started.md)
-  - install options, first-run workflow, legacy-state compatibility, and protected/open verification commands
 - [docs/configuration.md](docs/configuration.md)
-  - config file, environment overrides, path conventions, and legacy AIRelay compatibility
 - [docs/security.md](docs/security.md)
-  - bearer-token protection, open local relay mode, rate limits, protected diagnostics, upload ceilings, and logging
 - [docs/api.md](docs/api.md)
-  - supported and unsupported route details
 - [docs/architecture.md](docs/architecture.md)
-  - package boundaries, request flow, and intentional design limits
 - [docs/subscription-status.md](docs/subscription-status.md)
-  - normalized `GET /v1/subscription/status` payload and auth expectations
 - [docs/faq.md](docs/faq.md)
-  - common usage and policy questions
-- [DISCLAIMER.md](DISCLAIMER.md)
-  - independence, non-endorsement, and intended single-user local use
 - [docs/troubleshooting.md](docs/troubleshooting.md)
-  - bearer-token, upstream-auth, and rate-limit recovery guidance
-- [docs/adr/README.md](docs/adr/README.md)
-  - durable design decisions
-
-## Important Paths
-
-- config: `~/.config/airelays/config.toml`
-- data dir: `~/.airelays`
-- upstream auth fallback file: `~/.airelays/auth.json`
-- relay token: `~/.airelays/relay-token`
-- logs: `~/.airelays/logs`
-- earlier singular AIRelay config, data-dir, and keychain naming remain compatible for local upgrades
-- server token override: `AIRELAYS_BEARER_TOKEN` or `--bearer-token-file`
-- open local relay override: `AIRELAYS_REQUIRE_BEARER_AUTH=false` or `airelays serve --no-auth`
+- [DISCLAIMER.md](DISCLAIMER.md)
 
 ## Main Commands
 
 - `airelays init`
-- `airelays init --no-auth`
-- `airelays status`
-- `airelays init --json`, `airelays status --json`, `airelays logout --json`, `airelays token show --json`, and `airelays token rotate --json` keep machine-readable output available for automation
 - `airelays login`
 - `airelays serve`
+- `airelays init --no-auth`
 - `airelays serve --no-auth`
+- `claude auth login --claudeai`
+- `claude setup-token`
+- `airelays status`
 - `airelays token show`
 - `airelays token rotate`
-- `GET /healthz` is public and minimal
-- `GET /v1/relay/status` is protected by default and open in no-auth mode
+
+## Important Notes
+
+- OpenAI runtime: first-class `responses`, `chat.completions`, and `completions`
+- Claude runtime: experimental text `chat.completions` and text `completions` only
+- models starting with `claude:` route to the Claude runtime when it is enabled
+- other model ids route to the OpenAI runtime when it is enabled
+- Claude runtime requires bearer auth and loopback binding
+- `GET /v1/subscription/status` applies to the OpenAI runtime only
