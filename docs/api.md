@@ -35,6 +35,8 @@ Supported behavior:
 - limiter diagnostics for the current client IP
 - local storage counters for files and conversations
 
+For a CLI self-test that also probes live upstream `/models` and a tiny `/responses` request, run `airelays doctor`. Add `--json` for machine-readable output or `--skip-response` to avoid the response smoke request.
+
 ### `POST /v1/completions`
 
 Supported behavior:

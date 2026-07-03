@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -293,6 +294,118 @@ def test_cli_status_defaults_to_human_output_and_supports_json(
     assert machine["relay"]["bearer_token_present"] is True
     assert machine["auth"]["ready_for_requests"] is False
     assert machine["next_steps"] == ["airelays login"]
+
+
+def test_cli_doctor_reports_actionable_failures_for_missing_setup(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    _clear_airelay_env(monkeypatch)
+    parser = build_parser()
+    config_path = tmp_path / "config.toml"
+    data_dir = tmp_path / "state"
+    args = parser.parse_args(
+        [
+            "doctor",
+            "--json",
+            "--config",
+            str(config_path),
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        asyncio.run(args.async_func(args))
+    payload = json.loads(capsys.readouterr().out)
+    checks = {check["name"]: check for check in payload["checks"]}
+
+    assert excinfo.value.code == 1
+    assert payload["ok"] is False
+    assert checks["relay_token"]["status"] == "fail"
+    assert checks["openai_auth"]["status"] == "fail"
+    assert checks["openai_models"]["status"] == "skip"
+    assert "airelays init" in payload["next_steps"]
+    assert "airelays login" in payload["next_steps"]
+
+
+def test_cli_doctor_runs_upstream_model_and_response_smoke_checks(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    _clear_airelay_env(monkeypatch)
+    parser = build_parser()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("", encoding="utf-8")
+    data_dir = tmp_path / "state"
+    token_path = data_dir / "relay-token"
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text("token\n", encoding="utf-8")
+    _write_auth_payload(
+        data_dir,
+        {
+            "tokens": {
+                "access_token": "access",
+                "refresh_token": "refresh",
+                "account_id": "acct_123",
+            },
+            "bound_account_id": "acct_123",
+            "last_refresh": "2099-01-01T00:00:00+00:00",
+        },
+    )
+    calls: list[str] = []
+
+    class FakeBackend:
+        def __init__(self, settings, manager, traffic):  # type: ignore[no-untyped-def]
+            del settings, manager, traffic
+
+        async def list_models(self, request_id: str) -> dict[str, object]:
+            calls.append(f"models:{request_id}")
+            return {"models": [{"slug": "gpt-doctor"}]}
+
+        async def collect_response(
+            self,
+            payload: dict[str, object],
+            request_id: str,
+            session_id: str | None,
+        ) -> dict[str, object]:
+            calls.append(f"response:{request_id}")
+            assert payload["model"] == "gpt-doctor"
+            assert session_id is None
+            return {
+                "id": "resp_doctor",
+                "status": "completed",
+                "model": "gpt-doctor",
+                "output": [],
+            }
+
+        async def close(self) -> None:
+            calls.append("close")
+
+    monkeypatch.setattr("airelay.cli.ChatGptCodexBackend", FakeBackend)
+    args = parser.parse_args(
+        [
+            "doctor",
+            "--json",
+            "--config",
+            str(config_path),
+            "--data-dir",
+            str(data_dir),
+            "--auth-storage",
+            "file",
+        ]
+    )
+
+    asyncio.run(args.async_func(args))
+    payload = json.loads(capsys.readouterr().out)
+    checks = {check["name"]: check for check in payload["checks"]}
+
+    assert payload["ok"] is True
+    assert checks["config"]["status"] == "pass"
+    assert checks["relay_token"]["status"] == "pass"
+    assert checks["openai_auth"]["status"] == "pass"
+    assert checks["openai_models"]["status"] == "pass"
+    assert checks["openai_models"]["data"]["selected_model"] == "gpt-doctor"
+    assert checks["openai_response"]["status"] == "pass"
+    assert calls == ["models:doctor_models", "response:doctor_response", "close"]
 
 
 def test_cli_token_show_displays_existing_token_and_supports_json(

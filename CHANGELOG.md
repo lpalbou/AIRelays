@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.5
+
+- Added `airelays doctor` for end-to-end local diagnostics covering config, relay-token setup, upstream OpenAI subscription login, live `/models`, and an optional tiny `/responses` smoke probe.
+- Added machine-readable `airelays doctor --json` output and actionable next-step hints for setup and auth failures.
+- Refreshed the documentation and LLM index files with the new diagnostic workflow.
+
 ## 0.2.4
 
 - Normalized verified `/v1/responses` file-input paths so local `POST /v1/files` ids and raw Base64 `input_file.file_data` plus `filename` are accepted on the subscription-backed route.

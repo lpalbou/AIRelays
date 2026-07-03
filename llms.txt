@@ -43,7 +43,9 @@ AIRelays is a local OpenAI-compatible HTTP server backed by a ChatGPT subscripti
 - `airelays init`
 - `airelays init --no-auth`
 - `airelays status`
-- `airelays init --json`, `airelays status --json`, `airelays logout --json`, `airelays token show --json`, and `airelays token rotate --json` keep machine-readable output available for automation
+- `airelays doctor`
+- `airelays doctor --skip-response`
+- `airelays init --json`, `airelays status --json`, `airelays doctor --json`, `airelays logout --json`, `airelays token show --json`, and `airelays token rotate --json` keep machine-readable output available for automation
 - `airelays login`
 - `airelays serve`
 - `airelays serve --no-auth`

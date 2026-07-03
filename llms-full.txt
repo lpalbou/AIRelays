@@ -41,20 +41,24 @@ Earlier AIRelay local state under singular paths such as `~/.config/airelay` and
    - skips relay-token creation
 3. `airelays login`
    - creates an AIRelays-owned ChatGPT subscription session
-4. `airelays serve --port 8080`
+4. `airelays doctor`
+   - checks local config, relay-token setup, upstream OpenAI subscription auth, live `/models`, and a tiny `/responses` request
+   - supports `--json` for automation and `--skip-response` to avoid the response smoke request
+5. `airelays serve --port 8080`
    - starts the protected local server
    - fails fast if bearer auth is enabled but no relay token is configured
    - prints the client base URL, token file path, and required `Authorization` header shape
-5. `airelays serve --no-auth --port 8080`
+6. `airelays serve --no-auth --port 8080`
    - starts an open local server with no relay-token check
 
 Inspect current state with:
 
 ```bash
 airelays status
+airelays doctor
 ```
 
-The CLI defaults to readable terminal output. Use `--json` on `airelays init`, `airelays status`, `airelays logout`, `airelays token show`, or `airelays token rotate` when you need machine-readable output.
+The CLI defaults to readable terminal output. Use `--json` on `airelays init`, `airelays status`, `airelays doctor`, `airelays logout`, `airelays token show`, or `airelays token rotate` when you need machine-readable output. Use `airelays doctor --skip-response` when you want setup and model checks without sending the tiny `/responses` smoke request.
 
 Show the current relay token with:
 

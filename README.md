@@ -22,6 +22,7 @@ See [DISCLAIMER.md](DISCLAIMER.md) for the short project notice.
 python -m pip install .
 airelays init
 airelays login
+airelays doctor
 airelays serve --port 8080
 ```
 
@@ -32,6 +33,7 @@ If you want a local relay with no client-side bearer auth, use:
 ```bash
 airelays init --no-auth
 airelays login
+airelays doctor
 airelays serve --no-auth --port 8080
 ```
 
@@ -81,9 +83,10 @@ Inspect the resolved relay and upstream-auth state at any point:
 
 ```bash
 airelays status
+airelays doctor
 ```
 
-CLI status and setup commands default to readable terminal output. Use `--json` on `airelays init`, `airelays status`, `airelays logout`, `airelays token show`, or `airelays token rotate` when you need machine-readable output for automation.
+CLI status and setup commands default to readable terminal output. Use `--json` on `airelays init`, `airelays status`, `airelays doctor`, `airelays logout`, `airelays token show`, or `airelays token rotate` when you need machine-readable output for automation. Use `airelays doctor --skip-response` when you want setup and model checks without sending the tiny `/responses` smoke request.
 
 Point your client at:
 
@@ -147,11 +150,14 @@ airelays serve --bearer-token-file /path/to/relay-token --port 8080
    - does not create or require a relay token
 3. `airelays login`
    - creates an AIRelays-owned ChatGPT subscription session
-4. `airelays serve --port 8080`
+4. `airelays doctor`
+   - checks local config, relay-token setup, upstream OpenAI subscription auth, live `/models`, and a tiny `/responses` request
+   - supports `--json` for automation and `--skip-response` to avoid the live response smoke request
+5. `airelays serve --port 8080`
    - starts the protected local endpoint
    - fails fast if bearer auth is enabled but no relay token is configured
    - prints the client base URL, token file path, and the required `Authorization` header shape
-5. `airelays serve --no-auth --port 8080`
+6. `airelays serve --no-auth --port 8080`
    - starts an open local endpoint with no relay-token check
    - keeps the normal per-IP rate limits and concurrency limits
 

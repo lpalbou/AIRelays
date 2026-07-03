@@ -45,9 +45,12 @@ Authorization: Bearer YOUR_AIRELAYS_TOKEN
 
 ```bash
 airelays status
+airelays doctor
 ```
 
-The output contains:
+`airelays status` shows the resolved local state. `airelays doctor` goes further and probes setup, upstream `/models`, and a tiny `/responses` request.
+
+The status output contains:
 
 - relay configuration summary
 - whether a relay bearer token is present
@@ -71,7 +74,7 @@ Next Steps
   1. airelays login
 ```
 
-Use `airelays status --json` for machine-readable output.
+Use `airelays status --json` or `airelays doctor --json` for machine-readable output. Use `airelays doctor --skip-response` when you want setup and model checks without sending the tiny `/responses` smoke request.
 
 ## Log In Upstream
 

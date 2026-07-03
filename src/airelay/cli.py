@@ -10,11 +10,17 @@ import uvicorn
 
 from airelay.app import create_app
 from airelay.auth import AuthManager, AuthRecord
+from airelay.backend import ChatGptCodexBackend
 from airelay.config import APP_NAME, Settings
 from airelay.terminal import accent, bad, bold, good, muted, warn
 
 
 _FIELD_WIDTH = 18
+
+
+class _NullTrafficLogger:
+    def write(self, entry: dict[str, Any]) -> None:
+        del entry
 
 
 def _serve_command(settings: Settings) -> str:
@@ -168,6 +174,255 @@ def _token_show_payload(settings: Settings) -> dict[str, object]:
         "bearer_token_source": settings.bearer_token_source(),
         "relay_token": token,
         "client": _client_usage_payload(settings, include_token=True),
+        "next_steps": next_steps,
+    }
+
+
+def _check(
+    name: str,
+    status: str,
+    message: str,
+    *,
+    next_steps: list[str] | None = None,
+    data: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "name": name,
+        "status": status,
+        "message": message,
+    }
+    if next_steps:
+        payload["next_steps"] = next_steps
+    if data:
+        payload["data"] = data
+    return payload
+
+
+def _add_next_steps(target: list[str], steps: list[str] | None) -> None:
+    if not steps:
+        return
+    for step in steps:
+        if step not in target:
+            target.append(step)
+
+
+def _next_steps_from_check(check: dict[str, object]) -> list[str] | None:
+    steps = check.get("next_steps")
+    return steps if isinstance(steps, list) else None
+
+
+def _model_slugs(payload: dict[str, Any]) -> list[str]:
+    models = payload.get("models")
+    if not isinstance(models, list):
+        return []
+    slugs: list[str] = []
+    for item in models:
+        if not isinstance(item, dict):
+            continue
+        slug = item.get("slug")
+        if isinstance(slug, str) and slug:
+            slugs.append(slug)
+    return slugs
+
+
+def _doctor_response_payload(model: str) -> dict[str, object]:
+    return {
+        "model": model,
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "Reply with exactly: ok",
+                    }
+                ],
+            }
+        ],
+        "instructions": "Reply with exactly: ok.",
+        "store": False,
+        "tools": [],
+        "stream": True,
+    }
+
+
+async def _doctor_payload(settings: Settings, *, skip_response: bool = False) -> dict[str, object]:
+    manager = _auth_manager(settings)
+    checks: list[dict[str, object]] = []
+    next_steps: list[str] = []
+    selected_model: str | None = None
+
+    config_exists = settings.config_path.exists()
+    check = _check(
+        "config",
+        "pass" if config_exists else "warn",
+        "Configuration file found." if config_exists else "Using built-in defaults; no config file exists.",
+        next_steps=None if config_exists else ["airelays init"],
+        data={
+            "config_path": str(settings.config_path),
+            "config_exists": config_exists,
+        },
+    )
+    checks.append(check)
+    _add_next_steps(next_steps, _next_steps_from_check(check))
+
+    token = settings.resolve_bearer_token()
+    if settings.require_bearer_auth and not token:
+        check = _check(
+            "relay_token",
+            "fail",
+            "Relay bearer auth is enabled, but no relay token is configured.",
+            next_steps=["airelays init", "airelays token rotate"],
+            data={"bearer_token_file": str(settings.bearer_token_file)},
+        )
+    elif settings.require_bearer_auth:
+        check = _check(
+            "relay_token",
+            "pass",
+            "Relay bearer token is present.",
+            data={
+                "bearer_token_file": str(settings.bearer_token_file),
+                "bearer_token_source": settings.bearer_token_source() or "",
+            },
+        )
+    else:
+        check = _check(
+            "relay_token",
+            "skip",
+            "Relay bearer auth is disabled for this configuration.",
+        )
+    checks.append(check)
+    _add_next_steps(next_steps, _next_steps_from_check(check))
+
+    auth_status = manager.status()
+    if auth_status.get("ready_for_requests"):
+        check = _check(
+            "openai_auth",
+            "pass",
+            "OpenAI subscription login is ready.",
+            data={
+                "email": auth_status.get("email") or "",
+                "account_id": auth_status.get("account_id") or "",
+                "storage_mode": auth_status.get("storage_mode") or "",
+            },
+        )
+    else:
+        check = _check(
+            "openai_auth",
+            "fail",
+            "OpenAI subscription login is missing, incomplete, or account-mismatched.",
+            next_steps=["airelays login"],
+            data={
+                "authenticated": bool(auth_status.get("authenticated")),
+                "credentials_present": bool(auth_status.get("credentials_present")),
+                "account_bound": bool(auth_status.get("account_bound")),
+            },
+        )
+    checks.append(check)
+    _add_next_steps(next_steps, _next_steps_from_check(check))
+
+    backend: ChatGptCodexBackend | None = None
+    models_available = False
+    if not auth_status.get("ready_for_requests"):
+        checks.append(_check("openai_models", "skip", "OpenAI model probe requires a ready OpenAI login."))
+    else:
+        backend = ChatGptCodexBackend(settings, manager, _NullTrafficLogger())  # type: ignore[arg-type]
+        try:
+            models_payload = await backend.list_models("doctor_models")
+            slugs = _model_slugs(models_payload)
+            selected_model = slugs[0] if slugs else None
+            models_available = bool(selected_model)
+            checks.append(
+                _check(
+                    "openai_models",
+                    "pass" if models_available else "fail",
+                    (
+                        f"Upstream /models returned {len(slugs)} model(s)."
+                        if models_available
+                        else "Upstream /models returned no usable model slugs."
+                    ),
+                    data={
+                        "model_count": len(slugs),
+                        "selected_model": selected_model or "",
+                    },
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            check = _check(
+                "openai_models",
+                "fail",
+                f"OpenAI upstream /models probe failed: {exc}",
+                next_steps=["airelays login"],
+            )
+            checks.append(check)
+            _add_next_steps(next_steps, _next_steps_from_check(check))
+
+    if skip_response:
+        checks.append(
+            _check("openai_response", "skip", "Response smoke probe skipped by --skip-response.")
+        )
+    elif not auth_status.get("ready_for_requests"):
+        checks.append(
+            _check(
+                "openai_response",
+                "skip",
+                "Response smoke probe requires a ready OpenAI login.",
+            )
+        )
+    elif not models_available or selected_model is None:
+        checks.append(
+            _check(
+                "openai_response",
+                "skip",
+                "Response smoke probe requires a usable model from /models.",
+            )
+        )
+    else:
+        if backend is None:
+            backend = ChatGptCodexBackend(settings, manager, _NullTrafficLogger())  # type: ignore[arg-type]
+        try:
+            response_payload = await backend.collect_response(
+                _doctor_response_payload(selected_model),
+                "doctor_response",
+                None,
+            )
+            checks.append(
+                _check(
+                    "openai_response",
+                    "pass",
+                    "Tiny /responses smoke request completed.",
+                    data={
+                        "response_id": response_payload.get("id") or "",
+                        "status": response_payload.get("status") or "",
+                        "model": response_payload.get("model") or selected_model,
+                    },
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            check = _check(
+                "openai_response",
+                "fail",
+                f"OpenAI /responses smoke request failed: {exc}",
+                next_steps=["Check `airelays status` and retry after upstream limits reset if needed."],
+            )
+            checks.append(check)
+            _add_next_steps(next_steps, _next_steps_from_check(check))
+    if backend is not None:
+        await backend.close()
+
+    failed = [check for check in checks if check.get("status") == "fail"]
+    warned = [check for check in checks if check.get("status") == "warn"]
+    passed = [check for check in checks if check.get("status") == "pass"]
+    skipped = [check for check in checks if check.get("status") == "skip"]
+    return {
+        "ok": not failed,
+        "summary": {
+            "passed": len(passed),
+            "warnings": len(warned),
+            "failed": len(failed),
+            "skipped": len(skipped),
+        },
+        "checks": checks,
         "next_steps": next_steps,
     }
 
@@ -353,6 +608,37 @@ def _print_status_summary(payload: dict[str, object]) -> None:
     _print_steps([str(step) for step in payload.get("next_steps", [])])
 
 
+def _print_doctor_summary(payload: dict[str, object]) -> None:
+    _print_title("AIRelays Doctor")
+    summary = dict(payload.get("summary", {}))
+    _print_section("Summary")
+    _print_bool("Ready", bool(payload.get("ok")))
+    _print_field("Passed", summary.get("passed", 0), kind="good")
+    _print_field("Warnings", summary.get("warnings", 0), kind="warn")
+    _print_field("Failed", summary.get("failed", 0), kind="bad" if summary.get("failed") else "plain")
+    _print_field("Skipped", summary.get("skipped", 0))
+
+    _print_section("Checks")
+    for item in payload.get("checks", []):
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status", ""))
+        if status == "pass":
+            kind = "good"
+        elif status == "fail":
+            kind = "bad"
+        elif status == "warn":
+            kind = "warn"
+        else:
+            kind = "plain"
+        _print_field(str(item.get("name", "check")), status, kind=kind)
+        message = item.get("message")
+        if message:
+            print(f"    {message}")
+
+    _print_steps([str(step) for step in payload.get("next_steps", [])])
+
+
 def _print_logout_summary(deleted: bool) -> None:
     _print_title("AIRelays Logout")
     if deleted:
@@ -467,6 +753,17 @@ def _run_status(args: argparse.Namespace) -> None:
         _emit_json(payload)
         return
     _print_status_summary(payload)
+
+
+async def _run_doctor(args: argparse.Namespace) -> None:
+    settings = _base_settings(args)
+    payload = await _doctor_payload(settings, skip_response=args.skip_response)
+    if _json_requested(args):
+        _emit_json(payload)
+    else:
+        _print_doctor_summary(payload)
+    if not payload.get("ok"):
+        raise SystemExit(1)
 
 
 def _run_logout(args: argparse.Namespace) -> None:
@@ -584,6 +881,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_json_argument(status)
     status.set_defaults(func=_run_status)
+
+    doctor = subparsers.add_parser(
+        "doctor",
+        parents=[shared],
+        help="Run local setup checks plus live upstream model and response probes",
+    )
+    _add_json_argument(doctor)
+    doctor.add_argument(
+        "--skip-response",
+        action="store_true",
+        help="Skip the tiny OpenAI /responses smoke request",
+    )
+    doctor.set_defaults(async_func=_run_doctor)
 
     logout = subparsers.add_parser(
         "logout",
