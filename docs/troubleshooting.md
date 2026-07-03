@@ -3,6 +3,7 @@
 ## `401 Missing or invalid AIRelays bearer token`
 
 - run `airelays status`
+- run `airelays doctor --skip-response`
 - confirm the relay token is present
 - confirm the client is calling `http://HOST:PORT/v1/...`
 - use `airelays token show` if needed
@@ -10,6 +11,7 @@
 ## `503 No ChatGPT login found`
 
 - run `airelays status`
+- run `airelays doctor --skip-response`
 - if the OpenAI runtime is enabled, run `airelays login`
 - if the browser flow cannot bind `localhost:1455`, use `airelays login --device`
 
@@ -41,3 +43,17 @@ When Claude experimental mode is enabled:
 
 - confirm the file is below the per-file upload ceiling
 - confirm the relay has not reached the total stored-upload quota
+
+## Live upstream verification
+
+Use `airelays doctor` when local state looks correct but client requests still
+fail. It checks local setup, then verifies the OpenAI upstream `/models` route
+and runs a tiny `/responses` smoke request when the OpenAI runtime is enabled
+and logged in.
+
+```bash
+airelays doctor
+```
+
+Use `airelays doctor --skip-response` when you want setup and model-list checks
+without sending a generation request.

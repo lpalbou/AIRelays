@@ -15,6 +15,7 @@ def test_config_file_round_trip(tmp_path) -> None:
         logs_dir=tmp_path / "logs",
         bearer_token_file=tmp_path / "data" / "relay-token",
         enable_claude_experimental=True,
+        models_cache_ttl_seconds=42.0,
         claude_models=("claude:sonnet",),
     )
 
@@ -29,6 +30,7 @@ def test_config_file_round_trip(tmp_path) -> None:
     assert loaded.logs_dir == tmp_path / "logs"
     assert loaded.bearer_token_file == tmp_path / "data" / "relay-token"
     assert loaded.enable_claude_experimental is True
+    assert loaded.models_cache_ttl_seconds == 42.0
     assert loaded.claude_models == ("claude:sonnet",)
 
 
@@ -44,10 +46,12 @@ def test_env_overrides_config_file(tmp_path, monkeypatch) -> None:
     settings.write_config_file(force=True)
 
     monkeypatch.setenv("AIRELAYS_PORT", "7777")
+    monkeypatch.setenv("AIRELAYS_MODELS_CACHE_TTL_SECONDS", "17.5")
 
     loaded = Settings.from_sources(Path(config_path))
 
     assert loaded.port == 7777
+    assert loaded.models_cache_ttl_seconds == 17.5
 
 
 def test_explicit_bearer_token_overrides_existing_token_file(tmp_path) -> None:

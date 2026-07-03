@@ -9,6 +9,11 @@ Returns an OpenAI-style models list built from the enabled provider runtimes.
 - models starting with `claude:` route to the Claude experimental runtime when it is enabled
 - other model ids route to the OpenAI runtime when it is enabled
 - Each model record includes an `airelays` extension block with provider identity and route capabilities.
+- Successful OpenAI upstream model-list responses are cached in memory for
+  `models_cache_ttl_seconds` seconds. The default is 300 seconds; `0`
+  disables the cache.
+- Cached OpenAI model lists are scoped to the current local OpenAI auth account
+  and ignored after logout or account changes.
 
 ## `GET /v1/subscription/status`
 
@@ -21,7 +26,16 @@ Returns the current OpenAI subscription snapshot from `chatgpt.com/backend-api/w
 
 ## `GET /v1/relay/status`
 
-Returns relay diagnostics and provider readiness.
+Returns relay diagnostics, provider readiness, and provider cache status.
+OpenAI model-list cache diagnostics live under `providers.openai.models_cache`.
+
+## CLI Diagnostics
+
+`airelays status` reports local config, relay-token, and provider readiness
+state. `airelays doctor` runs the same local checks and also probes the OpenAI
+upstream `/models` route plus a tiny `/responses` smoke request when the OpenAI
+runtime is enabled and logged in. Use `airelays doctor --skip-response` to skip
+the response smoke request.
 
 ## `POST /v1/responses`
 

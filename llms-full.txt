@@ -20,6 +20,7 @@ OpenAI runtime:
 ```bash
 airelays init
 airelays login
+airelays doctor
 airelays serve --port 8080
 ```
 
@@ -51,6 +52,7 @@ OpenAI runtime:
 - local files
 - local conversations
 - `GET /v1/subscription/status`
+- successful OpenAI upstream model-list responses are cached in memory for `models_cache_ttl_seconds` seconds
 
 Claude experimental runtime:
 
@@ -70,6 +72,12 @@ Claude experimental runtime:
 - Claude experimental mode requires loopback binding
 - request and response contents can be written to local AIRelays log files; bearer tokens are redacted
 - repeated bad tokens trigger a temporary IP block
+
+## Diagnostics
+
+- `airelays status` reports local relay, token, OpenAI login, and provider readiness state.
+- `airelays doctor` runs local setup checks, validates the relay token state, checks OpenAI login readiness, probes upstream `/models`, and sends a tiny `/responses` smoke request when the OpenAI runtime is enabled and logged in.
+- `airelays doctor --skip-response` skips the generation smoke request.
 
 ## Important Docs
 

@@ -134,6 +134,7 @@ class Settings:
     max_upload_bytes: int = 32 * 1024 * 1024
     max_total_upload_bytes: int = 256 * 1024 * 1024
     enable_openai_provider: bool = True
+    models_cache_ttl_seconds: float = 300.0
     enable_claude_experimental: bool = False
     claude_bin: str = "claude"
     claude_timeout_seconds: float = 600.0
@@ -314,6 +315,16 @@ class Settings:
                 or _cfg(payload, "providers", "openai", "enabled"),
                 True,
             ),
+            models_cache_ttl_seconds=_float(
+                _env(
+                    "AIRELAYS_MODELS_CACHE_TTL_SECONDS",
+                    "AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS",
+                    "AIRELAY_MODELS_CACHE_TTL_SECONDS",
+                    "AIRELAY_OPENAI_MODELS_CACHE_TTL_SECONDS",
+                )
+                or _cfg(payload, "providers", "openai", "models_cache_ttl_seconds"),
+                300.0,
+            ),
             enable_claude_experimental=_bool(
                 _env(
                     "AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL",
@@ -487,6 +498,7 @@ max_total_upload_bytes = {self.max_total_upload_bytes}
 
 [providers.openai]
 enabled = {str(self.enable_openai_provider).lower()}
+models_cache_ttl_seconds = {self.models_cache_ttl_seconds}
 
 [providers.claude]
 enabled = {str(self.enable_claude_experimental).lower()}
@@ -531,6 +543,7 @@ models = [{", ".join(f'"{model}"' for model in self.claude_models)}]
             "providers": {
                 "openai": {
                     "enabled": self.enable_openai_provider,
+                    "models_cache_ttl_seconds": self.models_cache_ttl_seconds,
                 },
                 "claude": {
                     "enabled": self.enable_claude_experimental,

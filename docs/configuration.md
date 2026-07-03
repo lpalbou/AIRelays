@@ -59,6 +59,7 @@ max_total_upload_bytes = 268435456
 
 [providers.openai]
 enabled = true
+models_cache_ttl_seconds = 300.0
 
 [providers.claude]
 enabled = false
@@ -88,6 +89,7 @@ models = ["claude:sonnet", "claude:opus", "claude:haiku", "claude:fable"]
 - `AIRELAYS_BEARER_TOKEN`
 - `AIRELAYS_BEARER_TOKEN_FILE`
 - `AIRELAYS_ENABLE_OPENAI`
+- `AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`
 - `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL`
 - `AIRELAYS_CLAUDE_BIN`
 - `AIRELAYS_CLAUDE_TIMEOUT_SECONDS`
@@ -119,6 +121,15 @@ OpenAI runtime:
 - enabled by default
 - uses AIRelays-owned auth storage
 - `airelays login` manages its subscription session
+- caches successful upstream model-list responses for `models_cache_ttl_seconds` seconds
+  by default
+- the model-list cache is process-local, in-memory, and disabled when
+  `models_cache_ttl_seconds = 0`
+- cache state is visible under `providers.openai.models_cache` in
+  `GET /v1/relay/status`
+
+`AIRELAYS_MODELS_CACHE_TTL_SECONDS` remains accepted as a shorter alias for
+`AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`.
 
 Claude experimental runtime:
 

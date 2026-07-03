@@ -346,6 +346,8 @@ def create_app(settings: Settings) -> FastAPI:
         await log_inbound(request_id, request, b"")
         provider_statuses = providers.provider_statuses()
         openai_status = provider_statuses.get("openai", {})
+        auth_status = dict(openai_status)
+        auth_status.pop("models_cache", None)
         enabled_provider_statuses = [
             status for status in provider_statuses.values() if isinstance(status, dict) and status.get("enabled")
         ]
@@ -365,7 +367,7 @@ def create_app(settings: Settings) -> FastAPI:
                     if status.get("enabled")
                 },
             },
-            "auth": openai_status,
+            "auth": auth_status,
             "providers": provider_statuses,
             "relay": settings.summary(),
             "security": protector.diagnostics(getattr(request.state, "client_ip", None)),

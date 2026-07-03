@@ -19,6 +19,7 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 - `airelays init`
 - `airelays login`
+- `airelays doctor`
 - `airelays serve`
 - `airelays init --no-auth`
 - `airelays serve --no-auth`
@@ -36,3 +37,4 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - other model ids route to the OpenAI runtime when it is enabled
 - Claude runtime requires bearer auth and loopback binding
 - `GET /v1/subscription/status` applies to the OpenAI runtime only
+- `airelays doctor` runs local setup checks plus live OpenAI `/models` and optional `/responses` probes

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from airelay import __version__
 from airelay.app import create_app
+from airelay.auth import AuthenticationError
 from airelay.backend import BackendError, ChatGptCodexBackend, SSEEvent
 from airelay.config import Settings
 from airelay.traffic import TrafficLogger, snapshot_body
@@ -82,6 +84,24 @@ def make_settings(tmp_path, **overrides) -> Settings:
     for key, value in overrides.items():
         setattr(settings, key, value)
     return settings
+
+
+def write_openai_auth(settings: Settings, account_id: str = "acct_123") -> None:
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    (settings.data_dir / "auth.json").write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": f"access-{account_id}",
+                    "refresh_token": f"refresh-{account_id}",
+                    "account_id": account_id,
+                },
+                "bound_account_id": account_id,
+                "last_refresh": "2099-01-01T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 @pytest.mark.asyncio
@@ -753,6 +773,223 @@ def test_models_route_maps_upstream_401_to_upstream_auth_error(tmp_path) -> None
     payload = response.json()
     assert payload["error"]["code"] == "upstream_auth_rejected"
     assert response.headers["x-airelays-upstream-auth"] == "rejected"
+
+
+def test_models_route_caches_openai_models_within_ttl(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=False,
+        auth_storage_mode="file",
+        models_cache_ttl_seconds=300.0,
+    )
+    write_openai_auth(settings)
+    app = create_app(settings)
+    calls = 0
+
+    async def fake_list_models(request_id: str):
+        nonlocal calls
+        del request_id
+        calls += 1
+        return {"models": [{"slug": f"gpt-cache-{calls}"}]}
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        first = client.get("/v1/models")
+        second = client.get("/v1/models")
+        status = client.get("/v1/relay/status")
+
+    assert calls == 1
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["data"][0]["id"] == "gpt-cache-1"
+    assert second.json()["data"][0]["id"] == "gpt-cache-1"
+    cache = status.json()["providers"]["openai"]["models_cache"]
+    assert cache["enabled"] is True
+    assert cache["state"] == "fresh"
+    assert cache["ttl_seconds"] == 300.0
+    assert cache["cached_model_count"] == 1
+    assert "models_cache" not in status.json()["auth"]
+
+
+def test_models_route_refreshes_openai_models_after_ttl(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=False,
+        auth_storage_mode="file",
+        models_cache_ttl_seconds=300.0,
+    )
+    write_openai_auth(settings)
+    app = create_app(settings)
+    calls = 0
+
+    async def fake_list_models(request_id: str):
+        nonlocal calls
+        del request_id
+        calls += 1
+        return {"models": [{"slug": f"gpt-cache-{calls}"}]}
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        first = client.get("/v1/models")
+        client.app.state.providers._openai_models_cache_fetched_at = time.monotonic() - 301.0
+        second = client.get("/v1/models")
+
+    assert calls == 2
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["data"][0]["id"] == "gpt-cache-1"
+    assert second.json()["data"][0]["id"] == "gpt-cache-2"
+
+
+def test_models_route_does_not_cache_openai_model_errors(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=False,
+        auth_storage_mode="file",
+        models_cache_ttl_seconds=300.0,
+    )
+    write_openai_auth(settings)
+    app = create_app(settings)
+    calls = 0
+
+    async def fake_list_models(request_id: str):
+        nonlocal calls
+        del request_id
+        calls += 1
+        if calls == 1:
+            raise BackendError(502, "temporary upstream failure")
+        return {"models": [{"slug": "gpt-cache-ok"}]}
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        first = client.get("/v1/models")
+        second = client.get("/v1/models")
+
+    assert calls == 2
+    assert first.status_code == 502
+    assert second.status_code == 200
+    assert second.json()["data"][0]["id"] == "gpt-cache-ok"
+
+
+def test_models_route_ignores_warm_cache_when_openai_auth_is_removed(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=False,
+        auth_storage_mode="file",
+        models_cache_ttl_seconds=300.0,
+    )
+    write_openai_auth(settings)
+    app = create_app(settings)
+    calls = 0
+
+    async def fake_list_models(request_id: str):
+        nonlocal calls
+        del request_id
+        calls += 1
+        if calls == 1:
+            return {"models": [{"slug": "gpt-cache-warm"}]}
+        raise AuthenticationError(
+            "No ChatGPT login found. Run `airelays login` first.",
+            code="upstream_auth_missing",
+        )
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        first = client.get("/v1/models")
+        (settings.data_dir / "auth.json").unlink()
+        second = client.get("/v1/models")
+        status = client.get("/v1/relay/status")
+
+    assert calls == 2
+    assert first.status_code == 200
+    assert second.status_code == 503
+    assert second.json()["error"]["code"] == "upstream_auth_missing"
+    cache = status.json()["providers"]["openai"]["models_cache"]
+    assert cache["state"] == "empty"
+    assert cache["cached_model_count"] == 0
+
+
+def test_models_route_ignores_warm_cache_when_openai_account_changes(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=False,
+        auth_storage_mode="file",
+        models_cache_ttl_seconds=300.0,
+    )
+    write_openai_auth(settings, account_id="acct_1")
+    app = create_app(settings)
+    calls = 0
+
+    async def fake_list_models(request_id: str):
+        nonlocal calls
+        del request_id
+        calls += 1
+        return {"models": [{"slug": f"gpt-cache-account-{calls}"}]}
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        first = client.get("/v1/models")
+        write_openai_auth(settings, account_id="acct_2")
+        second = client.get("/v1/models")
+
+    assert calls == 2
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["data"][0]["id"] == "gpt-cache-account-1"
+    assert second.json()["data"][0]["id"] == "gpt-cache-account-2"
+
+
+def test_models_route_ttl_zero_disables_openai_models_cache(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=False,
+        auth_storage_mode="file",
+        models_cache_ttl_seconds=0.0,
+    )
+    write_openai_auth(settings)
+    app = create_app(settings)
+    calls = 0
+
+    async def fake_list_models(request_id: str):
+        nonlocal calls
+        del request_id
+        calls += 1
+        return {"models": [{"slug": f"gpt-cache-disabled-{calls}"}]}
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        first = client.get("/v1/models")
+        second = client.get("/v1/models")
+        status = client.get("/v1/relay/status")
+
+    assert calls == 2
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["data"][0]["id"] == "gpt-cache-disabled-1"
+    assert second.json()["data"][0]["id"] == "gpt-cache-disabled-2"
+    cache = status.json()["providers"]["openai"]["models_cache"]
+    assert cache["configured"] is False
+    assert cache["enabled"] is False
+    assert cache["state"] == "disabled"
+
+
+def test_relay_status_reports_models_cache_disabled_with_openai_provider_disabled(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=False,
+        enable_openai_provider=False,
+        models_cache_ttl_seconds=300.0,
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        response = client.get("/v1/relay/status")
+
+    assert response.status_code == 200
+    cache = response.json()["providers"]["openai"]["models_cache"]
+    assert cache["configured"] is True
+    assert cache["enabled"] is False
+    assert cache["state"] == "provider_disabled"
 
 
 def test_models_route_returns_claude_models_when_openai_auth_is_missing(tmp_path) -> None:

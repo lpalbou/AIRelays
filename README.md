@@ -38,6 +38,7 @@ OpenAI runtime:
 ```bash
 airelays init
 airelays login
+airelays doctor
 airelays serve --port 8080
 ```
 
@@ -71,6 +72,14 @@ AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL=true airelays serve --port 8080
 When Claude experimental mode is enabled, AIRelays requires bearer auth and loopback binding. `--no-auth` is rejected in that mode.
 
 ## Basic Verification
+
+Run setup and upstream probes before starting the server:
+
+```bash
+airelays doctor
+```
+
+Use `airelays doctor --skip-response` to skip the tiny `/responses` smoke request.
 
 Public health:
 
@@ -207,6 +216,7 @@ Important toggles:
 - `AIRELAYS_BEARER_TOKEN`
 - `AIRELAYS_BEARER_TOKEN_FILE`
 - `AIRELAYS_ENABLE_OPENAI`
+- `AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`
 - `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL`
 - `AIRELAYS_CLAUDE_BIN`
 - `AIRELAYS_CLAUDE_MODELS`

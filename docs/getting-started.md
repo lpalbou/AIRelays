@@ -44,6 +44,7 @@ airelays login
 Start the server:
 
 ```bash
+airelays doctor
 airelays serve --host 127.0.0.1 --port 8080
 ```
 
@@ -122,10 +123,22 @@ Inspect relay and provider readiness:
 airelays status
 ```
 
+Run local setup checks plus live upstream probes:
+
+```bash
+airelays doctor
+```
+
+`airelays doctor` checks config, relay-token state, OpenAI login readiness,
+upstream `/models`, a tiny `/responses` smoke request, and Claude readiness
+when the experimental runtime is enabled. Use `airelays doctor --skip-response`
+to skip the response smoke request.
+
 Machine-readable output:
 
 ```bash
 airelays status --json
+airelays doctor --json
 ```
 
 `airelays status` shows:
