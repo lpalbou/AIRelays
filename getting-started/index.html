@@ -1044,8 +1044,10 @@ Use <code>airelays init --json</code> when you need machine-readable output.</p>
 </code></pre></div>
 <h2 id="inspect-status">Inspect Status<a class="headerlink" href="#inspect-status" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>status
+airelays<span class="w"> </span>doctor
 </code></pre></div>
-<p>The output contains:</p>
+<p><code>airelays status</code> shows the resolved local state. <code>airelays doctor</code> goes further and probes setup, upstream <code>/models</code>, and a tiny <code>/responses</code> request.</p>
+<p>The status output contains:</p>
 <ul>
 <li>relay configuration summary</li>
 <li>whether a relay bearer token is present</li>
@@ -1066,7 +1068,7 @@ Upstream Session
 Next Steps
   1. airelays login
 </code></pre></div>
-<p>Use <code>airelays status --json</code> for machine-readable output.</p>
+<p>Use <code>airelays status --json</code> or <code>airelays doctor --json</code> for machine-readable output. Use <code>airelays doctor --skip-response</code> when you want setup and model checks without sending the tiny <code>/responses</code> smoke request.</p>
 <h2 id="log-in-upstream">Log In Upstream<a class="headerlink" href="#log-in-upstream" title="Permanent link">&para;</a></h2>
 <p>Browser login:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>login

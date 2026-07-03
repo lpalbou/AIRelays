@@ -954,6 +954,7 @@
 <p>The client is not sending the relay token AIRelays expects.</p>
 <p>Checks:</p>
 <ul>
+<li>run <code>airelays doctor</code></li>
 <li>run <code>airelays status</code></li>
 <li>confirm the Relay section shows <code>Relay token: present</code></li>
 <li>confirm the client credential matches the current AIRelays token</li>
@@ -966,6 +967,7 @@
 <p>AIRelays could not find reusable upstream auth.</p>
 <p>Checks:</p>
 <ul>
+<li>run <code>airelays doctor</code></li>
 <li>run <code>airelays status</code></li>
 <li>confirm the Upstream Session section shows <code>Ready: yes</code></li>
 <li>if not, run <code>airelays login</code></li>
@@ -993,6 +995,7 @@
 <p>The stored upstream ChatGPT login could not be refreshed.</p>
 <p>Checks:</p>
 <ul>
+<li>run <code>airelays doctor --skip-response</code> to verify config, relay token, upstream auth, and live <code>/models</code></li>
 <li>run <code>airelays login</code> again</li>
 <li>confirm <code>airelays status</code> reports an authenticated upstream login</li>
 </ul>
