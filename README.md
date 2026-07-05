@@ -19,31 +19,41 @@ See [DISCLAIMER.md](DISCLAIMER.md).
 
 ## Install
 
-From a source checkout:
+AIRelays ships two ways; both drive the same relay and share the same
+config (`~/.config/airelays`) and data (`~/.airelays`).
 
-```bash
-python -m pip install .
-```
+### CLI / server install (PyPI)
 
-From PyPI:
+For headless machines, servers, or terminal-first workflows:
 
 ```bash
 python -m pip install airelays
 ```
 
-## macOS Menu Bar App
+Or from a source checkout:
 
-A native macOS status-bar app now lives under [macos/AIRelaysMenuBar](macos/AIRelaysMenuBar/README.md).
+```bash
+python -m pip install .
+```
 
-Build it:
+### Desktop app (GUI + system tray)
+
+A cross-platform tray app (macOS, Windows, Linux) with a dashboard for
+start/stop, auth and network modes, per-account usage, live traffic, and
+diagnostics lives under [desktop/](desktop/README.md). Installers (DMG,
+NSIS, AppImage, deb) build from `.github/workflows/desktop.yml`; locally:
+
+```bash
+cd desktop
+./scripts/bundle_runtime.sh
+npm install && npm run build
+```
+
+An earlier native macOS status-bar app remains available under
+[macos/AIRelaysMenuBar](macos/AIRelaysMenuBar/README.md):
 
 ```bash
 swift build --package-path macos/AIRelaysMenuBar
-```
-
-Run it:
-
-```bash
 swift run --package-path macos/AIRelaysMenuBar AIRelaysMenuBar
 ```
 

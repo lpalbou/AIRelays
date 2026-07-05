@@ -341,11 +341,11 @@ struct RelayAppSettings: Codable {
         "http://\(clientHost):\(port)/v1"
     }
 
-    /// The relay enforces loopback-only listeners for the experimental
-    /// Claude runtime, so it must be disabled in the rendered config when
-    /// the listener is exposed beyond loopback.
+    /// The relay enforces guardrails for the experimental Claude runtime
+    /// (loopback-only listener, no X-Forwarded-For trust); the rendered
+    /// config must respect both or serve refuses to start.
     var claudeEffectivelyEnabled: Bool {
-        enableClaudeExperimental && isLoopbackHost
+        enableClaudeExperimental && isLoopbackHost && !trustXForwardedFor
     }
 
     var claudeModels: [String] {

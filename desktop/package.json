@@ -1,0 +1,15 @@
+{
+  "name": "airelays-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AIRelays cross-platform tray app (Tauri): relay supervision and dashboard.",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "node scripts/check_runtime.mjs && tauri build",
+    "build:nocheck": "tauri build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AIRelays</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <nav id="sidebar" aria-label="Sections">
+      <div class="brand">
+        <img src="icon.png" alt="" width="28" height="28" />
+        <span>AIRelays</span>
+      </div>
+      <button class="nav-item active" data-view="overview" data-icon="gauge">Overview</button>
+      <button class="nav-item" data-view="traffic" data-icon="traffic">Traffic</button>
+      <button class="nav-item" data-view="console" data-icon="terminal">Console</button>
+      <button class="nav-item" data-view="settings" data-icon="settings">Settings</button>
+      <div class="sidebar-footer">
+        <div id="sidebar-status" class="sidebar-status">
+          <span class="dot dot-neutral" id="sidebar-dot"></span>
+          <span id="sidebar-state">Checking…</span>
+        </div>
+      </div>
+    </nav>
+    <main id="content" tabindex="-1"></main>
+  </div>
+  <div id="toasts" aria-live="polite"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

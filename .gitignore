@@ -23,3 +23,9 @@ dist/
 
 .build/
 .runtime_cache/
+
+node_modules/
+target/
+desktop/src-tauri/runtime/*
+!desktop/src-tauri/runtime/.gitkeep
+desktop/src-tauri/gen/

@@ -15,6 +15,9 @@
 - Made error alerts concise: alerts now show only the failing line (e.g. the final line of a Python traceback) and point to the Console tab, which keeps the full output.
 - Changed the app's default relay port from collision-prone 8080 to 8317 (IANA-unregistered, not a common tool default); existing app settings still on 8080 migrate once. The `airelays` CLI default remains 8080.
 - Renamed the shipped app to `AIRelays.app` (bundle name, display name, executable, and bundle identifier); the Swift package keeps its internal `AIRelaysMenuBar` name. App settings migrate automatically from the old `Application Support/AIRelaysMenuBar` folder.
+- Added a cross-platform desktop app under `desktop/` (Tauri v2): a Rust core supervises the relay (embedded standalone CPython, process-group/Job-Object tree cleanup, live status polling) and owns the system tray on macOS, Windows, and Linux; the dashboard is one web codebase (Overview, Traffic, Console, Settings) with copyable endpoint URLs and a masked, copyable API key. Installers (DMG, NSIS, AppImage, deb) build from `.github/workflows/desktop.yml`.
+- Hardened the desktop app after a six-reviewer adversarial pass: typed TOML rendering (no injection/escaping bugs), non-blocking process control, first-run auto-token plus dashboard auto-open, streamed login output with browser opening by default, concise error surfacing, settings validation, and WCAG-compliant dashboard contrast.
+- Fixed the Swift menu bar app to also disable Claude experimental when `trust_x_forwarded_for` is enabled, matching the relay's guardrail exactly.
 
 ## 0.2.5
 
