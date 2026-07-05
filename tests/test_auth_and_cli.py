@@ -268,6 +268,7 @@ def test_cli_status_defaults_to_human_output_and_supports_json(
     tmp_path, capsys, monkeypatch
 ) -> None:
     _clear_airelay_env(monkeypatch)
+    monkeypatch.setenv("AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL", "false")
     parser = build_parser()
     config_path = tmp_path / "config.toml"
     data_dir = tmp_path / "state"
@@ -595,7 +596,7 @@ def test_cli_serve_no_auth_starts_open_mode_without_token(tmp_path, monkeypatch,
     assert captured["port"] == 8090
 
 
-def test_cli_serve_rejects_no_auth_when_claude_experimental_is_enabled(
+def test_cli_serve_allows_no_auth_when_claude_experimental_is_enabled(
     tmp_path, monkeypatch
 ) -> None:
     _clear_airelay_env(monkeypatch)
@@ -619,11 +620,32 @@ enabled = true
         ]
     )
 
-    with pytest.raises(SystemExit, match="requires AIRelays bearer auth"):
-        args.func(args)
+    captured: dict[str, object] = {}
+
+    class _FakeRegistry:
+        @staticmethod
+        def provider_statuses() -> dict[str, object]:
+            return {
+                "openai": {"enabled": False, "ready_for_requests": False},
+                "claude": {"enabled": True, "ready_for_requests": True, "experimental": True},
+            }
+
+    def fake_run(app, host, port, log_level):  # type: ignore[no-untyped-def]
+        del app
+        captured["host"] = host
+        captured["port"] = port
+        captured["log_level"] = log_level
+
+    monkeypatch.setattr("airelay.cli._provider_registry", lambda settings, manager: _FakeRegistry())
+    monkeypatch.setattr("airelay.cli.uvicorn.run", fake_run)
+
+    args.func(args)
+
+    assert captured["host"] == "127.0.0.1"
+    assert captured["port"] == 8080
 
 
-def test_cli_init_rejects_no_auth_when_claude_experimental_is_enabled(
+def test_cli_init_allows_no_auth_when_claude_experimental_is_enabled(
     tmp_path, monkeypatch
 ) -> None:
     _clear_airelay_env(monkeypatch)
@@ -647,5 +669,6 @@ enabled = true
         ]
     )
 
-    with pytest.raises(SystemExit, match="requires AIRelays bearer auth"):
-        args.func(args)
+    args.func(args)
+
+    assert not (tmp_path / "state" / "relay-token").exists()

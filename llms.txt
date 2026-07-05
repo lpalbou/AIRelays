@@ -1,6 +1,6 @@
 # AIRelays
 
-AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes. The default runtime uses an AIRelays-owned ChatGPT subscription login. An optional experimental Claude runtime uses the local `claude` CLI for explicit `claude:*` text models. AIRelays protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default and can run in open local relay mode only when the Claude runtime is disabled.
+AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes. The default runtime uses an AIRelays-owned ChatGPT subscription login. The local experimental branch also enables a Claude runtime that uses the local `claude` CLI for explicit `claude:*` text models. AIRelays protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default and can run all enabled providers in open local relay mode.
 
 ## Key Docs
 
@@ -35,6 +35,6 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - Claude runtime: experimental text `chat.completions` and text `completions` only
 - models starting with `claude:` route to the Claude runtime when it is enabled
 - other model ids route to the OpenAI runtime when it is enabled
-- Claude runtime requires bearer auth and loopback binding
+- Claude runtime follows the relay's protected or open local auth mode and requires loopback binding
 - `GET /v1/subscription/status` applies to the OpenAI runtime only
 - `airelays doctor` runs local setup checks plus live OpenAI `/models` and optional `/responses` probes

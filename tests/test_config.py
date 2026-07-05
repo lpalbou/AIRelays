@@ -54,6 +54,16 @@ def test_env_overrides_config_file(tmp_path, monkeypatch) -> None:
     assert loaded.models_cache_ttl_seconds == 17.5
 
 
+def test_experimental_branch_enables_claude_by_default(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "missing.toml"
+    monkeypatch.delenv("AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL", raising=False)
+    monkeypatch.delenv("AIRELAY_ENABLE_CLAUDE_EXPERIMENTAL", raising=False)
+
+    loaded = Settings.from_sources(config_path)
+
+    assert loaded.enable_claude_experimental is True
+
+
 def test_explicit_bearer_token_overrides_existing_token_file(tmp_path) -> None:
     token_file = tmp_path / "data" / "relay-token"
     token_file.parent.mkdir(parents=True, exist_ok=True)
@@ -88,7 +98,7 @@ logs_dir = "/tmp/airelay-logs"
     assert "codex_home" not in loaded.render_config_toml()
 
 
-def test_claude_guardrails_require_loopback_and_bearer_auth(tmp_path) -> None:
+def test_claude_guardrails_allow_open_mode_but_require_loopback(tmp_path) -> None:
     settings = Settings(
         host="127.0.0.1",
         data_dir=tmp_path / "data",
@@ -98,9 +108,12 @@ def test_claude_guardrails_require_loopback_and_bearer_auth(tmp_path) -> None:
         enable_claude_experimental=True,
     )
 
+    settings.validate_provider_guardrails()
+
+    settings.host = "0.0.0.0"
     try:
         settings.validate_provider_guardrails()
     except RuntimeError as exc:
-        assert "requires AIRelays bearer auth" in str(exc)
+        assert "restricted to loopback" in str(exc)
     else:
-        raise AssertionError("Expected Claude guardrails to reject open mode")
+        raise AssertionError("Expected Claude guardrails to reject non-loopback host")

@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Added a branded app icon to the macOS menu bar app: a squircle-masked `AppIcon.icns` generated from `macos/AIRelaysMenuBar/assets/icon_artwork.png` via `scripts/make_icons.swift`, shown in Finder, Dock, and the app switcher.
+- Replaced the generic SF Symbol status-bar glyph with custom color-coded icons bundled as SwiftPM resources: a green bolt with relay arcs when the relay is reachable, a red bolt when it is not, rendered @2x and sized 22x18 pt for the menu bar slot.
+- Updated `package_app.sh` to ship the icon and resource bundle inside `AIRelaysMenuBar.app`.
+- Made the packaged menu bar app self-contained: `package_app.sh` now embeds a standalone CPython runtime with `airelays` installed under `Contents/Resources/runtime`, replacing the previous `bootstrap.json` coupling to a development checkout.
+- Changed the app's default launch settings to app-owned locations: the relay command resolves to the embedded runtime (`python3 -m airelays`) from the live bundle path, and the working directory defaults to `~/Library/Application Support/AIRelaysMenuBar`; stale auto-derived launch settings from earlier versions migrate automatically on startup.
+- Precompiled the embedded runtime's bytecode at packaging time and set `PYTHONDONTWRITEBYTECODE=1` at run time so the relay never writes into the signed bundle and the code signature stays valid.
+- Added first-class auth and network mode controls to the menu bar app: segmented "Protected (token) / Open (no auth)" and "Loopback only / Private network (LAN)" switches in the dashboard, matching check-marked items in the status-bar menu, applied live with an automatic relay restart.
+- Changed the app's default listener to `0.0.0.0` so devices on the private network can reach the relay out of the box; existing app settings migrate once from the old loopback default. The `airelays` CLI default remains `127.0.0.1`.
+- Enforced the relay's Claude loopback guardrail in the app: when the listener is exposed beyond loopback, the rendered config disables the experimental Claude runtime and the dashboard explains why.
+- Redesigned the dashboard as a compact tabbed window (Overview, Traffic, Console) replacing the single long scroll: copyable local and LAN endpoint URLs, inline access-mode warnings, a sortable request table with a detail pane, and an auto-scrolling console. Split the monolithic `Views.swift` into focused view files.
+- Made error alerts concise: alerts now show only the failing line (e.g. the final line of a Python traceback) and point to the Console tab, which keeps the full output.
+- Changed the app's default relay port from collision-prone 8080 to 8317 (IANA-unregistered, not a common tool default); existing app settings still on 8080 migrate once. The `airelays` CLI default remains 8080.
+- Renamed the shipped app to `AIRelays.app` (bundle name, display name, executable, and bundle identifier); the Swift package keeps its internal `AIRelaysMenuBar` name. App settings migrate automatically from the old `Application Support/AIRelaysMenuBar` folder.
+
 ## 0.2.5
 
 - Added `airelays doctor` for local setup checks, relay-token validation, OpenAI login readiness, live upstream `/models` probing, an optional tiny `/responses` smoke test, and Claude runtime readiness checks when enabled.

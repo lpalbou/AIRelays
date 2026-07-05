@@ -43,7 +43,7 @@ airelays token rotate
 
 ## Open Local Relay Mode
 
-Open local relay mode is available only when the Claude experimental runtime is disabled.
+Open local relay mode applies to all enabled providers, including Claude experimental mode.
 
 ```bash
 airelays init --no-auth

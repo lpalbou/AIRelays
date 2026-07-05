@@ -14,7 +14,7 @@ No. AIRelays is an independent third-party project.
 
 ## Can I disable relay auth?
 
-Yes, but only when the Claude experimental runtime is disabled.
+Yes. Open local relay mode applies to all enabled providers, including Claude experimental mode.
 
 ```bash
 airelays init --no-auth

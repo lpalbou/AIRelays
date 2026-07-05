@@ -242,7 +242,7 @@ class ClaudeCliRuntime:
             "enabled": True,
             "experimental": True,
             "local_only": True,
-            "requires_relay_bearer_auth": True,
+            "requires_relay_bearer_auth": self._settings.require_bearer_auth,
             "stateless_only": True,
             "ready_for_requests": ready,
             "cli_installed": probe.get("installed", False),
@@ -1036,7 +1036,7 @@ class ProviderRegistry:
                 "experimental": True,
                 "ready_for_requests": False,
                 "notes": [
-                    "Set `[providers.claude].enabled = true` or `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL=true` to enable the local experimental Claude adapter."
+                    "The local experimental Claude adapter is disabled for this AIRelays process. Set `[providers.claude].enabled = false` or `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL=false` only when you want to opt out."
                 ],
             }
         return providers

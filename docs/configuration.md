@@ -133,9 +133,9 @@ OpenAI runtime:
 
 Claude experimental runtime:
 
-- disabled by default
+- enabled by default on the local experimental branch; set `[providers.claude].enabled = false` or `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL=false` to opt out
 - uses the local `claude` CLI
 - browser login is handled by `claude auth login --claudeai`
 - headless login is handled by `claude setup-token` plus `CLAUDE_CODE_OAUTH_TOKEN`
-- requires bearer auth and loopback binding
-- rejects open relay mode
+- follows the relay's protected or open local auth mode
+- requires loopback binding

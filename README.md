@@ -31,6 +31,22 @@ From PyPI:
 python -m pip install airelays
 ```
 
+## macOS Menu Bar App
+
+A native macOS status-bar app now lives under [macos/AIRelaysMenuBar](macos/AIRelaysMenuBar/README.md).
+
+Build it:
+
+```bash
+swift build --package-path macos/AIRelaysMenuBar
+```
+
+Run it:
+
+```bash
+swift run --package-path macos/AIRelaysMenuBar AIRelaysMenuBar
+```
+
 ## Quick Start
 
 OpenAI runtime:
@@ -57,7 +73,7 @@ Claude experimental runtime:
 ```bash
 airelays init
 claude auth login --claudeai
-AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL=true airelays serve --port 8080
+airelays serve --port 8080
 ```
 
 Claude experimental runtime in headless environments:
@@ -66,10 +82,10 @@ Claude experimental runtime in headless environments:
 airelays init
 claude setup-token
 export CLAUDE_CODE_OAUTH_TOKEN='YOUR_CLAUDE_TOKEN'
-AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL=true airelays serve --port 8080
+airelays serve --port 8080
 ```
 
-When Claude experimental mode is enabled, AIRelays requires bearer auth and loopback binding. `--no-auth` is rejected in that mode.
+When Claude experimental mode is enabled, AIRelays keeps the same auth behavior as the rest of the relay. The default protected mode requires the AIRelays bearer token; `--no-auth` starts an open local relay. Claude remains restricted to loopback binding.
 
 ## Basic Verification
 
@@ -198,7 +214,7 @@ Claude experimental runtime:
 - default rate limit: `120` requests/minute with burst `40`
 - default concurrent request cap: `8` per IP
 - repeated bad tokens trigger a temporary IP block
-- Claude experimental mode requires bearer auth and loopback binding
+- Claude experimental mode is loopback-only and follows the relay's protected or open local auth mode
 
 ## Configuration
 

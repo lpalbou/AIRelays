@@ -135,7 +135,7 @@ class Settings:
     max_total_upload_bytes: int = 256 * 1024 * 1024
     enable_openai_provider: bool = True
     models_cache_ttl_seconds: float = 300.0
-    enable_claude_experimental: bool = False
+    enable_claude_experimental: bool = True
     claude_bin: str = "claude"
     claude_timeout_seconds: float = 600.0
     claude_max_concurrent_requests: int = 2
@@ -331,7 +331,7 @@ class Settings:
                     "AIRELAY_ENABLE_CLAUDE_EXPERIMENTAL",
                 )
                 or _cfg(payload, "providers", "claude", "enabled"),
-                False,
+                True,
             ),
             claude_bin=str(
                 _env("AIRELAYS_CLAUDE_BIN", "AIRELAY_CLAUDE_BIN")
@@ -433,11 +433,6 @@ class Settings:
     def validate_provider_guardrails(self) -> None:
         if not self.enable_claude_experimental:
             return
-        if not self.require_bearer_auth:
-            raise RuntimeError(
-                "Claude experimental mode requires AIRelays bearer auth. "
-                "Remove `--no-auth` or disable the Claude provider."
-            )
         if not self.is_loopback_host():
             raise RuntimeError(
                 "Claude experimental mode is restricted to loopback listeners. "

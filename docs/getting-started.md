@@ -71,7 +71,7 @@ airelays login
 airelays serve --no-auth --host 127.0.0.1 --port 8080
 ```
 
-In this mode AIRelays does not require `Authorization` on `/v1/*`. This mode is available only when the Claude experimental runtime is disabled.
+In this mode AIRelays does not require `Authorization` on `/v1/*`. Open local relay mode applies to all enabled providers, including Claude experimental mode.
 
 ## Claude Experimental Runtime
 
@@ -89,10 +89,10 @@ claude setup-token
 export CLAUDE_CODE_OAUTH_TOKEN='YOUR_CLAUDE_TOKEN'
 ```
 
-Enable the Claude runtime for the current AIRelays process:
+Start AIRelays with the Claude runtime enabled:
 
 ```bash
-AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL=true airelays serve --host 127.0.0.1 --port 8080
+airelays serve --host 127.0.0.1 --port 8080
 ```
 
 Verify:

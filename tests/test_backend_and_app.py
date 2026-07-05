@@ -80,6 +80,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
         logs_dir=tmp_path / "logs",
         bearer_token_file=tmp_path / "data" / "relay-token",
         require_bearer_auth=False,
+        enable_claude_experimental=False,
     )
     for key, value in overrides.items():
         setattr(settings, key, value)
