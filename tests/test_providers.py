@@ -153,3 +153,32 @@ async def test_provider_registry_collapses_concurrent_openai_model_cache_misses(
 
     assert backend.calls == 1
     assert {response["data"][0]["id"] for response in responses} == {"gpt-concurrent-cache"}
+
+
+def test_subprocess_env_injects_stored_claude_token(tmp_path, monkeypatch) -> None:
+    """A token stored via `airelays claude set-token` must reach every
+    spawned claude child, and must beat any ambient environment value —
+    explicit configuration over invisible shell state."""
+    settings = make_settings(tmp_path)
+    settings.claude_oauth_token_file = tmp_path / "data" / "claude-token"
+    settings.write_claude_oauth_token("file-token")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "ambient-token")
+
+    runtime = ClaudeCliRuntime(settings)
+    env = runtime._subprocess_env()
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "file-token"
+
+    token_mode = settings.claude_oauth_token_file.stat().st_mode & 0o777
+    assert token_mode == 0o600
+    assert settings.claude_oauth_token_source() == "file"
+
+
+def test_subprocess_env_falls_back_to_ambient_token(tmp_path, monkeypatch) -> None:
+    settings = make_settings(tmp_path)
+    settings.claude_oauth_token_file = tmp_path / "data" / "claude-token"
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "ambient-token")
+
+    runtime = ClaudeCliRuntime(settings)
+    env = runtime._subprocess_env()
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "ambient-token"
+    assert settings.claude_oauth_token_source() == "env"

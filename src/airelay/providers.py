@@ -253,9 +253,11 @@ class ClaudeCliRuntime:
             "email": probe.get("email"),
             "subscription_type": probe.get("subscription_type"),
             "models": [record.id for record in self._models.values()],
+            "oauth_token_source": self._settings.claude_oauth_token_source(),
             "notes": [
                 "Use `claude auth login --claudeai` for browser-based local login.",
-                "For headless environments, generate a token with `claude setup-token` and export `CLAUDE_CODE_OAUTH_TOKEN` before launching AIRelays.",
+                "For headless environments, run `claude setup-token` on a machine with a "
+                "browser, then store the token with `airelays claude set-token`.",
             ],
         }
 
@@ -587,6 +589,15 @@ class ClaudeCliRuntime:
                     ) from exc
         self._log_result(request_id, stdout)
         if process.returncode != 0:
+            # The CLI often exits nonzero with the real error (e.g. a 401
+            # for an invalid token) as JSON on stdout; prefer that message
+            # over the opaque "exited with code N" stderr fallback.
+            try:
+                parsed = json.loads(stdout.decode("utf-8"))
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict) and parsed.get("result"):
+                raise ProviderError(502, str(parsed["result"]), code="provider_failure")
             raise ProviderError(502, _stderr_message(stderr, process.returncode), code="provider_failure")
         try:
             parsed = json.loads(stdout.decode("utf-8"))
@@ -703,6 +714,12 @@ class ClaudeCliRuntime:
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
         )
         env = {name: value for name, value in os.environ.items() if name in allowed}
+        # A stored token file beats ambient env: it is the only mechanism
+        # that survives service managers (systemd, launchd, docker) where
+        # shell exports never reach the relay process.
+        stored_token = self._settings.resolve_claude_oauth_token()
+        if stored_token:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = stored_token
         if self._settings.claude_strip_api_key_env:
             for name in (
                 "ANTHROPIC_API_KEY",
@@ -816,13 +833,17 @@ class ProviderRegistry:
         settings: Settings,
         *,
         openai_auth: AuthManager,
-        openai_backend: ChatGptCodexBackend | None = None,
+        openai_backend: Any = None,
         traffic: TrafficLogger | None = None,
+        account_pool: Any = None,
     ) -> None:
         self._settings = settings
         self._openai_auth = openai_auth
         self._openai_backend = openai_backend
         self._traffic = traffic
+        # Optional multi-account pool; when present, provider status lists
+        # every enrolled account.
+        self._account_pool = account_pool
         self._openai_models_cache_payload: dict[str, Any] | None = None
         self._openai_models_cache_fetched_at: float | None = None
         self._openai_models_cache_key: tuple[str | None, ...] | None = None
@@ -1027,6 +1048,14 @@ class ProviderRegistry:
         }
         if not self._settings.enable_openai_provider:
             openai_status["ready_for_requests"] = False
+        if self._account_pool is not None:
+            self._account_pool.refresh_if_changed()
+        if self._account_pool is not None and self._account_pool.size > 1:
+            openai_status["accounts"] = self._account_pool.account_statuses()
+            openai_status["balance"] = self._settings.openai_balance
+            openai_status["ready_for_requests"] = openai_status["ready_for_requests"] or any(
+                account.get("ready_for_requests") for account in openai_status["accounts"]
+            )
         providers["openai"] = openai_status
         if self._claude is not None:
             providers["claude"] = self._claude.status()

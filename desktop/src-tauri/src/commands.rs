@@ -25,6 +25,11 @@ pub struct UiState {
     /// True when the relay answers but rejects our token (running relay,
     /// credential mismatch) — distinct from "not reachable".
     pub auth_mismatch: bool,
+    /// Set while a sign-in flow waits for the browser: the URL to visit.
+    pub login_url: Option<String>,
+    /// Pairing code for a running device-code sign-in.
+    pub login_code: Option<String>,
+    pub login_running: bool,
     pub settings: AppSettings,
     pub relay_status: Option<Value>,
     pub local_endpoint: String,
@@ -135,11 +140,20 @@ fn lan_addresses() -> Vec<String> {
             return addresses.clone();
         }
     }
-    let addresses = match local_ip_address::list_afinet_netifas() {
+    let addresses: Vec<String> = match local_ip_address::list_afinet_netifas() {
         Ok(interfaces) => interfaces
             .into_iter()
-            .filter(|(_, ip)| ip.is_ipv4() && !ip.is_loopback())
-            .map(|(_, ip)| ip.to_string())
+            .filter_map(|(_, ip)| match ip {
+                // Only real private-network addresses (RFC 1918). Link-local
+                // 169.254.x.x self-assigned addresses are unreachable noise
+                // from bridges and unconfigured interfaces.
+                std::net::IpAddr::V4(v4)
+                    if v4.is_private() && !v4.is_loopback() && !v4.is_link_local() =>
+                {
+                    Some(v4.to_string())
+                }
+                _ => None,
+            })
             .collect(),
         Err(_) => Vec::new(),
     };
@@ -260,6 +274,9 @@ pub fn get_state(app: AppHandle) -> UiState {
         reachable: relay_status.is_some(),
         managed: state.supervisor.is_managed(),
         auth_mismatch: *robust_lock(&state.auth_mismatch),
+        login_url: robust_lock(&state.login_url).clone(),
+        login_code: robust_lock(&state.login_code).clone(),
+        login_running: robust_lock(&state.login_pid).is_some(),
         local_endpoint: settings.base_url(),
         lan_endpoints: if settings.is_loopback_host() {
             Vec::new()
@@ -367,32 +384,175 @@ pub async fn run_doctor(app: AppHandle, skip_response: bool) -> Result<bool, Str
     .map_err(|error| error.to_string())?
 }
 
+/// Kills a lingering sign-in subprocess. A login that was abandoned (browser
+/// closed, flow never finished) holds the fixed OAuth callback port for up
+/// to 15 minutes and makes every new attempt fail with "address in use".
+fn kill_previous_login(app: &AppHandle) {
+    let previous = robust_lock(&app.state::<AppState>().login_pid).take();
+    if let Some(pid) = previous {
+        app.state::<AppState>()
+            .supervisor
+            .log("login", "Cancelling the previous unfinished sign-in.", false);
+        #[cfg(unix)]
+        unsafe {
+            // Children run in their own process group (configure_platform).
+            libc::kill(-(pid as i32), libc::SIGTERM);
+        }
+        #[cfg(windows)]
+        {
+            let _ = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .output();
+        }
+    }
+}
+
+/// Runs a sign-in flow with live output, tracking the child PID (so a stuck
+/// flow can be replaced) and capturing the printed authorize URL for the UI.
+fn run_login_streamed(
+    app: &AppHandle,
+    label: &str,
+    program: &str,
+    args: &[String],
+) -> Result<(), String> {
+    kill_previous_login(app);
+    let state = app.state::<AppState>();
+    state
+        .supervisor
+        .log(label, &format!("{} {}", program, args.join(" ")), false);
+
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_platform(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Cannot run {program}: {error}"))?;
+    *robust_lock(&state.login_pid) = Some(child.id());
+    *robust_lock(&state.login_url) = None;
+    *robust_lock(&state.login_code) = None;
+
+    if let Some(stderr) = child.stderr.take() {
+        spawn_console_pipe(state.supervisor.console_handle(), stderr, label.to_string(), false);
+    }
+    let stdout_lines = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
+    if let Some(stdout) = child.stdout.take() {
+        let console = state.supervisor.console_handle();
+        let sink = std::sync::Arc::clone(&stdout_lines);
+        let url_slot = std::sync::Arc::clone(&state.login_url);
+        let code_slot = std::sync::Arc::clone(&state.login_code);
+        let source = label.to_string();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                let trimmed = line.trim();
+                // Sign-in flows print the URL to visit; device flows also
+                // print a pairing code ("2. Enter this code: XXXX-XXXX").
+                if let Some(url) = trimmed.split_whitespace().find(|w| w.starts_with("https://")) {
+                    *robust_lock(&url_slot) = Some(url.to_string());
+                }
+                if let Some((_, code)) = trimmed.split_once("Enter this code:") {
+                    let code = code.trim();
+                    if !code.is_empty() {
+                        *robust_lock(&code_slot) = Some(code.to_string());
+                    }
+                }
+                crate::relay::push_console(&console, &source, &line, false);
+                robust_lock(&sink).push(line);
+            }
+        });
+    }
+
+    let status = child
+        .wait()
+        .map_err(|error| format!("Waiting for {program} failed: {error}"))?;
+    std::thread::sleep(Duration::from_millis(120));
+    *robust_lock(&state.login_pid) = None;
+    *robust_lock(&state.login_url) = None;
+    *robust_lock(&state.login_code) = None;
+
+    if status.success() {
+        Ok(())
+    } else {
+        let stdout = robust_lock(&stdout_lines).join("\n");
+        Err(concise_error(&stdout))
+    }
+}
+
 #[tauri::command]
 pub async fn run_login(app: AppHandle, provider: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || match provider.as_str() {
-        "openai" => run_relay_cli(&app, "openai-login", &["login"])?
-            .ok_or_concise_error()
-            .map(|_| ()),
+        "openai" => {
+            let state = app.state::<AppState>();
+            let settings = robust_lock(&state.settings).clone();
+            let resource_dir = app.path().resource_dir().ok();
+            let (program, mut args) = RelaySupervisor::resolve_command(&settings, resource_dir)?;
+            args.push("login".into());
+            // Explicit method: never rely on the CLI's headless autodetect
+            // from inside a GUI process.
+            args.push(if settings.login_method == "device" {
+                "--device".into()
+            } else {
+                "--browser".into()
+            });
+            args.push("--config".into());
+            args.push(AppSettings::relay_config_path().to_string_lossy().into_owned());
+            run_login_streamed(&app, "openai-login", &program, &args)
+        }
         "claude" => {
             // Claude auth lives in the external claude CLI, not the relay.
             let claude_bin = {
                 let state = app.state::<AppState>();
-                let settings = robust_lock(&state.settings);
-                settings.claude_bin.clone()
+                let bin = robust_lock(&state.settings).claude_bin.clone();
+                bin
             };
-            run_streamed(
+            run_login_streamed(
                 &app,
                 "claude-login",
                 &claude_bin,
                 &["auth".into(), "login".into(), "--claudeai".into()],
-            )?
-            .ok_or_concise_error()
-            .map(|_| ())
+            )
         }
         other => Err(format!("Unknown login provider: {other}")),
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Manual hard refresh: clears usage-limit benches on the running relay and
+/// re-checks capacity, so a recovered account returns to rotation without a
+/// restart. Talks to the relay over HTTP because bench state lives in the
+/// relay process, not this one.
+#[tauri::command]
+pub async fn refresh_accounts(app: AppHandle) -> Result<Value, String> {
+    let (base_url, requires_auth) = {
+        let state = app.state::<AppState>();
+        let settings = robust_lock(&state.settings);
+        (settings.base_url(), settings.require_bearer_auth)
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut request = client.post(format!("{base_url}/relay/accounts/refresh"));
+    if requires_auth {
+        if let Ok(token) = std::fs::read_to_string(AppSettings::bearer_token_file()) {
+            request = request.bearer_auth(token.trim());
+        }
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|_| "The relay is not running.".to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Refresh failed ({}).", response.status()));
+    }
+    response.json().await.map_err(|_| "Unexpected refresh response.".to_string())
 }
 
 /// Fetches per-account usage from the relay's subscription-status endpoint.
@@ -407,7 +567,8 @@ pub async fn get_usage(app: AppHandle) -> Result<Value, String> {
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|error| error.to_string())?;
-    let mut request = client.get(format!("{base_url}/subscription/status"));
+    // all_accounts folds to the single-account shape when only one exists.
+    let mut request = client.get(format!("{base_url}/subscription/status?all_accounts=true"));
     if requires_auth {
         if let Ok(token) = std::fs::read_to_string(AppSettings::bearer_token_file()) {
             request = request.bearer_auth(token.trim());
@@ -449,6 +610,31 @@ pub async fn token_action(app: AppHandle, action: String) -> Result<String, Stri
             .and_then(Value::as_str)
             .map(String::from)
             .ok_or_else(|| "No relay token configured yet.".to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Persists the sign-in method ("browser" or "device"). App-level setting;
+/// the relay config is untouched.
+#[tauri::command]
+pub fn set_login_method(app: AppHandle, method: String) -> Result<(), String> {
+    if method != "browser" && method != "device" {
+        return Err(format!("Unknown sign-in method: {method}"));
+    }
+    let state = app.state::<AppState>();
+    robust_lock(&state.settings).login_method = method;
+    state.persist_settings()
+}
+
+/// Signs one OpenAI account out (deletes its stored credentials). The relay
+/// hot-reloads the pool within a couple of seconds.
+#[tauri::command]
+pub async fn logout_account(app: AppHandle, email: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_relay_cli(&app, "logout", &["logout", &email, "--json"])?.ok_or_concise_error()?;
+        crate::tray::refresh(&app);
+        Ok(())
     })
     .await
     .map_err(|error| error.to_string())?

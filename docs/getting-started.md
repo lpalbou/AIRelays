@@ -41,6 +41,17 @@ Log in:
 airelays login
 ```
 
+On a server or over SSH (no local browser), use device-code login — you
+approve the sign-in from a browser on any other device:
+
+```bash
+airelays login --device
+```
+
+`airelays login` selects the device flow automatically on SSH sessions and
+displayless Linux. The browser flow's URL only works in a browser on the
+same machine as the relay (its redirect targets `localhost:1455` there).
+
 Start the server:
 
 ```bash
@@ -81,13 +92,20 @@ Browser-based local Claude login:
 claude auth login --claudeai
 ```
 
-Headless Claude login:
+Headless Claude login — `claude setup-token` needs a browser, so run it on
+any machine that has one, then carry the token to the server:
 
 ```bash
-airelays init
+# on a machine with a browser:
 claude setup-token
-export CLAUDE_CODE_OAUTH_TOKEN='YOUR_CLAUDE_TOKEN'
+
+# on the server:
+airelays init
+airelays claude set-token   # paste the token; stored 0600, survives restarts
 ```
+
+Exporting `CLAUDE_CODE_OAUTH_TOKEN` also works, but it does not survive
+service managers (systemd, docker) or reboots.
 
 Start AIRelays with the Claude runtime enabled:
 

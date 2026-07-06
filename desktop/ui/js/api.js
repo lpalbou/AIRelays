@@ -22,6 +22,9 @@ export const api = {
   getUsage: () => invoke("get_usage"),
   tokenAction: (action) => invoke("token_action", { action }),
   setCustomToken: (token) => invoke("set_custom_token", { token }),
+  setLoginMethod: (method) => invoke("set_login_method", { method }),
+  logoutAccount: (email) => invoke("logout_account", { email }),
+  refreshAccounts: () => invoke("refresh_accounts"),
   openPath: (path) => invoke("open_path", { path }),
 };
 

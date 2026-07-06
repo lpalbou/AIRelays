@@ -123,6 +123,9 @@ class Settings:
     bearer_token: str | None = None
     bearer_token_env_override: bool = False
     bearer_token_file: Path = DEFAULT_DATA_DIR / "relay-token"
+    # Claude Code OAuth token stored by `airelays claude set-token`. A file
+    # survives service managers (systemd/docker) where shell exports do not.
+    claude_oauth_token_file: Path = DEFAULT_DATA_DIR / "claude-token"
     auto_generate_bearer_token: bool = False
     rate_limit_per_minute: int = 120
     rate_limit_burst: int = 40
@@ -135,6 +138,11 @@ class Settings:
     max_total_upload_bytes: int = 256 * 1024 * 1024
     enable_openai_provider: bool = True
     models_cache_ttl_seconds: float = 300.0
+    # Multiple own accounts: "ordered" uses the first account until it hits
+    # its usage limit, then continues with the next; "round_robin" spreads
+    # requests evenly across healthy accounts.
+    openai_balance: str = "ordered"
+    openai_account_cooldown_seconds: int = 300
     enable_claude_experimental: bool = True
     claude_bin: str = "claude"
     claude_timeout_seconds: float = 600.0
@@ -174,6 +182,11 @@ class Settings:
             _env("AIRELAYS_BEARER_TOKEN_FILE", "AIRELAY_BEARER_TOKEN_FILE")
             or _cfg(payload, "security", "bearer_token_file"),
             data_dir / "relay-token",
+        )
+        claude_oauth_token_file = _path(
+            _env("AIRELAYS_CLAUDE_OAUTH_TOKEN_FILE")
+            or _cfg(payload, "providers", "claude", "oauth_token_file"),
+            data_dir / "claude-token",
         )
 
         env_bearer_token = _env("AIRELAYS_BEARER_TOKEN", "AIRELAY_BEARER_TOKEN")
@@ -260,6 +273,7 @@ class Settings:
             bearer_token=env_bearer_token,
             bearer_token_env_override=env_bearer_token is not None,
             bearer_token_file=bearer_token_file,
+            claude_oauth_token_file=claude_oauth_token_file,
             auto_generate_bearer_token=_bool(
                 _env("AIRELAYS_AUTO_GENERATE_BEARER_TOKEN", "AIRELAY_AUTO_GENERATE_BEARER_TOKEN")
                 or _cfg(payload, "security", "auto_generate_bearer_token"),
@@ -324,6 +338,16 @@ class Settings:
                 )
                 or _cfg(payload, "providers", "openai", "models_cache_ttl_seconds"),
                 300.0,
+            ),
+            openai_balance=str(
+                _env("AIRELAYS_OPENAI_BALANCE")
+                or _cfg(payload, "providers", "openai", "balance")
+                or "ordered"
+            ),
+            openai_account_cooldown_seconds=_int(
+                _env("AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS")
+                or _cfg(payload, "providers", "openai", "account_cooldown_seconds"),
+                300,
             ),
             enable_claude_experimental=_bool(
                 _env(
@@ -410,6 +434,29 @@ class Settings:
         self.write_bearer_token(token)
         return token
 
+    def resolve_claude_oauth_token(self) -> str | None:
+        """Token stored via `airelays claude set-token`; env keeps working
+        as a fallback for existing setups, but the file wins because it is
+        explicit configuration."""
+        if self.claude_oauth_token_file.exists():
+            token = self.claude_oauth_token_file.read_text(encoding="utf-8").strip()
+            if token:
+                return token
+        return None
+
+    def write_claude_oauth_token(self, token: str) -> None:
+        self.ensure_directories()
+        self.claude_oauth_token_file.parent.mkdir(parents=True, exist_ok=True)
+        self.claude_oauth_token_file.write_text(f"{token}\n", encoding="utf-8")
+        os.chmod(self.claude_oauth_token_file, 0o600)
+
+    def claude_oauth_token_source(self) -> str:
+        if self.resolve_claude_oauth_token():
+            return "file"
+        if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+            return "env"
+        return "none"
+
     def write_bearer_token(self, token: str) -> None:
         self.ensure_directories()
         self.bearer_token_file.parent.mkdir(parents=True, exist_ok=True)
@@ -494,9 +541,12 @@ max_total_upload_bytes = {self.max_total_upload_bytes}
 [providers.openai]
 enabled = {str(self.enable_openai_provider).lower()}
 models_cache_ttl_seconds = {self.models_cache_ttl_seconds}
+balance = "{self.openai_balance}"
+account_cooldown_seconds = {self.openai_account_cooldown_seconds}
 
 [providers.claude]
 enabled = {str(self.enable_claude_experimental).lower()}
+oauth_token_file = "{self.claude_oauth_token_file}"
 bin = "{self.claude_bin}"
 timeout_seconds = {self.claude_timeout_seconds}
 max_concurrent_requests = {self.claude_max_concurrent_requests}
@@ -539,6 +589,8 @@ models = [{", ".join(f'"{model}"' for model in self.claude_models)}]
                 "openai": {
                     "enabled": self.enable_openai_provider,
                     "models_cache_ttl_seconds": self.models_cache_ttl_seconds,
+                    "balance": self.openai_balance,
+                    "account_cooldown_seconds": self.openai_account_cooldown_seconds,
                 },
                 "claude": {
                     "enabled": self.enable_claude_experimental,
@@ -547,6 +599,10 @@ models = [{", ".join(f'"{model}"' for model in self.claude_models)}]
                     "max_concurrent_requests": self.claude_max_concurrent_requests,
                     "strip_api_key_env": self.claude_strip_api_key_env,
                     "models": list(self.claude_models),
+                    # Presence + fingerprint only; the token itself must
+                    # never appear in status output or logs.
+                    "oauth_token_source": self.claude_oauth_token_source(),
+                    "oauth_token_fingerprint": _token_fingerprint(self.resolve_claude_oauth_token()),
                 },
             },
         }

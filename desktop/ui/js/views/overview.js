@@ -1,15 +1,22 @@
-// Overview: relay state, connect-your-app credentials, access modes,
-// providers.
+// Overview: relay state, connect-your-app credentials, accounts (identity,
+// status and usage merged in one card), access modes.
 
 import { api, call, copyText, toast } from "../api.js";
 import { icon } from "../icons.js";
 
 let root = null;
-let renderCache = { endpoints: "", providers: "" };
+let lastState = null;
+let renderCache = { endpoints: "", accounts: "" };
 // Fetched on demand, never polled; cleared when hidden again.
 let revealedToken = null;
+// Emails with an in-flight sign-out, for optimistic row dimming.
+const pendingLogout = new Set();
+let pendingLogoutEmail = null;
 
 let usageLoadedOnce = false;
+// Last usage payload, keyed by account email, merged into the Accounts card.
+let usageByEmail = new Map();
+let usageStamp = 0;
 
 export const overviewView = {
   async mount(container, ctx) {
@@ -18,9 +25,11 @@ export const overviewView = {
     container.appendChild(root);
     bindActions(ctx);
     usageLoadedOnce = false;
-    render(ctx.getState());
+    lastState = ctx.getState();
+    render(lastState);
   },
   async update(state) {
+    lastState = state;
     render(state);
     // Load usage automatically once the relay is reachable.
     if (state?.reachable && !usageLoadedOnce) {
@@ -30,8 +39,13 @@ export const overviewView = {
   },
   unmount() {
     root = null;
+    lastState = null;
     revealedToken = null;
-    renderCache = { endpoints: "", providers: "" };
+    renderCache = { endpoints: "", accounts: "" };
+    pendingLogout.clear();
+    pendingLogoutEmail = null;
+    usageByEmail = new Map();
+    usageStamp = 0;
   },
 };
 
@@ -47,12 +61,13 @@ function template() {
         <span class="dot dot-neutral" id="ov-dot"></span>
         <div>
           <div class="hero-state" id="ov-state">Checking…</div>
-          <div id="ov-endpoints"></div>
+          <div class="hero-endpoint" id="ov-hero-endpoint"></div>
         </div>
         <span class="spacer"></span>
-        <button class="btn btn-primary" id="ov-start">${icon("play")} Start</button>
-        <button class="btn" id="ov-stop">${icon("stop")} Stop</button>
-        <button class="btn" id="ov-restart">${icon("restart")} Restart</button>
+        <button class="btn btn-ghost" id="ov-doctor" title="Verifies config, sign-ins, and upstream connectivity; report in the Console tab.">${icon("checkCircle", 14)} Check Setup</button>
+        <button class="btn btn-primary" id="ov-start">${icon("play", 14)} Start</button>
+        <button class="btn" id="ov-stop">${icon("stop", 14)} Stop</button>
+        <button class="btn" id="ov-restart">${icon("restart", 14)} Restart</button>
       </div>
       <div class="hint" id="ov-unmanaged" hidden>
         <span>ⓘ</span>
@@ -70,14 +85,14 @@ function template() {
         In your app or SDK, set the <strong>Base URL</strong> and <strong>API key</strong> below.
       </p>
       <div id="ov-connect-endpoints"></div>
-      <div class="row" style="margin-top:10px" id="ov-key-row">
+      <div class="row" id="ov-key-row" style="margin-top:8px">
         <span class="tag-inline">API key</span>
         <code class="token-value" id="ov-token-value" aria-live="polite">••••••••••••••••</code>
-        <button class="btn btn-small" id="ov-token-toggle" aria-label="Show API key" title="Show / hide">${icon("eye", 14)}</button>
-        <button class="btn btn-small" id="ov-token-copy" aria-label="Copy API key" title="Copy key">${icon("copy", 14)} Copy</button>
+        <button class="btn btn-small" id="ov-token-toggle" aria-label="Show API key" title="Show / hide">${icon("eye", 13)}</button>
+        <button class="btn btn-small" id="ov-token-copy" aria-label="Copy API key" title="Copy key">${icon("copy", 13)} Copy</button>
         <span class="spacer"></span>
-        <button class="btn btn-small" id="ov-token-rotate" title="Create a new key (invalidates the old one)">${icon("key", 14)} New key…</button>
-        <button class="btn btn-small" id="ov-token-custom" aria-label="Set a custom API key" title="Set a custom key">${icon("pencil", 14)}</button>
+        <button class="btn btn-small btn-ghost" id="ov-token-rotate" title="Create a new key (invalidates the old one)">${icon("key", 13)} New key…</button>
+        <button class="btn btn-small btn-ghost" id="ov-token-custom" aria-label="Set a custom API key" title="Set a custom key">${icon("pencil", 13)}</button>
       </div>
       <div class="hint" id="ov-key-open-hint" hidden>
         <span>ⓘ</span>
@@ -85,61 +100,91 @@ function template() {
       </div>
     </section>
 
-    <div class="grid-2">
-      <section class="card" aria-label="Access">
-        <h2>Access</h2>
-        <p class="card-caption">Changes apply immediately and restart a running relay.</p>
-
-        <span class="control-label" id="ov-auth-label">Authentication</span>
-        <div class="segmented" role="group" aria-labelledby="ov-auth-label">
-          <button id="ov-auth-protected">Protected (API key)</button>
-          <button id="ov-auth-open">Open (no key)</button>
-        </div>
-
-        <div style="height:12px"></div>
-
-        <span class="control-label" id="ov-net-label">Who can connect</span>
-        <div class="segmented" role="group" aria-labelledby="ov-net-label">
-          <button id="ov-net-loopback">This machine only</button>
-          <button id="ov-net-lan">Devices on my network</button>
-        </div>
-
-        <div class="hint danger" id="ov-open-lan-warning" hidden>
-          <span>⚠</span>
-          <span><strong>Open + network access:</strong> anyone on your network can use the relay — and your subscription quota — without a key.</span>
-        </div>
-        <div class="hint warn" id="ov-open-warning" hidden>
-          <span>⚠</span>
-          <span>Without a key, any program on this machine can use the relay and your subscription quota.</span>
-        </div>
-        <div class="hint" id="ov-claude-note" hidden>
-          <span>ⓘ</span>
-          <span>The experimental Claude provider only works in "This machine only" mode; it stays off while network access is on.</span>
-        </div>
-      </section>
-
-      <section class="card" aria-label="Providers">
-        <h2>Providers</h2>
-        <p class="card-caption">The subscriptions this relay can route requests to.</p>
-        <div id="ov-providers"><div class="empty">Start the relay to see provider status.</div></div>
-        <div class="row" style="margin-top:12px">
-          <button class="btn" id="ov-login-openai">${icon("logIn")} OpenAI</button>
-          <button class="btn" id="ov-login-claude" hidden>${icon("logIn")} Claude</button>
-          <span class="spacer"></span>
-          <button class="btn" id="ov-doctor" title="Verifies config, sign-ins, and upstream connectivity; report in the Console tab.">${icon("checkCircle")} Check Setup</button>
-        </div>
-      </section>
-    </div>
-
-    <section class="card" aria-label="Usage">
+    <section class="card" aria-label="Accounts">
       <div class="row">
-        <h2 style="margin:0">Usage</h2>
+        <h2 style="margin:0">Accounts</h2>
         <span class="spacer"></span>
-        <button class="btn btn-small" id="ov-usage-refresh" aria-label="Refresh usage" title="Refresh">${icon("refresh", 14)}</button>
+        <button class="btn btn-small btn-ghost" id="ov-refresh" title="Re-check limits and reload usage">${icon("refresh", 13)} Refresh</button>
       </div>
-      <p class="card-caption">Subscription usage for the signed-in account.</p>
-      <div id="ov-usage"><div class="empty">Start the relay, then refresh to load usage.</div></div>
+      <div id="ov-accounts"><div class="empty">Start the relay to see accounts.</div></div>
+      <div class="card-actions">
+        <div class="split-btn">
+          <button class="btn" id="ov-login-openai">${icon("logIn", 14)} OpenAI</button>
+          <button class="btn split-btn-toggle" id="ov-login-openai-menu" aria-label="Choose sign-in method" aria-haspopup="true">${icon("chevronDown", 13)}</button>
+          <div class="split-menu" id="ov-login-menu" hidden role="menu">
+            <button role="menuitem" data-method="browser">In a browser (this machine)</button>
+            <button role="menuitem" data-method="device">With a code (any device)</button>
+          </div>
+        </div>
+        <button class="btn" id="ov-login-claude" hidden>${icon("logIn", 14)} Claude</button>
+      </div>
+      <div class="login-banner" id="ov-login-banner" hidden>
+        <div class="row">
+          <span class="dot dot-warn"></span>
+          <strong>Waiting for sign-in…</strong>
+          <span class="spacer"></span>
+          <button class="btn btn-small" id="ov-login-open">${icon("logIn", 13)} Open page</button>
+          <button class="btn btn-small" id="ov-login-copy">${icon("copy", 13)} Copy URL</button>
+        </div>
+        <div class="row" id="ov-login-code-row" hidden style="margin-top:8px">
+          <span class="control-label" style="margin:0">Enter this code:</span>
+          <code class="login-code" id="ov-login-code"></code>
+          <button class="btn btn-small" id="ov-login-code-copy" aria-label="Copy code">${icon("copy", 13)}</button>
+        </div>
+        <div class="login-url" id="ov-login-url"></div>
+        <p class="card-caption" style="margin:6px 0 0" id="ov-login-hint-browser">
+          If no browser opened, copy this URL into the browser profile of
+          the account you want to sign in with.
+        </p>
+        <p class="card-caption" style="margin:6px 0 0" id="ov-login-hint-device" hidden>
+          Open the URL in a browser on any device (phone or laptop) and
+          enter the code to approve the sign-in.
+        </p>
+      </div>
     </section>
+
+    <section class="card" aria-label="Access">
+      <h2>Access</h2>
+      <p class="card-caption">Changes apply immediately and restart a running relay.</p>
+      <div class="row" style="gap:28px">
+        <div class="control-group">
+          <span class="control-label" id="ov-auth-label">Authentication</span>
+          <div class="segmented" role="group" aria-labelledby="ov-auth-label">
+            <button id="ov-auth-protected">Protected (API key)</button>
+            <button id="ov-auth-open">Open (no key)</button>
+          </div>
+        </div>
+        <div class="control-group">
+          <span class="control-label" id="ov-net-label">Who can connect</span>
+          <div class="segmented" role="group" aria-labelledby="ov-net-label">
+            <button id="ov-net-loopback">This machine only</button>
+            <button id="ov-net-lan">Devices on my network</button>
+          </div>
+        </div>
+      </div>
+      <div class="hint warn" id="ov-open-lan-warning" hidden>
+        <span>⚠</span>
+        <span><strong>Open + network access:</strong> anyone on your network can use the relay — and your subscription quota — without a key.</span>
+      </div>
+      <div class="hint warn" id="ov-open-warning" hidden>
+        <span>⚠</span>
+        <span>Without a key, any program on this machine can use the relay and your subscription quota.</span>
+      </div>
+      <div class="hint" id="ov-claude-note" hidden>
+        <span>ⓘ</span>
+        <span>The experimental Claude provider only works in "This machine only" mode; it stays off while network access is on.</span>
+      </div>
+    </section>
+
+    <dialog id="ov-logout-dialog">
+      <h3 id="ov-logout-title">Sign out?</h3>
+      <p class="dialog-text" id="ov-logout-text"></p>
+      <div class="row" style="margin-top:14px">
+        <span class="spacer"></span>
+        <button class="btn" id="ov-logout-cancel">Cancel</button>
+        <button class="btn btn-danger" id="ov-logout-confirm">Sign out</button>
+      </div>
+    </dialog>
 
     <dialog id="ov-rotate-dialog">
       <h3>Create a new API key?</h3>
@@ -183,12 +228,12 @@ function setRevealed(token) {
   const toggle = el("ov-token-toggle");
   if (token) {
     value.textContent = token;
-    toggle.innerHTML = icon("eyeOff", 14);
+    toggle.innerHTML = icon("eyeOff", 13);
     toggle.setAttribute("aria-label", "Hide API key");
     toggle.title = "Hide";
   } else {
     value.textContent = "••••••••••••••••";
-    toggle.innerHTML = icon("eye", 14);
+    toggle.innerHTML = icon("eye", 13);
     toggle.setAttribute("aria-label", "Show API key");
     toggle.title = "Show";
   }
@@ -241,13 +286,40 @@ function bindActions(ctx) {
     }
   });
 
-  el("ov-login-openai").addEventListener("click", async () => {
-    toast("OpenAI sign-in started", "A browser window should open. Progress appears in the Console tab.");
-    const done = await call(api.runLogin("openai"), "OpenAI sign-in failed");
+  el("ov-login-openai").addEventListener("click", () => startOpenAiSignIn());
+  el("ov-login-openai-menu").addEventListener("click", (event) => {
+    event.stopPropagation();
+    const menu = el("ov-login-menu");
+    menu.hidden = !menu.hidden;
+  });
+  root.querySelectorAll("#ov-login-menu button").forEach((item) => {
+    item.addEventListener("click", async () => {
+      el("ov-login-menu").hidden = true;
+      await call(api.setLoginMethod(item.dataset.method), "Change failed");
+      startOpenAiSignIn();
+    });
+  });
+  // Close the method menu on any outside click.
+  document.addEventListener("click", () => {
+    const menu = root?.querySelector("#ov-login-menu");
+    if (menu) menu.hidden = true;
+  });
+
+  // Sign-out confirm dialog wiring.
+  el("ov-logout-cancel").addEventListener("click", () => el("ov-logout-dialog").close());
+  el("ov-logout-confirm").addEventListener("click", async () => {
+    const email = pendingLogoutEmail;
+    el("ov-logout-dialog").close();
+    if (!email) return;
+    pendingLogout.add(email);
+    renderCache.accounts = ""; // force a redraw showing the dimmed row
+    render(ctx.getState());
+    const done = await call(api.logoutAccount(email), "Sign out failed");
+    pendingLogout.delete(email);
     if (done !== undefined) {
-      toast("OpenAI sign-in finished", "", "success");
-      loadUsage();
+      toast("Signed out", email, "success");
     }
+    renderCache.accounts = "";
   });
   el("ov-login-claude").addEventListener("click", async () => {
     toast("Claude sign-in started", "The Claude CLI handles the sign-in. Progress appears in the Console tab.");
@@ -269,26 +341,72 @@ function bindActions(ctx) {
       );
     }
   });
-  el("ov-usage-refresh").addEventListener("click", loadUsage);
+  // One refresh: clears usage-limit holds on the relay, then reloads usage.
+  el("ov-refresh").addEventListener("click", async () => {
+    const openaiReady = lastState?.relay_status?.providers?.openai?.ready_for_requests;
+    if (lastState?.reachable && openaiReady) {
+      await call(api.refreshAccounts(), "Refresh failed");
+    }
+    loadUsage();
+  });
+
+  el("ov-login-copy").addEventListener("click", () => {
+    const url = el("ov-login-url").textContent;
+    if (url) copyText(url, "Sign-in URL copied");
+  });
+  el("ov-login-open").addEventListener("click", () => {
+    const url = el("ov-login-url").textContent;
+    if (url) call(api.openPath(url), "Cannot open browser");
+  });
+  el("ov-login-code-copy").addEventListener("click", () => {
+    const code = el("ov-login-code").textContent;
+    if (code) copyText(code, "Code copied");
+  });
+}
+
+async function startOpenAiSignIn() {
+  toast("OpenAI sign-in started", "Follow the prompt below or in your browser; progress appears in the Console tab.");
+  const done = await call(api.runLogin("openai"), "OpenAI sign-in failed");
+  if (done !== undefined) {
+    toast(
+      "OpenAI account ready",
+      "It appears above within a few seconds and joins load balancing automatically.",
+      "success"
+    );
+    loadUsage();
+  }
+}
+
+function openLogoutDialog(email, isLast) {
+  pendingLogoutEmail = email;
+  root.querySelector("#ov-logout-title").textContent = `Sign out ${email}?`;
+  root.querySelector("#ov-logout-text").textContent = isLast
+    ? "Requests will fail until you sign in again. This removes the stored sign-in from this machine; your OpenAI account itself is unaffected."
+    : "Requests will use your remaining account(s). This removes the stored sign-in from this machine; your OpenAI account itself is unaffected.";
+  root.querySelector("#ov-logout-dialog").showModal();
 }
 
 async function loadUsage() {
   if (!root) return;
-  const container = el("ov-usage");
-  container.innerHTML = `<div class="empty">Loading…</div>`;
   let usage;
   try {
     usage = await api.getUsage();
-  } catch (error) {
-    container.innerHTML = "";
-    const empty = document.createElement("div");
-    empty.className = "empty";
-    empty.textContent = String(error);
-    container.appendChild(empty);
-    return;
+  } catch {
+    usage = null; // account rows still render, just without bars
   }
   if (!root) return;
-  renderUsage(container, usage);
+  usageByEmail = new Map();
+  if (Array.isArray(usage?.accounts)) {
+    for (const entry of usage.accounts) {
+      usageByEmail.set(entry.email ?? entry.slug, entry);
+    }
+  } else if (usage) {
+    // Single-account shape: the payload itself is the status.
+    usageByEmail.set(usage?.account?.email ?? "", { status: usage });
+  }
+  usageStamp++;
+  renderCache.accounts = "";
+  if (lastState) render(lastState);
 }
 
 function formatDuration(seconds) {
@@ -310,13 +428,19 @@ function formatDuration(seconds) {
   return parts.length > 0 ? parts.join(" ") : "<1m";
 }
 
+// The normalized relay payload labels each window ("5h", "weekly", "30d").
+function windowLabel(window, fallback) {
+  const label = window.window_label ?? formatDuration(window.window_seconds ?? window.limit_window_seconds);
+  if (!label) return fallback;
+  return label === "weekly" ? "Weekly" : `${label} window`;
+}
+
 function usageWindowRow(label, window) {
   const row = document.createElement("div");
   row.className = "usage-row";
   const name = document.createElement("span");
   name.className = "usage-label";
-  const windowLength = formatDuration(window.limit_window_seconds);
-  name.textContent = windowLength ? `${label} (${windowLength} window)` : label;
+  name.textContent = label;
 
   const bar = document.createElement("div");
   bar.className = "usage-bar";
@@ -338,50 +462,25 @@ function usageWindowRow(label, window) {
   return row;
 }
 
-function renderUsage(container, usage) {
-  container.innerHTML = "";
-  const account = usage?.account ?? {};
-  const header = document.createElement("div");
-  header.className = "row";
-  const who = document.createElement("span");
-  who.className = "provider-name";
-  who.style.width = "auto";
-  who.textContent = [account.email, account.plan_type].filter(Boolean).join(" · ") || "OpenAI account";
-  header.appendChild(who);
-  const reachedType = usage?.rate_limit_reached_type;
-  if (reachedType) {
-    const badge = document.createElement("span");
-    badge.className = "badge badge-bad";
-    badge.textContent = "Usage limit reached";
-    header.appendChild(badge);
-  }
-  container.appendChild(header);
-
-  const limits = usage?.rate_limits ?? {};
+// Flattens a normalized subscription-status payload into labeled windows.
+function usageWindows(status) {
+  const limits = status?.rate_limits ?? {};
   const windows = [];
-  const defaultLimit = limits.default;
-  if (defaultLimit?.primary_window) windows.push(["Requests", defaultLimit.primary_window]);
-  if (defaultLimit?.secondary_window) windows.push(["Requests", defaultLimit.secondary_window]);
+  const push = (window, baseLabel) => {
+    if (window) windows.push([windowLabel(window, baseLabel), window]);
+  };
+  push(limits.default?.primary_window, "Requests");
+  push(limits.default?.secondary_window, "Requests");
   for (const extra of limits.additional ?? []) {
-    const label = extra.limit_name || extra.metered_feature || "Other";
-    if (extra.rate_limit?.primary_window) windows.push([label, extra.rate_limit.primary_window]);
-    if (extra.rate_limit?.secondary_window) windows.push([label, extra.rate_limit.secondary_window]);
+    const name = extra.limit_name || extra.metered_feature || "Other";
+    if (extra.rate_limit?.primary_window) {
+      windows.push([`${name} · ${windowLabel(extra.rate_limit.primary_window, "")}`.replace(/ · $/, ""), extra.rate_limit.primary_window]);
+    }
+    if (extra.rate_limit?.secondary_window) {
+      windows.push([`${name} · ${windowLabel(extra.rate_limit.secondary_window, "")}`.replace(/ · $/, ""), extra.rate_limit.secondary_window]);
+    }
   }
-  if (windows.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "empty";
-    empty.textContent = "No usage windows reported by the upstream.";
-    container.appendChild(empty);
-    return;
-  }
-  for (const [label, window] of windows) {
-    container.appendChild(usageWindowRow(label, window));
-  }
-  const note = document.createElement("p");
-  note.className = "card-caption";
-  note.style.marginTop = "8px";
-  note.textContent = "Claude does not expose usage figures through its CLI, so only OpenAI usage is shown.";
-  container.appendChild(note);
+  return windows;
 }
 
 function render(state) {
@@ -438,7 +537,28 @@ function render(state) {
   // Claude sign-in only matters when the provider is enabled at all.
   el("ov-login-claude").hidden = !state.settings.enableClaudeExperimental;
 
-  renderProviders(state);
+  // Once one account works, the same button adds another of the user's own
+  // accounts (the CLI guard makes a repeat sign-in additive, not destructive).
+  const openaiReady = state.relay_status?.providers?.openai?.ready_for_requests;
+  el("ov-login-openai").innerHTML = openaiReady
+    ? `${icon("logIn", 14)} Add account`
+    : `${icon("logIn", 14)} Sign in to OpenAI`;
+
+  // Sign-in in progress: surface the URL (and pairing code) for copying.
+  const banner = el("ov-login-banner");
+  banner.hidden = !state.login_url;
+  if (state.login_url) {
+    el("ov-login-url").textContent = state.login_url;
+    const hasCode = Boolean(state.login_code);
+    el("ov-login-code-row").hidden = !hasCode;
+    if (hasCode) {
+      el("ov-login-code").textContent = state.login_code;
+    }
+    el("ov-login-hint-browser").hidden = hasCode;
+    el("ov-login-hint-device").hidden = !hasCode;
+  }
+
+  renderAccounts(state);
 }
 
 function setSegment(id, selected) {
@@ -466,7 +586,7 @@ function endpointLine(tag, url) {
 }
 
 function renderEndpoints(state) {
-  const endpoints = [["local", state.local_endpoint]].concat(
+  const endpoints = [["Local", state.local_endpoint]].concat(
     state.lan_endpoints.map((endpoint) => ["LAN", endpoint])
   );
   const cacheKey = JSON.stringify(endpoints);
@@ -474,59 +594,155 @@ function renderEndpoints(state) {
     return;
   }
   renderCache.endpoints = cacheKey;
-  for (const containerId of ["ov-endpoints", "ov-connect-endpoints"]) {
-    const container = el(containerId);
-    container.innerHTML = "";
-    for (const [tag, url] of endpoints) {
-      container.appendChild(endpointLine(containerId === "ov-connect-endpoints" ? `${tag} URL` : tag, url));
-    }
+  // One compact line in the hero; the full copyable list lives only in
+  // "Connect Your App" — no duplication.
+  el("ov-hero-endpoint").textContent = state.local_endpoint;
+  const container = el("ov-connect-endpoints");
+  container.innerHTML = "";
+  for (const [tag, url] of endpoints) {
+    container.appendChild(endpointLine(tag, url));
   }
 }
 
-function renderProviders(state) {
+function accountStatusBadge(account, index, total) {
+  // One consolidated badge (precedence): Not ready > Limit > Active > Standby.
+  // A reached quota that resets on schedule is normal operation → amber, not
+  // red; red is reserved for real failures (relay down, auth broken).
+  const badge = document.createElement("span");
+  if (!account.ready_for_requests && !account.limited) {
+    badge.className = "badge badge-warn";
+    badge.textContent = "Not ready";
+  } else if (account.limited) {
+    badge.className = "badge badge-warn";
+    const resets = account.limited_for_seconds
+      ? ` · ${formatDuration(account.limited_for_seconds)}`
+      : "";
+    badge.textContent = `At limit${resets}`;
+    badge.title = account.limited_for_seconds
+      ? `Usage limit reached; back in rotation in ${formatDuration(account.limited_for_seconds)}.`
+      : "Usage limit reached.";
+  } else if (index === 0) {
+    badge.className = "badge badge-accent";
+    badge.textContent = total > 1 ? "Active" : "Ready";
+  } else {
+    badge.className = "badge badge-neutral";
+    badge.textContent = "Standby";
+  }
+  return badge;
+}
+
+function signOutButton(email, isLast) {
+  const button = document.createElement("button");
+  button.className = "copy-btn";
+  button.innerHTML = icon("logOut", 14);
+  button.setAttribute("aria-label", `Sign out ${email}`);
+  button.title = `Sign out ${email}`;
+  button.addEventListener("click", () => openLogoutDialog(email, isLast));
+  return button;
+}
+
+// One block per account: identity header (fixed grid) + usage bars.
+function accountBlock(account, index, total) {
+  const email = account.email ?? account.slug;
+  const block = document.createElement("div");
+  block.className = "account-block";
+  if (pendingLogout.has(email)) block.classList.add("pending");
+
+  const head = document.createElement("div");
+  head.className = "account-head";
+  const emailEl = document.createElement("span");
+  emailEl.className = "account-email";
+  emailEl.textContent = email;
+  emailEl.title = email;
+  const plan = document.createElement("span");
+  plan.className = "account-plan";
+  plan.textContent = account.plan_type ?? "";
+  head.append(emailEl, plan, accountStatusBadge(account, index, total));
+  if (pendingLogout.has(email)) {
+    const pending = document.createElement("span");
+    pending.className = "account-plan";
+    pending.textContent = "…";
+    head.append(pending);
+  } else {
+    head.append(signOutButton(email, total === 1));
+  }
+  block.appendChild(head);
+
+  const usageEntry = usageByEmail.get(email);
+  if (usageEntry?.status) {
+    for (const [label, window] of usageWindows(usageEntry.status)) {
+      block.appendChild(usageWindowRow(label, window));
+    }
+  } else if (usageEntry?.error) {
+    const err = document.createElement("div");
+    err.className = "account-plan";
+    err.textContent = "Usage unavailable";
+    err.title = usageEntry.error;
+    block.appendChild(err);
+  }
+  return block;
+}
+
+function renderAccounts(state) {
   const providers = state.relay_status?.providers;
-  const cacheKey = JSON.stringify(providers ?? null);
-  if (cacheKey === renderCache.providers) {
+  const cacheKey =
+    JSON.stringify(providers ?? null) + "|" + usageStamp + "|" + [...pendingLogout].join(",");
+  if (cacheKey === renderCache.accounts) {
     return;
   }
-  renderCache.providers = cacheKey;
+  renderCache.accounts = cacheKey;
 
-  const container = el("ov-providers");
+  const container = el("ov-accounts");
   if (!providers) {
-    container.innerHTML = `<div class="empty">Start the relay to see provider status.</div>`;
+    container.innerHTML = `<div class="empty">Start the relay to see accounts.</div>`;
     return;
   }
   container.innerHTML = "";
-  const displayNames = { openai: "OpenAI", claude: "Claude" };
-  for (const [name, info] of Object.entries(providers)) {
+
+  const openai = providers.openai;
+  // The status endpoint reports a lone account at the top level; the
+  // accounts array only appears with 2+ accounts.
+  const accounts = Array.isArray(openai?.accounts) && openai.accounts.length > 0
+    ? openai.accounts
+    : openai?.enabled && openai?.email
+      ? [{ email: openai.email, plan_type: openai.plan_type, ready_for_requests: openai.ready_for_requests, limited: false }]
+      : [];
+
+  if (openai?.enabled && accounts.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No OpenAI account signed in yet — add one below.";
+    container.appendChild(empty);
+  }
+  accounts.forEach((account, index) => {
+    container.appendChild(accountBlock(account, index, accounts.length));
+  });
+  if (accounts.length > 1) {
+    const caption = document.createElement("p");
+    caption.className = "card-caption";
+    caption.style.margin = "8px 0 0";
+    caption.textContent = "Requests go to the first account with capacity.";
+    container.appendChild(caption);
+  }
+
+  // Claude appears only when enabled: a disabled experimental provider is
+  // configuration noise, not status.
+  const claude = providers.claude;
+  if (claude?.enabled) {
     const row = document.createElement("div");
     row.className = "provider-row";
     const nameEl = document.createElement("span");
     nameEl.className = "provider-name";
-    nameEl.textContent = displayNames[name] ?? name;
-    const enabled = document.createElement("span");
-    enabled.className = `badge ${info.enabled ? "badge-good" : "badge-neutral"}`;
-    enabled.textContent = info.enabled ? "Enabled" : "Disabled";
+    nameEl.textContent = "Claude";
     const ready = document.createElement("span");
-    ready.className = `badge ${info.ready_for_requests ? "badge-good" : "badge-warn"}`;
-    ready.textContent = info.ready_for_requests ? "Ready" : "Not ready";
+    ready.className = `badge ${claude.ready_for_requests ? "badge-accent" : "badge-warn"}`;
+    ready.textContent = claude.ready_for_requests ? "Ready" : "Not ready";
     const detail = document.createElement("span");
     detail.className = "provider-detail";
-    detail.textContent = providerDetail(name, info);
-    row.append(nameEl, enabled, ready, detail);
+    detail.textContent =
+      [claude.email, claude.plan_type, claude.cli_version].filter(Boolean).join("  ·  ") ||
+      (claude.ready_for_requests ? "" : "Not signed in — use the Claude button below");
+    row.append(nameEl, ready, detail);
     container.appendChild(row);
   }
-}
-
-function providerDetail(name, info) {
-  const parts = [info.email, info.plan_type, info.cli_version].filter(Boolean);
-  if (parts.length > 0) {
-    return parts.join("  ·  ");
-  }
-  if (info.enabled && !info.ready_for_requests) {
-    return name === "openai"
-      ? "Not signed in — use the OpenAI sign-in button below"
-      : "Not signed in — use the Claude sign-in button below";
-  }
-  return info.enabled ? "" : "Turned off";
 }

@@ -3,13 +3,26 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
 import uvicorn
 
+from airelay.accounts import (
+    ACCOUNTS_DIRNAME,
+    OpenAiAccountPool,
+    discover_slots,
+    find_slot,
+    load_manifest,
+    resolve_slot,
+    save_manifest,
+    slug_for_account,
+)
 from airelay.app import create_app
-from airelay.auth import AuthManager, AuthRecord
+from airelay.auth import AuthenticationError, AuthManager, AuthRecord, AuthStorage
 from airelay.backend import ChatGptCodexBackend
 from airelay.config import APP_NAME, Settings
 from airelay.providers import ProviderRegistry
@@ -77,6 +90,8 @@ def _base_settings(args: argparse.Namespace) -> Settings:
             and settings.bearer_token_file == original_data_dir / "relay-token"
         ):
             settings.bearer_token_file = settings.data_dir / "relay-token"
+        if settings.claude_oauth_token_file == original_data_dir / "claude-token":
+            settings.claude_oauth_token_file = settings.data_dir / "claude-token"
     if getattr(args, "logs_dir", None):
         settings.logs_dir = Path(args.logs_dir).expanduser()
     if getattr(args, "auth_storage", None):
@@ -90,16 +105,27 @@ def _base_settings(args: argparse.Namespace) -> Settings:
 
 
 def _auth_manager(settings: Settings) -> AuthManager:
+    # With multiple enrolled accounts, "the" manager is the first (primary)
+    # one; with none or one, this is exactly today's legacy-root manager.
+    slots = discover_slots(settings)
+    root = slots[0].storage_root if slots else settings.data_dir
     return AuthManager(
-        settings.data_dir,
+        root,
         settings.auth_storage_mode,
         settings.issuer_base_url,
         client_id=settings.client_id,
     )
 
 
+def _account_pool(settings: Settings) -> OpenAiAccountPool | None:
+    slots = discover_slots(settings)
+    if len(slots) <= 1:
+        return None
+    return OpenAiAccountPool(settings, _NullTrafficLogger(), slots=slots)  # type: ignore[arg-type]
+
+
 def _provider_registry(settings: Settings, manager: AuthManager) -> ProviderRegistry:
-    return ProviderRegistry(settings, openai_auth=manager)
+    return ProviderRegistry(settings, openai_auth=manager, account_pool=_account_pool(settings))
 
 
 def _status_payload(settings: Settings, manager: AuthManager) -> dict[str, object]:
@@ -117,10 +143,10 @@ def _status_payload(settings: Settings, manager: AuthManager) -> dict[str, objec
         next_steps.append("airelays init")
     if not any_provider_ready:
         if settings.enable_openai_provider and not auth_status.get("ready_for_requests"):
-            next_steps.append("airelays login")
+            next_steps.append(_login_hint())
         if settings.enable_claude_experimental and not claude_status.get("ready_for_requests"):
             next_steps.append("claude auth login --claudeai")
-            next_steps.append("claude setup-token")
+            next_steps.append("airelays claude set-token")
     if any_provider_ready and token_ready:
         next_steps.append(_serve_command(settings))
     return {
@@ -159,10 +185,10 @@ def _init_payload(
 ) -> dict[str, object]:
     next_steps: list[str] = []
     if settings.enable_openai_provider:
-        next_steps.append("airelays login")
+        next_steps.append(_login_hint())
     if settings.enable_claude_experimental:
         next_steps.append("claude auth login --claudeai")
-        next_steps.append("claude setup-token")
+        next_steps.append("airelays claude set-token")
     next_steps.append(_serve_command(settings))
     return {
         "app_name": APP_NAME,
@@ -330,37 +356,63 @@ async def _doctor_payload(settings: Settings, *, skip_response: bool = False) ->
 
     provider_statuses = _provider_registry(settings, manager).provider_statuses()
     openai_status = dict(provider_statuses.get("openai", {}))
+    account_entries = openai_status.get("accounts")
     if not settings.enable_openai_provider:
         check = _check(
             "openai_auth",
             "skip",
             "OpenAI subscription runtime is disabled.",
         )
-    elif openai_status.get("ready_for_requests"):
-        check = _check(
-            "openai_auth",
-            "pass",
-            "OpenAI subscription login is ready.",
-            data={
-                "email": openai_status.get("email") or "",
-                "account_id": openai_status.get("account_id") or "",
-                "storage_mode": openai_status.get("storage_mode") or "",
-            },
-        )
+        checks.append(check)
+        _add_next_steps(next_steps, _next_steps_from_check(check))
+    elif isinstance(account_entries, list) and len(account_entries) > 1:
+        # One auth check per enrolled account: a healthy primary must not
+        # mask a dead refresh token on the standby.
+        for entry in account_entries:
+            entry = dict(entry)
+            label = entry.get("email") or entry.get("slug") or "account"
+            if entry.get("ready_for_requests"):
+                check = _check(
+                    f"openai_auth {label}",
+                    "pass",
+                    "OpenAI subscription login is ready.",
+                    data={"account_id": entry.get("account_id") or ""},
+                )
+            else:
+                check = _check(
+                    f"openai_auth {label}",
+                    "fail",
+                    "This account's login is missing, incomplete, or account-mismatched.",
+                    next_steps=[_login_hint()],
+                )
+            checks.append(check)
+            _add_next_steps(next_steps, _next_steps_from_check(check))
     else:
-        check = _check(
-            "openai_auth",
-            "fail",
-            "OpenAI subscription login is missing, incomplete, or account-mismatched.",
-            next_steps=["airelays login"],
-            data={
-                "authenticated": bool(openai_status.get("authenticated")),
-                "credentials_present": bool(openai_status.get("credentials_present")),
-                "account_bound": bool(openai_status.get("account_bound")),
-            },
-        )
-    checks.append(check)
-    _add_next_steps(next_steps, _next_steps_from_check(check))
+        if openai_status.get("ready_for_requests"):
+            check = _check(
+                "openai_auth",
+                "pass",
+                "OpenAI subscription login is ready.",
+                data={
+                    "email": openai_status.get("email") or "",
+                    "account_id": openai_status.get("account_id") or "",
+                    "storage_mode": openai_status.get("storage_mode") or "",
+                },
+            )
+        else:
+            check = _check(
+                "openai_auth",
+                "fail",
+                "OpenAI subscription login is missing, incomplete, or account-mismatched.",
+                next_steps=[_login_hint()],
+                data={
+                    "authenticated": bool(openai_status.get("authenticated")),
+                    "credentials_present": bool(openai_status.get("credentials_present")),
+                    "account_bound": bool(openai_status.get("account_bound")),
+                },
+            )
+        checks.append(check)
+        _add_next_steps(next_steps, _next_steps_from_check(check))
 
     backend: ChatGptCodexBackend | None = None
     models_available = False
@@ -369,7 +421,11 @@ async def _doctor_payload(settings: Settings, *, skip_response: bool = False) ->
     elif not openai_status.get("ready_for_requests"):
         checks.append(_check("openai_models", "skip", "OpenAI model probe requires a ready OpenAI login."))
     else:
-        backend = ChatGptCodexBackend(settings, manager, _NullTrafficLogger())  # type: ignore[arg-type]
+        # Prefer the account pool so the probe reflects real request routing
+        # and failover — a single-backend probe on the first account fails
+        # even when the pool would succeed by using another account.
+        pool = _account_pool(settings)
+        backend = pool or ChatGptCodexBackend(settings, manager, _NullTrafficLogger())  # type: ignore[arg-type]
         try:
             models_payload = await backend.list_models("doctor_models")
             slugs = _model_slugs(models_payload)
@@ -395,7 +451,7 @@ async def _doctor_payload(settings: Settings, *, skip_response: bool = False) ->
                 "openai_models",
                 "fail",
                 f"OpenAI upstream /models probe failed: {exc}",
-                next_steps=["airelays login"],
+                next_steps=[_login_hint()],
             )
             checks.append(check)
             _add_next_steps(next_steps, _next_steps_from_check(check))
@@ -426,7 +482,9 @@ async def _doctor_payload(settings: Settings, *, skip_response: bool = False) ->
         )
     else:
         if backend is None:
-            backend = ChatGptCodexBackend(settings, manager, _NullTrafficLogger())  # type: ignore[arg-type]
+            backend = _account_pool(settings) or ChatGptCodexBackend(  # type: ignore[arg-type]
+                settings, manager, _NullTrafficLogger()
+            )
         try:
             response_payload = await backend.collect_response(
                 _doctor_response_payload(selected_model),
@@ -478,7 +536,7 @@ async def _doctor_payload(settings: Settings, *, skip_response: bool = False) ->
             "claude",
             "fail",
             "Claude experimental runtime is enabled but not ready.",
-            next_steps=["claude auth login --claudeai", "claude setup-token"],
+            next_steps=["claude auth login --claudeai", "airelays claude set-token"],
             data={
                 "cli_version": claude_status.get("cli_version") or "",
                 "auth_method": claude_status.get("auth_method") or "",
@@ -582,16 +640,58 @@ def _print_client_section(client: dict[str, object], *, include_token: bool = Fa
         _print_field("SDK note", client.get("api_key_note"))
 
 
+def _is_headless_environment() -> bool:
+    """Best-effort detection of a machine without a usable local browser.
+
+    SSH sessions count as headless even when X forwarding sets DISPLAY —
+    a forwarded browser is rare and the device flow works there anyway.
+    Misfires are safe: the device flow also works on a desktop.
+    """
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return True
+    if sys.platform.startswith("linux"):
+        return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    return False
+
+
+def _login_hint() -> str:
+    return "airelays login --device" if _is_headless_environment() else "airelays login"
+
+
 def _print_login_prompt(url: str) -> None:
     _print_title("AIRelays Login")
-    print("Open this URL in the browser profile you want to use:")
+    print("Open this URL in a browser ON THIS MACHINE (pick the profile you want):")
     print(f"  {url}")
+    print()
+    print("  The URL will NOT work from another computer: after sign-in it")
+    print("  redirects to localhost:1455 on the machine running the browser.")
+    print("  From a remote machine, either run `airelays login --device`, or")
+    print("  tunnel first: ssh -L 1455:localhost:1455 user@this-server")
 
 
 def _print_device_prompt(verification_url: str, user_code: str) -> None:
     _print_title("AIRelays Device Login")
-    _print_multiline("Open this URL", [verification_url])
-    _print_multiline("Enter this code", [user_code])
+    print("Sign in from a browser on ANY device (phone or laptop):")
+    print()
+    print(f"  1. Open:            {verification_url}")
+    print(f"  2. Enter this code: {bold(user_code)}")
+    print()
+
+
+_last_waiting_notice = 0.0
+
+
+def _print_device_waiting(remaining_seconds: float) -> None:
+    """Heartbeat during device-code polling so the terminal never looks hung."""
+    global _last_waiting_notice
+    import time as _time
+
+    now = _time.monotonic()
+    if now - _last_waiting_notice < 15:
+        return
+    _last_waiting_notice = now
+    minutes, seconds = divmod(int(remaining_seconds), 60)
+    print(f"  Waiting for approval... (expires in {minutes}:{seconds:02d}, Ctrl-C to cancel)")
 
 
 def _print_login_summary(payload: dict[str, object]) -> None:
@@ -612,10 +712,16 @@ def _print_login_summary(payload: dict[str, object]) -> None:
         _print_field("Token file", payload.get("bearer_token_file"))
     else:
         _print_field("Bearer auth", "disabled", kind="warn")
+    note = payload.get("added_account_note")
+    if note:
+        print()
+        print(f"  {good(str(note))}")
     _print_client_section(client)
-    next_step = payload.get("next_step")
-    if next_step:
-        _print_steps([str(next_step)])
+    steps = payload.get("next_steps")
+    if isinstance(steps, list) and steps:
+        _print_steps([str(step) for step in steps])
+    elif payload.get("next_step"):
+        _print_steps([str(payload["next_step"])])
 
 
 def _print_init_summary(payload: dict[str, object]) -> None:
@@ -672,18 +778,35 @@ def _print_status_summary(payload: dict[str, object]) -> None:
     _print_field("Concurrent/IP", relay.get("concurrent_requests_per_ip"))
 
     openai_provider = dict(providers.get("openai", {}))
-    _print_section("OpenAI Session")
-    _print_field("Enabled", "yes" if openai_provider.get("enabled") else "no")
-    if openai_provider.get("enabled"):
-        _print_bool("Ready", bool(auth.get("ready_for_requests")))
-        _print_bool("Authenticated", bool(auth.get("authenticated")))
-        _print_bool("Account bound", bool(auth.get("account_bound")))
-        _print_field("Email", auth.get("email"))
-        _print_field("Plan", auth.get("plan_type"))
-        _print_field("Account ID", auth.get("account_id"))
-        _print_field("Last refresh", auth.get("last_refresh"))
-        _print_field("Storage mode", auth.get("storage_mode"))
-        _print_field("Auth store", auth.get("auth_store_path"))
+    account_entries = openai_provider.get("accounts")
+    if isinstance(account_entries, list) and len(account_entries) > 1:
+        _print_section("OpenAI Accounts")
+        _print_field("Enabled", "yes" if openai_provider.get("enabled") else "no")
+        for index, entry in enumerate(account_entries):
+            entry = dict(entry)
+            _print_field(f"Account {index + 1}", entry.get("email") or entry.get("slug"))
+            _print_bool("  Ready", bool(entry.get("ready_for_requests")))
+            _print_field("  Plan", entry.get("plan_type"))
+            if entry.get("limited"):
+                _print_field(
+                    "  Limited",
+                    f"resets in {entry.get('limited_for_seconds', '?')}s",
+                    kind="warn",
+                )
+            _print_field("  Auth store", entry.get("auth_store_path"))
+    else:
+        _print_section("OpenAI Session")
+        _print_field("Enabled", "yes" if openai_provider.get("enabled") else "no")
+        if openai_provider.get("enabled"):
+            _print_bool("Ready", bool(auth.get("ready_for_requests")))
+            _print_bool("Authenticated", bool(auth.get("authenticated")))
+            _print_bool("Account bound", bool(auth.get("account_bound")))
+            _print_field("Email", auth.get("email"))
+            _print_field("Plan", auth.get("plan_type"))
+            _print_field("Account ID", auth.get("account_id"))
+            _print_field("Last refresh", auth.get("last_refresh"))
+            _print_field("Storage mode", auth.get("storage_mode"))
+            _print_field("Auth store", auth.get("auth_store_path"))
 
     _print_section("Providers")
     _print_field("OpenAI enabled", "yes" if openai_provider.get("enabled") else "no")
@@ -740,13 +863,24 @@ def _print_doctor_summary(payload: dict[str, object]) -> None:
     _print_steps([str(step) for step in payload.get("next_steps", [])])
 
 
-def _print_logout_summary(deleted: bool) -> None:
+def _print_logout_summary(
+    deleted: bool, signed_out: list[str] | None = None, remaining: list[str] | None = None
+) -> None:
     _print_title("AIRelays Logout")
-    if deleted:
-        _print_field("OpenAI session", "deleted", kind="good")
-    else:
+    if not deleted:
         _print_field("OpenAI session", "already empty", kind="warn")
-    _print_steps(["airelays login"])
+        _print_steps([_login_hint()])
+        return
+    _print_field("Signed out", ", ".join(signed_out or []) or "OpenAI session", kind="good")
+    if remaining:
+        # Remaining accounts still serve requests; do NOT tell the user to
+        # log in again.
+        if len(remaining) == 1:
+            _print_field("Remaining", f"{remaining[0]} (now serves all requests)")
+        else:
+            _print_field("Remaining", ", ".join(remaining))
+    else:
+        _print_steps([_login_hint()])
 
 
 def _print_token_rotate_summary(payload: dict[str, object]) -> None:
@@ -820,10 +954,10 @@ def _print_serve_banner(settings: Settings, provider_statuses: dict[str, object]
         )
         _print_field("Claude CLI", claude_provider.get("cli_version"))
     if openai_provider.get("enabled") and not openai_provider.get("ready_for_requests"):
-        _print_command("OpenAI login", "airelays login")
+        _print_command("OpenAI login", _login_hint())
     if claude_provider.get("enabled") and not claude_provider.get("ready_for_requests"):
         _print_command("Claude login", "claude auth login --claudeai")
-        _print_command("Claude headless", "claude setup-token")
+        _print_command("Claude headless", "airelays claude set-token")
     print()
 
 
@@ -834,23 +968,99 @@ async def _run_login(args: argparse.Namespace) -> None:
             "The OpenAI subscription runtime is disabled for this AIRelays process. "
             "Enable `[providers.openai].enabled` to use `airelays login`."
         )
-    manager = _auth_manager(settings)
-    if args.device:
-        record = await manager.device_login(
-            client_id=settings.client_id,
-            timeout_seconds=settings.login_timeout_seconds,
-            workspace_id=args.workspace_id,
-            on_device_code=_print_device_prompt,
-        )
+    existing_slots = discover_slots(settings)
+    replace_slot = None
+    if getattr(args, "replace", None):
+        replace_slot = find_slot(existing_slots, args.replace)
+        if replace_slot is None:
+            known = ", ".join(slot.label for slot in existing_slots) or "none"
+            raise SystemExit(f"Unknown account `{args.replace}`. Known accounts: {known}.")
+
+    # Login lands in a staging slot first; only after the account identity
+    # is known do we decide where it belongs. This is what prevents a second
+    # login from silently destroying the first account's credentials.
+    staging_root = settings.data_dir / ACCOUNTS_DIRNAME / f".staging-{os.getpid()}"
+    staging = AuthManager(
+        staging_root,
+        "file",
+        settings.issuer_base_url,
+        client_id=settings.client_id,
+    )
+    # Headless machines default to the device flow: the browser flow's
+    # redirect lands on localhost:1455 of the machine running the browser,
+    # which on a server is the wrong machine entirely. Explicit flags win.
+    use_device = args.device
+    if not use_device and not args.browser and _is_headless_environment():
+        use_device = True
+        print("No local browser detected (SSH session or no display).")
+        print("Using device-code login. Force the browser flow with: airelays login --browser")
+        print()
+
+    try:
+        if use_device:
+            record = await staging.device_login(
+                client_id=settings.client_id,
+                timeout_seconds=settings.login_timeout_seconds,
+                workspace_id=args.workspace_id,
+                on_device_code=_print_device_prompt,
+                on_waiting=_print_device_waiting,
+            )
+        else:
+            record = await staging.browser_login(
+                client_id=settings.client_id,
+                open_browser=not args.no_browser and settings.browser_open,
+                timeout_seconds=settings.login_timeout_seconds,
+                workspace_id=args.workspace_id,
+                on_authorize_url=_print_login_prompt,
+            )
+        raw_payload = staging.storage.load() or dict(record.raw)
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
+
+    added_as: int | None = None
+    if replace_slot is not None:
+        target_root = replace_slot.storage_root
     else:
-        record = await manager.browser_login(
-            client_id=settings.client_id,
-            open_browser=not args.no_browser and settings.browser_open,
-            timeout_seconds=settings.login_timeout_seconds,
-            workspace_id=args.workspace_id,
-            on_authorize_url=_print_login_prompt,
+        same = next(
+            (
+                slot
+                for slot in existing_slots
+                if slot.account_id and record.account_id and slot.account_id == record.account_id
+            ),
+            None,
         )
+        if same is not None:
+            # Same subscription signed in again: refresh in place.
+            target_root = same.storage_root
+        elif not existing_slots:
+            # First login keeps the legacy layout so older relay versions
+            # and existing tooling continue to work untouched.
+            target_root = settings.data_dir
+        else:
+            slug = slug_for_account(record.account_id, record.email)
+            target_root = settings.data_dir / ACCOUNTS_DIRNAME / slug
+            added_as = len(existing_slots) + 1
+
+    # The slot directory must exist even when credentials land in the
+    # keyring (keyring saves write no files): discovery lists directories,
+    # and the keyring entry is keyed by this exact path.
+    target_root.mkdir(parents=True, exist_ok=True)
+    AuthStorage(target_root, settings.auth_storage_mode).save(raw_payload)
+
     payload = _login_payload(settings, record)
+    if added_as is not None:
+        first = existing_slots[0].label
+        this_label = record.email or "this account"
+        payload["added_account_note"] = (
+            f"Added {this_label} as account #{added_as}. {first} is used first; "
+            f"{this_label} takes over when it hits its usage limit. A running relay "
+            "picks this up within seconds."
+        )
+        # Always give the undo path so a mistaken add has a printed way out.
+        payload["next_steps"] = [
+            "airelays accounts",
+            f"airelays logout {record.email or ''}".strip(),
+        ]
     _print_login_summary(payload)
 
 
@@ -897,12 +1107,202 @@ async def _run_doctor(args: argparse.Namespace) -> None:
 
 def _run_logout(args: argparse.Namespace) -> None:
     settings = _base_settings(args)
-    manager = _auth_manager(settings)
-    deleted = manager.logout()
+    slots = discover_slots(settings)
+    selector = getattr(args, "account", None)
+    logout_all = getattr(args, "all", False)
+
+    if len(slots) > 1 and not selector and not logout_all:
+        names = "\n".join(f"  {slot.label}" for slot in slots)
+        raise SystemExit(
+            f"You have {len(slots)} OpenAI accounts:\n{names}\n"
+            "Run `airelays logout <email>` or `airelays logout --all`."
+        )
+
+    targets = slots
+    if selector:
+        slot, error = resolve_slot(slots, selector)
+        if slot is None:
+            raise SystemExit(error)
+        targets = [slot]
+
+    signed_out = [slot.label for slot in targets]
+    deleted = False
+    for slot in targets:
+        storage = AuthStorage(slot.storage_root, settings.auth_storage_mode)
+        deleted = storage.delete() or deleted
+        # Extra account slots are directories we created; remove the shell.
+        if slot.storage_root != settings.data_dir:
+            shutil.rmtree(slot.storage_root, ignore_errors=True)
+    remaining = [s.label for s in discover_slots(settings)]
     if _json_requested(args):
-        _emit_json({"deleted": deleted})
+        _emit_json({"deleted": deleted, "signed_out": signed_out, "remaining": remaining})
         return
-    _print_logout_summary(deleted)
+    _print_logout_summary(deleted, signed_out, remaining)
+
+
+def _run_accounts(args: argparse.Namespace) -> None:
+    settings = _base_settings(args)
+    slots = discover_slots(settings)
+    action = getattr(args, "accounts_action", "list") or "list"
+
+    if action == "remove":
+        # Deprecated alias of `logout <email>`; kept working, not advertised.
+        slot, error = resolve_slot(slots, args.account)
+        if slot is None:
+            raise SystemExit(error)
+        AuthStorage(slot.storage_root, settings.auth_storage_mode).delete()
+        if slot.storage_root != settings.data_dir:
+            shutil.rmtree(slot.storage_root, ignore_errors=True)
+        print(f"Signed out {slot.label}. (Tip: `airelays logout <email>` does the same.)")
+        return
+
+    if action == "refresh":
+        # Bench state lives in the RUNNING relay's memory, so a hard refresh
+        # must talk to it over HTTP; a local process cannot clear another
+        # process's cooldowns.
+        _hard_refresh_running_relay(settings)
+        return
+
+    if action == "order":
+        resolved = []
+        for needle in args.accounts:
+            slot, error = resolve_slot(slots, needle)
+            if slot is None:
+                raise SystemExit(error)
+            resolved.append(slot)
+        missing = [slot for slot in slots if slot not in resolved]
+        order = [slot.slug for slot in resolved + missing]
+        manifest = load_manifest(settings.data_dir)
+        manifest["order"] = order
+        save_manifest(settings.data_dir, manifest)
+        slots = discover_slots(settings)
+        print("Account order updated.")
+
+    payload = {
+        "accounts": [
+            {
+                "position": index + 1,
+                "email": slot.email,
+                "plan": slot.plan_type,
+                "account_id": slot.account_id,
+                "authenticated": slot.authenticated,
+                "store": str(slot.storage_root),
+                "slug": slot.slug,
+            }
+            for index, slot in enumerate(slots)
+        ],
+        "balance": settings.openai_balance,
+    }
+    if _json_requested(args):
+        _emit_json(payload)
+        return
+    _print_accounts_summary(payload)
+
+
+def _hard_refresh_running_relay(settings: Settings) -> None:
+    import httpx
+
+    url = f"{settings.client_base_url().rstrip('/')}/relay/accounts/refresh"
+    headers = {}
+    if settings.require_bearer_auth:
+        token = settings.resolve_bearer_token()
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+    try:
+        response = httpx.post(url, headers=headers, timeout=20.0)
+    except httpx.HTTPError:
+        raise SystemExit(
+            "No running relay to refresh at "
+            f"{settings.client_base_url()}. Account limits are per-process and "
+            "are already cleared by starting or restarting the relay."
+        )
+    if response.status_code >= 400:
+        raise SystemExit(f"Refresh failed ({response.status_code}): {response.text[:200]}")
+    accounts = response.json().get("accounts", [])
+    _print_title("AIRelays Accounts Refreshed")
+    for entry in accounts:
+        entry = dict(entry)
+        label = entry.get("email") or entry.get("slug")
+        if entry.get("limited"):
+            secs = entry.get("limited_for_seconds")
+            _print_field(label, f"still at limit (resets in ~{secs}s)", kind="warn")
+        else:
+            _print_field(label, "available", kind="good")
+    print()
+
+
+def _print_accounts_summary(payload: dict[str, object]) -> None:
+    accounts = list(payload.get("accounts", []))
+    _print_title("AIRelays Accounts")
+    if not accounts:
+        print("  No OpenAI accounts are signed in yet.")
+        _print_steps([_login_hint()])
+        return
+    multi = len(accounts) > 1
+    for entry in accounts:
+        entry = dict(entry)
+        state = "ready" if entry.get("authenticated") else "signed out"
+        position = entry.get("position")
+        label = entry.get("email") or entry.get("slug")
+        heading = f"{position}. {label}" if multi else str(label)
+        if multi and position == 1:
+            heading += "  (used first)"
+        _print_section(heading)
+        _print_field("Plan", entry.get("plan"))
+        _print_field("Status", state, kind="good" if state == "ready" else "warn")
+        _print_field("Store", entry.get("store"))
+    if multi:
+        balance = payload.get("balance")
+        print()
+        if balance == "round_robin":
+            print("  Requests are spread evenly across your accounts; an account")
+            print("  at its usage limit is skipped until it resets.")
+        else:
+            print("  Requests use account 1 first, then the next when it reaches")
+            print("  its usage limit.")
+
+    # A self-documenting hub: always show how to add, and how to undo/reorder
+    # once there is more than one account. Emails come from the listing.
+    first = accounts[0].get("email") or accounts[0].get("slug") if accounts else None
+    last = accounts[-1].get("email") or accounts[-1].get("slug") if accounts else None
+    print()
+    _print_section("Manage")
+    _print_command("Add another account", "airelays login")
+    if multi:
+        _print_command("Sign one out", f"airelays logout {last}")
+        _print_command("Sign out everything", "airelays logout --all")
+        _print_command("Change the order", f"airelays accounts order {last} {first}")
+    else:
+        _print_command("Sign out", "airelays logout")
+    print()
+
+
+def _run_claude_set_token(args: argparse.Namespace) -> None:
+    settings = _base_settings(args)
+    _print_title("Claude Token")
+    print("Paste a Claude Code OAuth token. You get this token from the")
+    print("`claude` CLI itself — on any machine WITH a browser, run:")
+    print()
+    print("    claude setup-token")
+    print()
+    print("then copy the token it prints and paste it here.")
+    print()
+    # Read from stdin (or hidden prompt on a TTY), never argv: command-line
+    # arguments leak into shell history and `ps` output.
+    if sys.stdin.isatty():
+        import getpass
+
+        token = getpass.getpass("  Token: ").strip()
+    else:
+        token = sys.stdin.readline().strip()
+    if not token:
+        raise SystemExit("No token provided.")
+    settings.write_claude_oauth_token(token)
+    print()
+    _print_field("Stored in", settings.claude_oauth_token_file, kind="good")
+    print("  AIRelays passes it to the local `claude` CLI automatically;")
+    print("  no environment variable export is needed.")
+    print()
 
 
 def _run_token_rotate(args: argparse.Namespace) -> None:
@@ -1008,9 +1408,25 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[shared],
         help="Run the OpenAI subscription login flow using AIRelays-owned auth storage",
     )
-    login.add_argument("--device", action="store_true", help="Use device-code login")
+    login.add_argument(
+        "--device",
+        action="store_true",
+        help="Sign in from this terminal using a code you enter in a browser on any "
+        "other device (use on SSH/headless servers); the default on headless machines",
+    )
+    login.add_argument(
+        "--browser",
+        action="store_true",
+        help="Force the browser flow even when this machine looks headless",
+    )
     login.add_argument("--no-browser", action="store_true", help="Do not auto-open the browser")
     login.add_argument("--workspace-id", help="Restrict login to a specific ChatGPT workspace id")
+    login.add_argument(
+        "--replace",
+        metavar="ACCOUNT",
+        help="Overwrite the stored credentials of an existing account (email or prefix); "
+        "without this, signing in with a new account adds it alongside the others",
+    )
     login.set_defaults(async_func=_run_login)
 
     status = subparsers.add_parser(
@@ -1039,8 +1455,58 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[shared],
         help="Delete AIRelays-owned OpenAI subscription auth",
     )
+    logout.add_argument(
+        "account",
+        nargs="?",
+        help="Which account to sign out (email or prefix); required with multiple accounts",
+    )
+    logout.add_argument("--all", action="store_true", help="Sign out every OpenAI account")
     _add_json_argument(logout)
     logout.set_defaults(func=_run_logout)
+
+    accounts = subparsers.add_parser(
+        "accounts",
+        parents=[shared],
+        help="List and manage your own OpenAI accounts (multiple subscriptions, one user)",
+    )
+    _add_json_argument(accounts)
+    accounts.set_defaults(func=_run_accounts, accounts_action="list")
+    accounts_subparsers = accounts.add_subparsers(dest="accounts_action")
+    accounts_list = accounts_subparsers.add_parser(
+        "list", parents=[shared], help="List signed-in accounts in balancing order"
+    )
+    _add_json_argument(accounts_list)
+    accounts_list.set_defaults(func=_run_accounts, accounts_action="list")
+    accounts_remove = accounts_subparsers.add_parser(
+        "remove", parents=[shared], help="Remove one account's stored credentials"
+    )
+    accounts_remove.add_argument("account", help="Account email (or unambiguous prefix)")
+    accounts_remove.set_defaults(func=_run_accounts, accounts_action="remove")
+    accounts_order = accounts_subparsers.add_parser(
+        "order", parents=[shared], help="Set which account is used first"
+    )
+    accounts_order.add_argument("accounts", nargs="+", help="Account emails, first = used first")
+    _add_json_argument(accounts_order)
+    accounts_order.set_defaults(func=_run_accounts, accounts_action="order")
+    accounts_refresh = accounts_subparsers.add_parser(
+        "refresh",
+        parents=[shared],
+        help="Clear usage-limit benches on the running relay and re-check capacity",
+    )
+    accounts_refresh.set_defaults(func=_run_accounts, accounts_action="refresh")
+
+    claude_cmd = subparsers.add_parser(
+        "claude",
+        parents=[shared],
+        help="Manage the local Claude runtime credentials",
+    )
+    claude_subparsers = claude_cmd.add_subparsers(dest="claude_command", required=True)
+    claude_set_token = claude_subparsers.add_parser(
+        "set-token",
+        parents=[shared],
+        help="Store a Claude Code OAuth token (from `claude setup-token`) for headless use",
+    )
+    claude_set_token.set_defaults(func=_run_claude_set_token)
 
     token = subparsers.add_parser(
         "token",
@@ -1069,7 +1535,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    if hasattr(args, "async_func"):
-        asyncio.run(args.async_func(args))
-        return
-    args.func(args)
+    try:
+        if hasattr(args, "async_func"):
+            asyncio.run(args.async_func(args))
+            return
+        args.func(args)
+    except AuthenticationError as exc:
+        # Auth failures are user-facing conditions, not crashes: print the
+        # message, never a traceback.
+        raise SystemExit(str(exc)) from exc

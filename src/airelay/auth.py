@@ -647,6 +647,7 @@ class AuthManager:
         timeout_seconds: float,
         workspace_id: str | None = None,
         on_device_code: Callable[[str, str], None] | None = None,
+        on_waiting: Callable[[float], None] | None = None,
     ) -> AuthRecord:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
@@ -657,11 +658,17 @@ class AuthManager:
                 raise AuthenticationError("Device-code login is not enabled for this server.")
             response.raise_for_status()
             usercode = response.json()
+            # Upstream has used both key spellings for this field.
+            user_code = usercode.get("user_code") or usercode.get("usercode")
+            if not user_code:
+                raise AuthenticationError(
+                    "Device-code login returned an unexpected payload (no user code)."
+                )
             verification_url = f"{self.issuer_base_url}/codex/device"
             if on_device_code is None:
-                print(f"Open {verification_url} and enter code: {usercode['user_code']}")
+                print(f"Open {verification_url} and enter code: {user_code}")
             else:
-                on_device_code(verification_url, usercode["user_code"])
+                on_device_code(verification_url, user_code)
             deadline = time.monotonic() + timeout_seconds
             interval = int(usercode.get("interval") or 5)
             code_payload: dict[str, Any] | None = None
@@ -670,17 +677,30 @@ class AuthManager:
                     f"{self.issuer_base_url}/api/accounts/deviceauth/token",
                     json={
                         "device_auth_id": usercode["device_auth_id"],
-                        "user_code": usercode["user_code"],
+                        "user_code": user_code,
                     },
                 )
+                # 403/404 mean "not approved yet" upstream; anything else
+                # unexpected must surface as a readable error, not a traceback.
                 if poll.status_code in {403, 404}:
+                    if on_waiting is not None:
+                        on_waiting(max(0.0, deadline - time.monotonic()))
                     await asyncio.sleep(interval)
                     continue
-                poll.raise_for_status()
+                if poll.status_code >= 400:
+                    raise AuthenticationError(
+                        f"Device-code login failed upstream (status {poll.status_code}). "
+                        "Request a fresh code with `airelays login --device`."
+                    )
                 code_payload = poll.json()
                 break
             if not code_payload:
-                raise AuthenticationError("Device-code login timed out after 15 minutes.")
+                minutes = max(1, int(timeout_seconds // 60))
+                raise AuthenticationError(
+                    f"Device-code login was not approved within {minutes} minute(s). "
+                    "The code may have expired or the request was denied; run "
+                    "`airelays login --device` to get a fresh code."
+                )
             tokens = await self._exchange_code_for_tokens(
                 client_id=client_id,
                 redirect_uri=f"{self.issuer_base_url}/deviceauth/callback",

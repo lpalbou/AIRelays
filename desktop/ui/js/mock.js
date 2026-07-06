@@ -3,6 +3,7 @@
 
 const settings = {
   relayCommandOverride: "",
+  loginMethod: "browser",
   host: "0.0.0.0",
   port: 8317,
   requireBearerAuth: true,
@@ -42,6 +43,9 @@ const state = () => ({
   reachable: managed,
   managed,
   auth_mismatch: false,
+  login_url: null,
+  login_code: null,
+  login_running: false,
   settings: { ...settings },
   relay_status: managed
     ? {
@@ -51,8 +55,13 @@ const state = () => ({
           openai: {
             enabled: true,
             ready_for_requests: true,
-            email: "user@example.com",
+            email: "perso@gmail.com",
             plan_type: "plus",
+            balance: "ordered",
+            accounts: [
+              { slug: "default", email: "perso@gmail.com", plan_type: "plus", ready_for_requests: true, limited: false },
+              { slug: "work-x", email: "work@company.com", plan_type: "enterprise", ready_for_requests: true, limited: true, limited_for_seconds: 7800 },
+            ],
           },
           claude: { enabled: false, ready_for_requests: false },
         },
@@ -78,19 +87,22 @@ const traffic = [
     id: "req-1", last_seen: new Date(Date.now() - 30000).toISOString(),
     method: "POST", path: "/v1/chat/completions", provider: "openai",
     model: "gpt-5.5", status_code: 200, last_phase: "outbound_response",
-    event_count: 4, details: '{\n  "phase": "outbound_response",\n  "status_code": 200,\n  "model": "gpt-5.5"\n}',
+    event_count: 4, input_tokens: 42, output_tokens: 128, account: "work@company.com",
+    details: '{\n  "phase": "outbound_response",\n  "status_code": 200,\n  "model": "gpt-5.5"\n}',
   },
   {
     id: "req-2", last_seen: new Date(Date.now() - 90000).toISOString(),
     method: "GET", path: "/v1/models", provider: "openai",
     model: "-", status_code: 200, last_phase: "outbound_response",
-    event_count: 2, details: '{\n  "phase": "outbound_response",\n  "status_code": 200\n}',
+    event_count: 2, input_tokens: null, output_tokens: null, account: "perso@gmail.com",
+    details: '{\n  "phase": "outbound_response",\n  "status_code": 200\n}',
   },
   {
     id: "req-3", last_seen: new Date(Date.now() - 200000).toISOString(),
     method: "POST", path: "/v1/chat/completions", provider: "openai",
     model: "gpt-5.5", status_code: 401, last_phase: "inbound_rejected",
-    event_count: 1, details: '{\n  "phase": "inbound_rejected",\n  "status_code": 401,\n  "reason": "invalid bearer token"\n}',
+    event_count: 1, input_tokens: null, output_tokens: null, account: "perso@gmail.com",
+    details: '{\n  "phase": "inbound_rejected",\n  "status_code": 401,\n  "reason": "invalid bearer token"\n}',
   },
 ];
 
@@ -130,27 +142,73 @@ export async function mockInvoke(command, args = {}) {
     case "run_doctor":
       return true;
     case "get_usage":
+      // Mirrors the relay's normalized all_accounts payload shape.
       return {
-        account: { email: "user@example.com", plan_type: "plus" },
-        rate_limit_reached_type: null,
-        rate_limits: {
-          default: {
-            allowed: true,
-            limit_reached: false,
-            primary_window: {
-              used_percent: 42,
-              limit_window_seconds: 10800,
-              reset_after_seconds: 5400,
-            },
-            secondary_window: {
-              used_percent: 78,
-              limit_window_seconds: 604800,
-              reset_after_seconds: 259200,
+        object: "subscription_status_list",
+        accounts: [
+          {
+            slug: "default",
+            email: "perso@gmail.com",
+            status: {
+              account: { email: "perso@gmail.com", plan_type: "plus" },
+              rate_limit_reached_type: null,
+              rate_limits: {
+                default: {
+                  allowed: true,
+                  limit_reached: false,
+                  primary_window: {
+                    used_percent: 42,
+                    window_seconds: 18000,
+                    window_label: "5h",
+                    reset_after_seconds: 5400,
+                  },
+                  secondary_window: {
+                    used_percent: 78,
+                    window_seconds: 604800,
+                    window_label: "weekly",
+                    reset_after_seconds: 259200,
+                  },
+                },
+                additional: [],
+              },
             },
           },
-          additional: [],
-        },
+          {
+            slug: "work-x",
+            email: "work@company.com",
+            status: {
+              account: { email: "work@company.com", plan_type: "enterprise" },
+              rate_limit_reached_type: "secondary",
+              rate_limits: {
+                default: {
+                  allowed: false,
+                  limit_reached: true,
+                  primary_window: {
+                    used_percent: 12,
+                    window_seconds: 18000,
+                    window_label: "5h",
+                    reset_after_seconds: 900,
+                  },
+                  secondary_window: {
+                    used_percent: 100,
+                    window_seconds: 604800,
+                    window_label: "weekly",
+                    reset_after_seconds: 7800,
+                  },
+                },
+                additional: [],
+              },
+            },
+          },
+        ],
       };
+    case "set_login_method":
+      settings.loginMethod = args.method;
+      return null;
+    case "logout_account":
+      return null;
+    case "refresh_accounts":
+      return { accounts: [] };
     case "set_custom_token":
     case "run_login":
     case "open_path":

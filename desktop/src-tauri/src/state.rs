@@ -19,6 +19,15 @@ pub struct AppState {
     pub settings_path: PathBuf,
     /// True when no settings file existed at startup (first run).
     pub first_run: bool,
+    /// PID of an in-flight sign-in subprocess. Only one login may run at a
+    /// time (the OAuth callback binds a fixed localhost port).
+    pub login_pid: Mutex<Option<u32>>,
+    /// The authorize URL printed by the running sign-in flow, so the UI can
+    /// offer it for copying when the browser did not open. Arc because the
+    /// stdout pipe thread writes it.
+    pub login_url: std::sync::Arc<Mutex<Option<String>>>,
+    /// The pairing code printed by a device-code sign-in flow.
+    pub login_code: std::sync::Arc<Mutex<Option<String>>>,
 }
 
 impl AppState {
@@ -44,6 +53,9 @@ impl AppState {
             auth_mismatch: Mutex::new(false),
             settings_path,
             first_run,
+            login_pid: Mutex::new(None),
+            login_url: std::sync::Arc::new(Mutex::new(None)),
+            login_code: std::sync::Arc::new(Mutex::new(None)),
         }
     }
 

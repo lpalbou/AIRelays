@@ -14,6 +14,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from airelay import __version__
+from airelay.accounts import build_pool
 from airelay.auth import AuthManager, AuthenticationError
 from airelay.backend import BackendError, ChatGptCodexBackend, SSEEvent, encode_sse
 from airelay.config import APP_NAME, Settings
@@ -33,6 +34,19 @@ from airelay.transforms import (
     prepare_response_request,
     responses_to_completion,
     responses_to_chat_completion,
+)
+
+
+# Endpoints the desktop app and health checks poll continuously. Logging
+# them to the JSONL traffic log floods it and evicts real requests from the
+# recent-window the Traffic view reads, so they are never logged as traffic.
+MONITORING_PATHS = frozenset(
+    {
+        "/healthz",
+        "/v1/relay/status",
+        "/v1/subscription/status",
+        "/v1/account/rate_limits",
+    }
 )
 
 
@@ -75,18 +89,22 @@ def create_app(settings: Settings) -> FastAPI:
     settings.validate_provider_guardrails()
     traffic = TrafficLogger(settings.logs_dir)
     store = AppStore(settings.data_dir)
-    auth = AuthManager(
+    # One user may have several of their own subscriptions enrolled; the
+    # pool balances across them and degenerates to plain single-account
+    # behavior when only the legacy login exists.
+    backend = build_pool(settings, traffic)
+    auth = backend.manager_for_primary() if backend.size > 0 else AuthManager(
         settings.data_dir,
         settings.auth_storage_mode,
         settings.issuer_base_url,
         client_id=settings.client_id,
     )
-    backend = ChatGptCodexBackend(settings, auth, traffic)
     providers = ProviderRegistry(
         settings,
         openai_auth=auth,
         openai_backend=backend,
         traffic=traffic,
+        account_pool=backend,
     )
     protector = EndpointProtector(settings, traffic)
     supported_routes = [
@@ -94,6 +112,7 @@ def create_app(settings: Settings) -> FastAPI:
         "/v1/subscription/status",
         "/v1/account/rate_limits",
         "/v1/relay/status",
+        "/v1/relay/accounts/refresh",
         "/v1/completions",
         "/v1/responses",
         "/v1/chat/completions",
@@ -181,6 +200,8 @@ def create_app(settings: Settings) -> FastAPI:
             protector.release(lease)
 
     async def log_inbound(request_id: str, request: Request, body: bytes) -> None:
+        if request.url.path in MONITORING_PATHS:
+            return
         traffic.write(
             {
                 "request_id": request_id,
@@ -230,16 +251,21 @@ def create_app(settings: Settings) -> FastAPI:
         payload: Any,
         status_code: int = 200,
         headers: dict[str, str] | None = None,
+        loggable: bool = True,
     ) -> JSONResponse:
-        encoded = json.dumps(payload, ensure_ascii=True).encode("utf-8")
-        entry = {
-            "request_id": request_id,
-            "phase": "outbound_response",
-            "status_code": status_code,
-            "body": snapshot_body("application/json", encoded),
-        }
-        entry.update(_response_meta(payload))
-        traffic.write(entry)
+        # Monitoring endpoints pass loggable=False so their inbound skip
+        # (see MONITORING_PATHS) isn't undone by an orphan outbound record
+        # that would surface as a junk "/" row in the Traffic view.
+        if loggable:
+            encoded = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+            entry = {
+                "request_id": request_id,
+                "phase": "outbound_response",
+                "status_code": status_code,
+                "body": snapshot_body("application/json", encoded),
+            }
+            entry.update(_response_meta(payload))
+            traffic.write(entry)
         return JSONResponse(payload, status_code=status_code, headers=headers)
 
     def logged_body(
@@ -299,7 +325,7 @@ def create_app(settings: Settings) -> FastAPI:
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
         payload = {"ok": True, "app_name": APP_NAME, "version": __version__}
-        return logged_json(request_id, payload)
+        return logged_json(request_id, payload, loggable=False)
 
     @app.get("/v1/models")
     @app.get("/no-tools/v1/models")
@@ -318,6 +344,8 @@ def create_app(settings: Settings) -> FastAPI:
         request: Request,
         raw: bool = False,
         provider: str = "openai",
+        account: str | None = None,
+        all_accounts: bool = False,
     ) -> JSONResponse:
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
@@ -332,13 +360,55 @@ def create_app(settings: Settings) -> FastAPI:
                 detail="The OpenAI subscription runtime is disabled for this AIRelays process.",
             )
         try:
-            payload = normalize_subscription_status_payload(
-                await backend.get_subscription_status(request_id),
-                include_raw=raw,
-            )
+            backend.refresh_if_changed()
+            if all_accounts and backend.size > 1:
+                entries = await backend.subscription_statuses(request_id)
+                payload = {
+                    "object": "subscription_status_list",
+                    "accounts": [
+                        {
+                            "slug": entry["slug"],
+                            "email": entry.get("email"),
+                            **(
+                                {
+                                    "status": normalize_subscription_status_payload(
+                                        entry["payload"], include_raw=raw
+                                    )
+                                }
+                                if "payload" in entry
+                                else {"error": entry.get("error")}
+                            ),
+                        }
+                        for entry in entries
+                    ],
+                }
+            else:
+                upstream_payload = (
+                    await backend.get_subscription_status(request_id, slug=account)
+                    if account is not None
+                    else await backend.get_subscription_status(request_id)
+                )
+                payload = normalize_subscription_status_payload(
+                    upstream_payload,
+                    include_raw=raw,
+                )
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
-        return logged_json(request_id, payload)
+        return logged_json(request_id, payload, loggable=False)
+
+    @app.post("/v1/relay/accounts/refresh")
+    async def refresh_accounts(request: Request) -> JSONResponse:
+        request_id = _request_id(request)
+        # Clears usage-limit benches and re-probes so recovered accounts
+        # return to rotation immediately, without waiting out an estimated
+        # reset or restarting the relay.
+        try:
+            accounts = await backend.hard_refresh(request_id)
+        except Exception as exc:  # noqa: BLE001
+            raise _http_error(exc) from exc
+        return logged_json(
+            request_id, {"object": "accounts.refresh", "accounts": accounts}, loggable=False
+        )
 
     @app.get("/v1/relay/status")
     async def relay_status(request: Request) -> JSONResponse:
@@ -377,7 +447,7 @@ def create_app(settings: Settings) -> FastAPI:
             },
             "supported_routes": supported_routes,
         }
-        return logged_json(request_id, payload)
+        return logged_json(request_id, payload, loggable=False)
 
     @app.post("/v1/files")
     async def upload_file(request: Request, file: UploadFile = File(...), purpose: str = "assistants") -> JSONResponse:

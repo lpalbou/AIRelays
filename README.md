@@ -68,6 +68,23 @@ airelays doctor
 airelays serve --port 8080
 ```
 
+Headless / server install (SSH, no browser):
+
+```bash
+airelays init
+airelays login --device
+airelays doctor
+airelays serve --port 8080
+```
+
+Device-code login prints a short code you approve from a browser on any
+other device (laptop, phone). On SSH sessions and displayless Linux,
+`airelays login` selects it automatically. Do not paste the browser-flow
+URL into a browser on another computer: its sign-in redirect only works on
+the machine running the relay (see
+[docs/troubleshooting.md](docs/troubleshooting.md) for the SSH-tunnel
+alternative).
+
 OpenAI runtime in open local relay mode:
 
 ```bash
@@ -89,11 +106,19 @@ airelays serve --port 8080
 Claude experimental runtime in headless environments:
 
 ```bash
+# on any machine WITH a browser:
+claude setup-token          # prints a long-lived token
+
+# on the server:
 airelays init
-claude setup-token
-export CLAUDE_CODE_OAUTH_TOKEN='YOUR_CLAUDE_TOKEN'
+airelays claude set-token   # paste the token; stored 0600, survives restarts
 airelays serve --port 8080
 ```
+
+`airelays claude set-token` stores the token in `~/.airelays/claude-token`
+and passes it to the local `claude` CLI automatically — unlike a shell
+`export`, it keeps working under systemd, launchd, and docker. Exporting
+`CLAUDE_CODE_OAUTH_TOKEN` still works as a fallback.
 
 When Claude experimental mode is enabled, AIRelays keeps the same auth behavior as the rest of the relay. The default protected mode requires the AIRelays bearer token; `--no-auth` starts an open local relay. Claude remains restricted to loopback binding.
 
@@ -150,6 +175,36 @@ curl http://127.0.0.1:8080/v1/chat/completions \
     "messages": [{"role": "user", "content": "Reply with exactly: CLAUDE AIRelays OK"}]
   }'
 ```
+
+## Multiple OpenAI Accounts
+
+One person can enroll several of their own OpenAI subscriptions and let the
+relay balance across them. Signing in again with a different account adds it
+(the previous sign-in is kept, never overwritten):
+
+```bash
+airelays login            # first account
+airelays login            # second account — added alongside the first
+airelays accounts         # list accounts and the commands to manage them
+airelays logout perso@gmail.com          # sign one account out
+airelays accounts order work@company.com perso@gmail.com   # change priority
+```
+
+`airelays accounts` is the hub: it lists your accounts in balancing order and
+prints the exact commands to add, sign out, or reorder them. In the desktop
+app, each account row has a sign-out button and the "Add account" button
+offers both browser and code (headless) sign-in.
+
+By default AIRelays uses the first account until it reaches its usage
+limit, then continues with the next, and returns when the limit resets.
+Set `[providers.openai] balance = "round_robin"` to spread requests evenly
+across healthy accounts instead. Failed-over requests are logged with the
+serving account, and `/v1/subscription/status?all_accounts=true` reports
+usage per account.
+
+Multiple accounts exist so one user can use their own subscriptions from
+one relay; it is not a mechanism for sharing or pooling access between
+people (see [DISCLAIMER.md](DISCLAIMER.md)).
 
 ## Relay Token
 

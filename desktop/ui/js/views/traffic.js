@@ -27,8 +27,9 @@ export const trafficView = {
         <table aria-label="Recent requests">
           <thead>
             <tr>
-              <th>Time</th><th>Route</th><th>Provider</th><th>Model</th>
-              <th>Status</th><th>Stage</th><th>Events</th>
+              <th>Time</th><th>Route</th><th>Provider</th>
+              <th id="tr-account-head" hidden>Account</th>
+              <th>Model</th><th>Status</th><th>Tokens (in/out)</th><th>Stage</th>
             </tr>
           </thead>
           <tbody id="tr-body"></tbody>
@@ -82,7 +83,7 @@ async function refresh() {
 function visibleSummaries() {
   if (!filterText) return summaries;
   return summaries.filter((summary) =>
-    [summary.path, summary.method, summary.provider, summary.model, String(summary.status_code)]
+    [summary.path, summary.method, summary.provider, summary.model, summary.account, String(summary.status_code)]
       .join(" ")
       .toLowerCase()
       .includes(filterText)
@@ -94,6 +95,10 @@ function renderTable() {
   const empty = root.querySelector("#tr-empty");
   const visible = visibleSummaries();
   empty.hidden = visible.length > 0;
+
+  // The Account column only exists on multi-account installs.
+  const showAccount = summaries.some((summary) => summary.account);
+  root.querySelector("#tr-account-head").hidden = !showAccount;
 
   // Preserve keyboard focus across rebuilds.
   const focusedId = document.activeElement?.dataset?.requestId ?? null;
@@ -112,15 +117,21 @@ function renderTable() {
         select(summary.id);
       }
     });
-    row.append(
+    const cells = [
       cell(shortTime(summary.last_seen)),
       cell(`${summary.method} ${summary.path}`),
       cell(summary.provider),
+    ];
+    if (showAccount) {
+      cells.push(cell(summary.account || "—"));
+    }
+    cells.push(
       cell(summary.model),
       statusCell(summary.status_code),
-      cell(summary.last_phase),
-      cell(String(summary.event_count))
+      tokensCell(summary.input_tokens, summary.output_tokens),
+      cell(summary.last_phase)
     );
+    row.append(...cells);
     body.appendChild(row);
   }
   if (focusedId) {
@@ -157,6 +168,16 @@ function statusCell(code) {
   if (code >= 500) td.className = "status-5xx";
   else if (code >= 400) td.className = "status-4xx";
   else if (code) td.className = "status-2xx";
+  return td;
+}
+
+function tokensCell(input, output) {
+  const td = document.createElement("td");
+  if (input == null && output == null) {
+    td.textContent = "—";
+  } else {
+    td.textContent = `${input ?? "?"} / ${output ?? "?"}`;
+  }
   return td;
 }
 

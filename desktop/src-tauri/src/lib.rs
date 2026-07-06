@@ -5,7 +5,7 @@ mod commands;
 mod relay;
 mod settings;
 mod state;
-mod traffic;
+pub mod traffic;
 mod tray;
 
 use state::AppState;
@@ -58,6 +58,9 @@ pub fn run() {
             commands::get_usage,
             commands::token_action,
             commands::set_custom_token,
+            commands::set_login_method,
+            commands::logout_account,
+            commands::refresh_accounts,
             commands::open_path,
         ])
         .build(tauri::generate_context!())

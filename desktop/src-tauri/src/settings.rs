@@ -17,6 +17,9 @@ pub struct AppSettings {
     /// Optional override for the relay launch command. Empty means
     /// "resolve automatically" (embedded runtime, then PATH).
     pub relay_command_override: String,
+    /// OpenAI sign-in method: "browser" (local browser flow) or "device"
+    /// (code you approve from any other device — headless-friendly).
+    pub login_method: String,
     pub host: String,
     pub port: u16,
     pub require_bearer_auth: bool,
@@ -53,6 +56,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             relay_command_override: String::new(),
+            login_method: "browser".into(),
             // All interfaces by default so private-network devices can
             // connect out of the box; loopback-only is one click away.
             host: "0.0.0.0".into(),
