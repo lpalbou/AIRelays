@@ -5,8 +5,22 @@ use crate::settings::AppSettings;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
+use tauri_plugin_notification::NotificationExt;
+
+/// Crash auto-restart: capped exponential backoff, then give up. The caps
+/// keep a permanently broken config from burning CPU in a spawn loop while
+/// still healing the transient midnight crash within seconds.
+const RESTART_MAX_ATTEMPTS: u32 = 5;
+const RESTART_BASE_DELAY_SECS: u64 = 2;
+const RESTART_MAX_DELAY_SECS: u64 = 60;
+
+fn notify(app: &AppHandle, title: &str, body: &str) {
+    // Best effort: a denied notification permission must never affect
+    // supervision itself.
+    let _ = app.notification().builder().title(title).body(body).show();
+}
 
 pub struct AppState {
     pub settings: Mutex<AppSettings>,
@@ -80,6 +94,35 @@ impl AppState {
     }
 }
 
+/// Starts the relay once when the app opens (used with "start at login").
+/// Waits for the first status polls so an already-running relay — e.g. one
+/// managed by the CLI or a previous session — is detected and respected
+/// instead of colliding on the port.
+pub fn spawn_launch_start(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        {
+            let state = app.state::<AppState>();
+            if !robust_lock(&state.settings).start_relay_on_launch {
+                return;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(3000)).await;
+        let should_start = {
+            let state = app.state::<AppState>();
+            !state.is_reachable()
+                && !*robust_lock(&state.auth_mismatch)
+                && !state.supervisor.is_managed()
+        };
+        if should_start {
+            let app_clone = app.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                crate::commands::start_relay_blocking(&app_clone)
+            })
+            .await;
+        }
+    });
+}
+
 /// Background loop: polls the relay status endpoint, reconciles the child
 /// process, and asks the tray to refresh when observable state changes.
 pub fn spawn_status_loop(app: AppHandle) {
@@ -89,11 +132,102 @@ pub fn spawn_status_loop(app: AppHandle) {
             .build()
             .expect("reqwest client");
         let mut last_reachable: Option<bool> = None;
+        // Crash-restart bookkeeping, local to the loop: no other code path
+        // restarts the relay implicitly.
+        let mut restart_attempts: u32 = 0;
+        let mut restart_due: Option<Instant> = None;
         loop {
             let exited = {
                 let state = app.state::<AppState>();
                 state.supervisor.reap_if_exited()
             };
+
+            // The child died without a user stop: schedule a respawn with
+            // capped backoff, or give up after too many consecutive failures.
+            if exited && restart_due.is_none() {
+                let (wants_restart, auto_restart_enabled) = {
+                    let state = app.state::<AppState>();
+                    let wants = state.supervisor.desired_running();
+                    let enabled = robust_lock(&state.settings).auto_restart_relay;
+                    (wants, enabled)
+                };
+                if wants_restart && auto_restart_enabled {
+                    if restart_attempts >= RESTART_MAX_ATTEMPTS {
+                        let state = app.state::<AppState>();
+                        state.supervisor.log(
+                            "relay",
+                            &format!(
+                                "Auto-restart gave up after {RESTART_MAX_ATTEMPTS} failed attempts. Fix the cause (see above), then use Start Relay."
+                            ),
+                            true,
+                        );
+                        notify(
+                            &app,
+                            "AIRelays relay is down",
+                            "Automatic restarts failed repeatedly. Open the Console tab for details, then use Start Relay.",
+                        );
+                    } else {
+                        let delay = (RESTART_BASE_DELAY_SECS << restart_attempts)
+                            .min(RESTART_MAX_DELAY_SECS);
+                        restart_attempts += 1;
+                        restart_due = Some(Instant::now() + Duration::from_secs(delay));
+                        let state = app.state::<AppState>();
+                        state.supervisor.log(
+                            "relay",
+                            &format!(
+                                "Relay exited unexpectedly — restarting in {delay}s (attempt {restart_attempts}/{RESTART_MAX_ATTEMPTS})."
+                            ),
+                            true,
+                        );
+                        notify(
+                            &app,
+                            "AIRelays relay stopped unexpectedly",
+                            &format!("Restarting automatically in {delay}s."),
+                        );
+                    }
+                }
+            }
+
+            if restart_due.is_some_and(|due| Instant::now() >= due) {
+                restart_due = None;
+                // A user action in the meantime (manual start/stop) makes
+                // this respawn wrong: start() would fail on a managed child,
+                // and after a stop the user wants it down.
+                let still_wanted = {
+                    let state = app.state::<AppState>();
+                    state.supervisor.desired_running() && !state.supervisor.is_managed()
+                };
+                if still_wanted {
+                    let app_clone = app.clone();
+                    let result = tauri::async_runtime::spawn_blocking(move || {
+                        crate::commands::start_relay_blocking(&app_clone)
+                    })
+                    .await;
+                    if !matches!(result, Ok(Ok(_))) {
+                        // Spawn failure (bad command/config): no child exists,
+                        // so reap never fires again — feed the backoff loop
+                        // directly by faking an exit next tick.
+                        let state = app.state::<AppState>();
+                        state.supervisor.log(
+                            "relay",
+                            "Auto-restart attempt failed to spawn the relay.",
+                            true,
+                        );
+                        if restart_attempts < RESTART_MAX_ATTEMPTS {
+                            let delay = (RESTART_BASE_DELAY_SECS << restart_attempts)
+                                .min(RESTART_MAX_DELAY_SECS);
+                            restart_attempts += 1;
+                            restart_due = Some(Instant::now() + Duration::from_secs(delay));
+                        } else {
+                            notify(
+                                &app,
+                                "AIRelays relay is down",
+                                "Automatic restarts failed repeatedly. Open the Console tab for details, then use Start Relay.",
+                            );
+                        }
+                    }
+                }
+            }
 
             let (base_url, requires_auth) = {
                 let state = app.state::<AppState>();
@@ -126,6 +260,9 @@ pub fn spawn_status_loop(app: AppHandle) {
                 let reachable = status.is_some();
                 if reachable {
                     state.supervisor.mark_running();
+                    // A healthy relay resets the crash budget: only
+                    // consecutive failures count against the give-up cap.
+                    restart_attempts = 0;
                 }
                 *robust_lock(&state.relay_status) = status;
                 *robust_lock(&state.auth_mismatch) = auth_mismatch;

@@ -110,13 +110,20 @@ function template() {
       <div class="card-actions">
         <div class="split-btn">
           <button class="btn" id="ov-login-openai">${icon("logIn", 14)} OpenAI</button>
-          <button class="btn split-btn-toggle" id="ov-login-openai-menu" aria-label="Choose sign-in method" aria-haspopup="true">${icon("chevronDown", 13)}</button>
+          <button class="btn split-btn-toggle" id="ov-login-openai-menu" aria-label="Choose OpenAI sign-in method" aria-haspopup="true">${icon("chevronDown", 13)}</button>
           <div class="split-menu" id="ov-login-menu" hidden role="menu">
             <button role="menuitem" data-method="browser">In a browser (this machine)</button>
             <button role="menuitem" data-method="device">With a code (any device)</button>
           </div>
         </div>
-        <button class="btn" id="ov-login-claude" hidden>${icon("logIn", 14)} Claude</button>
+        <div class="split-btn" id="ov-claude-split" hidden>
+          <button class="btn" id="ov-login-claude">${icon("logIn", 14)} Claude</button>
+          <button class="btn split-btn-toggle" id="ov-login-claude-menu" aria-label="Choose Claude sign-in method" aria-haspopup="true">${icon("chevronDown", 13)}</button>
+          <div class="split-menu" id="ov-claude-menu" hidden role="menu">
+            <button role="menuitem" data-method="browser">In a browser (this machine)</button>
+            <button role="menuitem" data-method="token">With a token (any device)</button>
+          </div>
+        </div>
       </div>
       <div class="login-banner" id="ov-login-banner" hidden>
         <div class="row">
@@ -211,6 +218,24 @@ function template() {
         <button class="btn btn-primary" id="ov-token-save">Save key</button>
       </div>
     </dialog>
+
+    <dialog id="ov-claude-token-dialog">
+      <h3>Sign in to Claude with a token</h3>
+      <p class="dialog-text">
+        On any machine with a browser, run <code>claude setup-token</code>
+        in a terminal, approve the sign-in, then paste the token it prints.
+      </p>
+      <div class="field" style="margin-top:12px">
+        <label for="ov-claude-token-input">Token</label>
+        <input type="password" id="ov-claude-token-input" autocomplete="off"
+               placeholder="sk-ant-oat…" />
+      </div>
+      <div class="row" style="margin-top:14px">
+        <span class="spacer"></span>
+        <button class="btn" id="ov-claude-token-cancel">Cancel</button>
+        <button class="btn btn-primary" id="ov-claude-token-save">Save token</button>
+      </div>
+    </dialog>
   `;
 }
 
@@ -290,6 +315,7 @@ function bindActions(ctx) {
   el("ov-login-openai-menu").addEventListener("click", (event) => {
     event.stopPropagation();
     const menu = el("ov-login-menu");
+    el("ov-claude-menu").hidden = true;
     menu.hidden = !menu.hidden;
   });
   root.querySelectorAll("#ov-login-menu button").forEach((item) => {
@@ -299,10 +325,39 @@ function bindActions(ctx) {
       startOpenAiSignIn();
     });
   });
-  // Close the method menu on any outside click.
+  el("ov-login-claude").addEventListener("click", () => startClaudeSignIn());
+  el("ov-login-claude-menu").addEventListener("click", (event) => {
+    event.stopPropagation();
+    const menu = el("ov-claude-menu");
+    el("ov-login-menu").hidden = true;
+    menu.hidden = !menu.hidden;
+  });
+  root.querySelectorAll("#ov-claude-menu button").forEach((item) => {
+    item.addEventListener("click", () => {
+      el("ov-claude-menu").hidden = true;
+      if (item.dataset.method === "token") {
+        el("ov-claude-token-dialog").showModal();
+      } else {
+        startClaudeSignIn();
+      }
+    });
+  });
+  el("ov-claude-token-cancel").addEventListener("click", () => el("ov-claude-token-dialog").close());
+  el("ov-claude-token-save").addEventListener("click", async () => {
+    const input = el("ov-claude-token-input");
+    const saved = await call(api.setClaudeToken(input.value), "Token save failed");
+    if (saved !== undefined) {
+      input.value = "";
+      el("ov-claude-token-dialog").close();
+      toast("Claude token saved", "The relay uses it on the next Claude request.", "success");
+    }
+  });
+  // Close any open method menu on an outside click.
   document.addEventListener("click", () => {
-    const menu = root?.querySelector("#ov-login-menu");
-    if (menu) menu.hidden = true;
+    for (const id of ["ov-login-menu", "ov-claude-menu"]) {
+      const menu = root?.querySelector(`#${id}`);
+      if (menu) menu.hidden = true;
+    }
   });
 
   // Sign-out confirm dialog wiring.
@@ -320,13 +375,6 @@ function bindActions(ctx) {
       toast("Signed out", email, "success");
     }
     renderCache.accounts = "";
-  });
-  el("ov-login-claude").addEventListener("click", async () => {
-    toast("Claude sign-in started", "The Claude CLI handles the sign-in. Progress appears in the Console tab.");
-    const done = await call(api.runLogin("claude"), "Claude sign-in failed");
-    if (done !== undefined) {
-      toast("Claude sign-in finished", "", "success");
-    }
   });
   el("ov-doctor").addEventListener("click", async () => {
     toast("Checking setup", "This can take a few seconds…");
@@ -362,6 +410,14 @@ function bindActions(ctx) {
     const code = el("ov-login-code").textContent;
     if (code) copyText(code, "Code copied");
   });
+}
+
+async function startClaudeSignIn() {
+  toast("Claude sign-in started", "A browser window opens for the Anthropic sign-in; progress appears in the Console tab.");
+  const done = await call(api.runLogin("claude"), "Claude sign-in failed");
+  if (done !== undefined) {
+    toast("Claude sign-in finished", "", "success");
+  }
 }
 
 async function startOpenAiSignIn() {
@@ -535,7 +591,7 @@ function render(state) {
   el("ov-key-open-hint").hidden = requireAuth;
 
   // Claude sign-in only matters when the provider is enabled at all.
-  el("ov-login-claude").hidden = !state.settings.enableClaudeExperimental;
+  el("ov-claude-split").hidden = !state.settings.enableClaudeExperimental;
 
   // Once one account works, the same button adds another of the user's own
   // accounts (the CLI guard makes a repeat sign-in additive, not destructive).

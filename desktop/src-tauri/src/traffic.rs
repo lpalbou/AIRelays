@@ -37,16 +37,19 @@ pub fn recent_requests_in(logs_dir: &PathBuf) -> Vec<RequestSummary> {
 
     let mut grouped: HashMap<String, Vec<Value>> = HashMap::new();
     for (_, path) in files.into_iter().take(3) {
-        let Some(content) = read_tail(&path, 2 * 1024 * 1024) else {
+        // The tail must be generous: logs written with per-line stream
+        // logging enabled are dominated by hundreds of `upstream_stream_line`
+        // records per request, so a small tail covers only the last minute
+        // of each hourly file and the view looks frozen at HH:59.
+        let Some(content) = read_tail(&path, 16 * 1024 * 1024) else {
             continue;
         };
-        // Keep a budget of real (non-monitoring) records. Older log files
-        // written before monitoring endpoints were excluded contain tens of
-        // thousands of status-poll lines; skipping them here means those old
-        // floods no longer evict real requests from the window.
+        // Keep a budget of real records. Monitoring polls and per-line
+        // stream records are skipped *before* the budget, so floods of
+        // either can no longer evict real requests from the window.
         let mut kept = 0usize;
         for line in content.lines().rev() {
-            if kept >= 600 {
+            if kept >= 2500 {
                 break;
             }
             let Ok(record) = serde_json::from_str::<Value>(line) else {
@@ -59,7 +62,7 @@ pub fn recent_requests_in(logs_dir: &PathBuf) -> Vec<RequestSummary> {
             if request_id.is_empty() || request_id == "startup" {
                 continue;
             }
-            if is_monitoring_record(&record) {
+            if is_monitoring_record(&record) || is_stream_chatter(&record) {
                 continue;
             }
             kept += 1;
@@ -127,6 +130,16 @@ fn collect_logs(dir: &PathBuf, out: &mut Vec<(std::time::SystemTime, PathBuf)>, 
     }
 }
 
+/// True for per-line/per-chunk stream records: hundreds per streamed
+/// response, useful only for deep protocol debugging in the raw files.
+/// The summary records carry everything the table and detail pane show.
+fn is_stream_chatter(record: &Value) -> bool {
+    matches!(
+        record.get("phase").and_then(Value::as_str),
+        Some("upstream_stream_line") | Some("outbound_stream_chunk")
+    )
+}
+
 /// True for records belonging to a monitoring endpoint (status/health
 /// polls the desktop makes continuously), by path when present.
 fn is_monitoring_record(record: &Value) -> bool {
@@ -169,6 +182,32 @@ fn usage_tokens(records: &[Value], keys: &[&str]) -> Option<i64> {
     })
 }
 
+/// Truncates every long string in a record for the detail pane: request
+/// bodies can be tens of kilobytes each, and details ship to the webview
+/// for all 200 rows on every poll. The raw log files stay complete.
+fn clip_long_strings(value: &mut Value, max_chars: usize) {
+    match value {
+        Value::String(text) => {
+            if text.chars().count() > max_chars {
+                let kept: String = text.chars().take(max_chars).collect();
+                let dropped = text.chars().count() - max_chars;
+                *text = format!("{kept}… (+{dropped} chars truncated; full record in the log file)");
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                clip_long_strings(item, max_chars);
+            }
+        }
+        Value::Object(map) => {
+            for (_, item) in map.iter_mut() {
+                clip_long_strings(item, max_chars);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn summarize(id: String, records: Vec<Value>) -> RequestSummary {
     let status_code = records
         .iter()
@@ -178,7 +217,11 @@ fn summarize(id: String, records: Vec<Value>) -> RequestSummary {
     let output_tokens = usage_tokens(&records, &["output_tokens", "completion_tokens"]);
     let details = records
         .iter()
-        .map(|record| serde_json::to_string_pretty(record).unwrap_or_default())
+        .map(|record| {
+            let mut clipped = record.clone();
+            clip_long_strings(&mut clipped, 4000);
+            serde_json::to_string_pretty(&clipped).unwrap_or_default()
+        })
         .collect::<Vec<_>>()
         .join("\n\n");
     RequestSummary {
@@ -250,6 +293,60 @@ mod tests {
         assert_eq!(chat.account, "work@company.com");
         // No monitoring rows leak through.
         assert!(summaries.iter().all(|s| !s.path.ends_with("/relay/status")));
+    }
+
+    #[test]
+    fn requests_survive_stream_line_flood() {
+        let dir = std::env::temp_dir().join(format!("airelays-stream-flood-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Ten real requests, each followed by a heavy stream-line flood —
+        // the shape of a busy relay with per-line logging enabled, which
+        // made the Traffic view show only requests from the last minute of
+        // each hourly file.
+        let mut lines = Vec::new();
+        for request in 0..10 {
+            lines.push(format!(
+                r#"{{"request_id":"req-{request}","phase":"inbound_request","method":"POST","path":"/v1/chat/completions","model":"gpt-5.5","logged_at":"2026-07-06T15:{:02}:00Z"}}"#,
+                request
+            ));
+            for line_index in 0..500 {
+                lines.push(format!(
+                    r#"{{"request_id":"req-{request}","phase":"upstream_stream_line","line":"data: {{\"chunk\":{line_index},\"padding\":\"{}\"}}","logged_at":"2026-07-06T15:{:02}:01Z"}}"#,
+                    "x".repeat(200),
+                    request
+                ));
+            }
+            lines.push(format!(
+                r#"{{"request_id":"req-{request}","phase":"outbound_response","status_code":200,"usage":{{"input_tokens":10,"output_tokens":20}},"logged_at":"2026-07-06T15:{:02}:02Z"}}"#,
+                request
+            ));
+        }
+        write_log(&dir, &lines);
+
+        let summaries = recent_requests_in(&dir);
+        std::fs::remove_dir_all(&dir).ok();
+
+        // Every request must be visible with its full summary, not only the
+        // ones whose inbound record happened to land near the end of file.
+        assert_eq!(summaries.len(), 10, "all requests must survive the flood");
+        assert!(summaries.iter().all(|s| s.path == "/v1/chat/completions"));
+        assert!(summaries.iter().all(|s| s.status_code == Some(200)));
+        // Stream chatter is excluded from the grouped records entirely.
+        assert!(summaries.iter().all(|s| !s.details.contains("upstream_stream_line")));
+    }
+
+    #[test]
+    fn detail_pane_clips_huge_bodies() {
+        let mut record = serde_json::json!({
+            "request_id": "req-big",
+            "phase": "upstream_request",
+            "body": {"text": "y".repeat(50_000)},
+        });
+        clip_long_strings(&mut record, 4000);
+        let text = record["body"]["text"].as_str().unwrap();
+        assert!(text.len() < 5000);
+        assert!(text.contains("truncated"));
     }
 
     #[test]

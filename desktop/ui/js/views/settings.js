@@ -25,8 +25,10 @@ const FIELDS = [
   },
   {
     title: "Launch",
-    caption: "How the app starts the relay. Leave the override empty to use the runtime bundled with this app.",
+    caption: "How and when the app starts the relay. Leave the override empty to use the runtime bundled with this app.",
     items: [
+      { key: "startRelayOnLaunch", label: "Start the relay when this app opens", kind: "bool" },
+      { key: "autoRestartRelay", label: "Restart the relay automatically if it crashes", kind: "bool" },
       { key: "relayCommandOverride", label: "Relay command override (advanced)", kind: "text" },
       { key: "extraServeArgs", label: "Extra serve arguments (advanced)", kind: "text" },
     ],
@@ -102,10 +104,19 @@ export const settingsView = {
         <span class="spacer"></span>
         <button class="btn" id="se-reset">${icon("trash")} Discard changes</button>
       </div>
+      <section class="card">
+        <h2>Desktop App</h2>
+        <p class="card-caption">Applied immediately — not part of the saved relay settings.</p>
+        <div class="field-toggle">
+          <input type="checkbox" id="se-autostart" disabled />
+          <label for="se-autostart">Start AIRelays at login</label>
+        </div>
+      </section>
       <div id="se-sections"></div>
     `;
     container.appendChild(root);
     renderSections();
+    bindAutostart();
 
     root.querySelector("#se-save").addEventListener("click", () => save(false));
     root.querySelector("#se-save-restart").addEventListener("click", () => save(true));
@@ -133,6 +144,32 @@ export const settingsView = {
     dirty = false;
   },
 };
+
+/// Start-at-login mirrors OS state (login items / registry / .desktop
+/// entry), so it reads and writes through dedicated commands and applies
+/// immediately instead of joining the settings draft.
+async function bindAutostart() {
+  const checkbox = root.querySelector("#se-autostart");
+  const enabled = await call(api.getAutostart(), "Cannot read the login item");
+  if (!root || enabled === undefined) return;
+  checkbox.checked = Boolean(enabled);
+  checkbox.disabled = false;
+  checkbox.addEventListener("change", async () => {
+    checkbox.disabled = true;
+    const done = await call(api.setAutostart(checkbox.checked), "Change failed");
+    if (!root) return;
+    if (done === undefined) {
+      checkbox.checked = !checkbox.checked; // revert on failure
+    } else {
+      toast(
+        checkbox.checked ? "Start at login enabled" : "Start at login disabled",
+        "",
+        "success"
+      );
+    }
+    checkbox.disabled = false;
+  });
+}
 
 function renderSections() {
   const sections = root.querySelector("#se-sections");

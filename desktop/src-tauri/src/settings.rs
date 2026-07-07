@@ -20,6 +20,12 @@ pub struct AppSettings {
     /// OpenAI sign-in method: "browser" (local browser flow) or "device"
     /// (code you approve from any other device — headless-friendly).
     pub login_method: String,
+    /// Start the relay automatically when the app opens (unless a relay is
+    /// already answering on the configured address).
+    pub start_relay_on_launch: bool,
+    /// Respawn a crashed relay with capped backoff. Never applies to a
+    /// relay the user stopped deliberately.
+    pub auto_restart_relay: bool,
     pub host: String,
     pub port: u16,
     pub require_bearer_auth: bool,
@@ -57,6 +63,8 @@ impl Default for AppSettings {
         Self {
             relay_command_override: String::new(),
             login_method: "browser".into(),
+            start_relay_on_launch: true,
+            auto_restart_relay: true,
             // All interfaces by default so private-network devices can
             // connect out of the box; loopback-only is one click away.
             host: "0.0.0.0".into(),

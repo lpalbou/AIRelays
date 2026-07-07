@@ -351,6 +351,35 @@ pub async fn set_network_exposure(app: AppHandle, exposed: bool) -> Result<(), S
         .map_err(|error| error.to_string())?
 }
 
+/// Whether the app is registered to start at login (OS state, not a
+/// settings-file entry: the OS registry is the single source of truth).
+#[tauri::command]
+pub fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let autolaunch = app.autolaunch();
+    let result = if enabled { autolaunch.enable() } else { autolaunch.disable() };
+    if let Err(error) = result {
+        // Disabling an entry that never existed errors on some platforms;
+        // only fail when the OS state actually contradicts the request.
+        if autolaunch.is_enabled().unwrap_or(!enabled) != enabled {
+            return Err(error.to_string());
+        }
+    }
+    let state = app.state::<AppState>();
+    state.supervisor.log(
+        "app",
+        if enabled { "Start at login enabled." } else { "Start at login disabled." },
+        false,
+    );
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_console(app: AppHandle) -> Vec<ConsoleEntry> {
     robust_lock(&app.state::<AppState>().supervisor.console).clone()
@@ -519,6 +548,41 @@ pub async fn run_login(app: AppHandle, provider: String) -> Result<(), String> {
             )
         }
         other => Err(format!("Unknown login provider: {other}")),
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Stores a Claude Code OAuth token (from `claude setup-token` run on any
+/// browser-equipped machine) in the same 0600 file the CLI's
+/// `airelays claude set-token` writes; the relay injects it into every
+/// `claude` invocation, so it applies without a restart.
+#[tauri::command]
+pub async fn set_claude_token(app: AppHandle, token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let token = token.trim().to_string();
+        if token.is_empty() {
+            return Err("The token is empty. Paste the full token printed by `claude setup-token`.".into());
+        }
+        let path = AppSettings::data_dir().join("claude-token");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("Cannot create data dir: {error}"))?;
+        }
+        std::fs::write(&path, format!("{token}\n"))
+            .map_err(|error| format!("Cannot write the token file: {error}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+        let state = app.state::<AppState>();
+        state.supervisor.log(
+            "claude-login",
+            "Claude token stored; the relay uses it on the next Claude request.",
+            false,
+        );
+        Ok(())
     })
     .await
     .map_err(|error| error.to_string())?

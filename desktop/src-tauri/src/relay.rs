@@ -48,6 +48,10 @@ pub struct RelaySupervisor {
     child: Mutex<Option<Supervised>>,
     pub lifecycle: Mutex<Lifecycle>,
     pub console: Arc<Mutex<Vec<ConsoleEntry>>>,
+    /// True from a successful start until an explicit user stop. When the
+    /// child dies while this is set, the status loop knows the exit was a
+    /// crash and may auto-restart; a user stop never triggers a respawn.
+    desired_running: std::sync::atomic::AtomicBool,
 }
 
 /// Locks that survive a poisoned mutex: a panic in one worker thread must
@@ -62,7 +66,12 @@ impl RelaySupervisor {
             child: Mutex::new(None),
             lifecycle: Mutex::new(Lifecycle::Stopped),
             console: Arc::new(Mutex::new(Vec::new())),
+            desired_running: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    pub fn desired_running(&self) -> bool {
+        self.desired_running.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Resolution order: explicit override from settings, embedded runtime
@@ -154,12 +163,18 @@ impl RelaySupervisor {
             job,
         });
         *robust_lock(&self.lifecycle) = Lifecycle::Starting;
+        self.desired_running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(pid)
     }
 
     /// Blocking (up to the grace period); callers must not run this on the
     /// UI thread — the commands layer wraps it in spawn_blocking.
     pub fn stop(&self) {
+        // Clear intent first so the status loop never mistakes this
+        // deliberate stop for a crash and races a respawn.
+        self.desired_running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         let supervised = robust_lock(&self.child).take();
         let Some(mut supervised) = supervised else {
             return;
@@ -260,6 +275,31 @@ pub fn push_console(
     let overflow = entries.len().saturating_sub(CONSOLE_CAP);
     if overflow > 0 {
         entries.drain(..overflow);
+    }
+}
+
+/// GUI apps on macOS (and some Linux sessions) inherit a minimal PATH
+/// without the user's bin directories, so external tools like the `claude`
+/// CLI are "not found" even though they work in a terminal. Extending the
+/// process PATH once at startup fixes every child spawn — relay, login
+/// flows, doctor — in one place.
+pub fn extend_path_for_gui() {
+    let home = AppSettings::home_dir();
+    let extras = [
+        home.join(".local").join("bin"),
+        home.join("bin"),
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ];
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    let mut parts: Vec<PathBuf> = std::env::split_paths(&current).collect();
+    for extra in extras {
+        if extra.is_dir() && !parts.contains(&extra) {
+            parts.push(extra);
+        }
+    }
+    if let Ok(joined) = std::env::join_paths(parts) {
+        std::env::set_var("PATH", joined);
     }
 }
 

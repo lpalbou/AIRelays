@@ -251,6 +251,43 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 - `/no-tools/v1/chat/completions`
 - `/no-tools/v1/completions`
 
+## What The Relay Changes (Compatibility Layer)
+
+The ChatGPT subscription backend is not the public OpenAI platform API, so
+AIRelays adapts some requests instead of letting them fail. Every
+adaptation is visible: it is logged as a `compatibility_adaptation` record
+in the traffic logs and reported in the `x-airelays-ignored-parameters`
+response header.
+
+**Sampling parameters are removed.** The upstream rejects `temperature`,
+`top_p`, `presence_penalty`, and `frequency_penalty` outright
+(`"Unsupported parameter: temperature"`). AIRelays strips them so standard
+SDK calls keep working; generation then runs with the upstream's own
+sampling defaults, which cannot be overridden.
+
+**Reasoning effort is forwarded, not invented.** `reasoning_effort` (chat
+completions) and `reasoning: {"effort": ...}` (responses) pass through to
+the upstream unchanged. When a request does not set one, the upstream runs
+reasoning models at effort `none` — noticeably below what the official
+apps use (`medium`). For quality comparable to the ChatGPT apps, set it
+explicitly:
+
+```bash
+curl http://127.0.0.1:8317/v1/chat/completions \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "gpt-5.5",
+    "reasoning_effort": "medium",
+    "messages": [{"role": "user", "content": "..."}]
+  }'
+```
+
+**Conversations stick to one account.** With multiple OpenAI accounts, a
+conversation keeps using the account that served its first turn (preserving
+upstream prompt caching); it only fails over to another account at a turn
+boundary when the pinned account is at its limit.
+
 ## Compatibility Boundary
 
 OpenAI runtime:

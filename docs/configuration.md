@@ -57,6 +57,12 @@ trust_x_forwarded_for = false
 max_upload_bytes = 33554432
 max_total_upload_bytes = 268435456
 
+[logging]
+# Opt-in: log every raw upstream SSE line. Hundreds of records per
+# streamed response (~50x log growth under load); summary records
+# (request, usage, response, errors) are always logged regardless.
+stream_lines = false
+
 [providers.openai]
 enabled = true
 models_cache_ttl_seconds = 300.0
@@ -88,6 +94,7 @@ models = ["claude:sonnet", "claude:opus", "claude:haiku", "claude:fable"]
 - `AIRELAYS_REQUIRE_BEARER_AUTH`
 - `AIRELAYS_BEARER_TOKEN`
 - `AIRELAYS_BEARER_TOKEN_FILE`
+- `AIRELAYS_LOG_STREAM_LINES`
 - `AIRELAYS_ENABLE_OPENAI`
 - `AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`
 - `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL`

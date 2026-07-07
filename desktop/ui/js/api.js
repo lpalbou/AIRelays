@@ -26,6 +26,9 @@ export const api = {
   logoutAccount: (email) => invoke("logout_account", { email }),
   refreshAccounts: () => invoke("refresh_accounts"),
   openPath: (path) => invoke("open_path", { path }),
+  getAutostart: () => invoke("get_autostart"),
+  setAutostart: (enabled) => invoke("set_autostart", { enabled }),
+  setClaudeToken: (token) => invoke("set_claude_token", { token }),
 };
 
 const toasts = () => document.getElementById("toasts");

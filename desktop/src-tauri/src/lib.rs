@@ -13,7 +13,15 @@ use tauri::Manager;
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            // Before any child process spawns: GUI PATH lacks user bin dirs
+            // (breaks the `claude` CLI and any PATH-installed relay).
+            relay::extend_path_for_gui();
             let settings_path = app
                 .path()
                 .app_config_dir()
@@ -33,6 +41,7 @@ pub fn run() {
                 commands::show_dashboard(app.handle());
             }
             state::spawn_status_loop(app.handle().clone());
+            state::spawn_launch_start(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -62,6 +71,9 @@ pub fn run() {
             commands::logout_account,
             commands::refresh_accounts,
             commands::open_path,
+            commands::get_autostart,
+            commands::set_autostart,
+            commands::set_claude_token,
         ])
         .build(tauri::generate_context!())
         .expect("error building AIRelays desktop app")

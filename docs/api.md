@@ -1,5 +1,34 @@
 # API Notes
 
+## Compatibility Adaptations (read this first)
+
+The verified upstream is the ChatGPT subscription backend, not the public
+platform API. AIRelays adapts requests on the three text-generation routes
+(`/v1/responses`, `/v1/chat/completions`, `/v1/completions`) rather than
+letting them fail, and always discloses what it changed:
+
+- **Removed sampling parameters:** `temperature`, `top_p`,
+  `presence_penalty`, and `frequency_penalty` are stripped before the
+  upstream call because the upstream rejects them
+  (`"Unsupported parameter: temperature"`). The names of removed
+  parameters are returned in the `x-airelays-ignored-parameters` response
+  header and logged as a `compatibility_adaptation` traffic record with the
+  reason. Generation runs with the upstream's own sampling defaults.
+- **Reasoning effort:** `reasoning_effort` (chat completions) and
+  `reasoning.effort` (responses) are forwarded verbatim. Requests that omit
+  it run at upstream effort `none`, which is lower than the `medium` the
+  official ChatGPT apps use for the same models — set it explicitly when
+  comparing model quality.
+- **Rejected loudly instead of adapted:** `store=true`, output-token limit
+  fields (`max_tokens`, `max_completion_tokens`, `max_output_tokens`),
+  `n>1`, and `best_of`/`echo`/`logprobs`/`suffix` on `/v1/completions`.
+  These change semantics in ways silent stripping would hide, so they
+  return a clear error.
+- **Account affinity:** with multiple OpenAI accounts, a conversation is
+  pinned to the account that served its first turn (protects upstream
+  prompt caching); failover to another account happens only at turn
+  boundaries, logged as an `account_failover` traffic record.
+
 ## `GET /v1/models`
 
 Returns an OpenAI-style models list built from the enabled provider runtimes.

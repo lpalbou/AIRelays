@@ -42,6 +42,19 @@ npx tauri build                      # DMG / NSIS+MSI / AppImage+deb
 CI builds all three platforms from `.github/workflows/desktop.yml` on
 `desktop-v*` tags.
 
+## Supervision behavior
+
+- On app open, the relay starts automatically unless one is already
+  answering on the configured address (e.g. started by the CLI), which the
+  app respects instead of colliding with. Toggle: Settings → Launch.
+- A relay that exits without a user stop is respawned with capped
+  exponential backoff (2s doubling to 60s, giving up after 5 consecutive
+  failures) and a native notification; a deliberate Stop never triggers a
+  respawn. Toggle: Settings → Launch.
+- "Start AIRelays at login" (Settings → Desktop App) registers the
+  OS-native mechanism: launch agent on macOS, registry Run key on Windows,
+  autostart `.desktop` entry on Linux.
+
 ## Platform notes
 
 - Tray state: bolt with relay arcs when the relay answers, bolt alone when

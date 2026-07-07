@@ -4,6 +4,8 @@
 const settings = {
   relayCommandOverride: "",
   loginMethod: "browser",
+  startRelayOnLaunch: true,
+  autoRestartRelay: true,
   host: "0.0.0.0",
   port: 8317,
   requireBearerAuth: true,
@@ -37,6 +39,7 @@ const settings = {
 };
 
 let managed = true;
+let mockAutostart = false;
 
 const state = () => ({
   lifecycle: managed ? "running" : "stopped",
@@ -209,7 +212,13 @@ export async function mockInvoke(command, args = {}) {
       return null;
     case "refresh_accounts":
       return { accounts: [] };
+    case "get_autostart":
+      return mockAutostart;
+    case "set_autostart":
+      mockAutostart = args.enabled;
+      return null;
     case "set_custom_token":
+    case "set_claude_token":
     case "run_login":
     case "open_path":
       return null;
