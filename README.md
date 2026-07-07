@@ -38,10 +38,14 @@ python -m pip install .
 
 ### Desktop app (GUI + system tray)
 
-A cross-platform tray app (macOS, Windows, Linux) with a dashboard for
-start/stop, auth and network modes, per-account usage, live traffic, and
-diagnostics lives under [desktop/](desktop/README.md). Installers (DMG,
-NSIS, AppImage, deb) build from `.github/workflows/desktop.yml`; locally:
+A cross-platform tray app (macOS, Windows, Linux) lives under
+[desktop/](desktop/README.md): a dashboard with relay start/stop, auth and
+network modes, OpenAI and Claude sign-in/sign-out, per-account usage bars,
+a model list with copy-ready ids, live traffic, and diagnostics. The tray
+icon shows connection state and blinks on request activity; the app can
+start at login, starts the relay when it opens, and restarts a crashed
+relay automatically. Installers (DMG, NSIS, AppImage, deb) build from
+`.github/workflows/desktop.yml`; locally:
 
 ```bash
 cd desktop
@@ -118,7 +122,10 @@ airelays serve --port 8080
 `airelays claude set-token` stores the token in `~/.airelays/claude-token`
 and passes it to the local `claude` CLI automatically — unlike a shell
 `export`, it keeps working under systemd, launchd, and docker. Exporting
-`CLAUDE_CODE_OAUTH_TOKEN` still works as a fallback.
+`CLAUDE_CODE_OAUTH_TOKEN` still works as a fallback. `airelays claude
+logout` signs Claude out completely: it removes the stored token and runs
+`claude auth logout` (which signs out every tool using the `claude` CLI on
+that machine).
 
 When Claude experimental mode is enabled, AIRelays keeps the same auth behavior as the rest of the relay. The default protected mode requires the AIRelays bearer token; `--no-auth` starts an open local relay. Claude remains restricted to loopback binding.
 
@@ -128,6 +135,12 @@ Run setup and upstream probes before starting the server:
 
 ```bash
 airelays doctor
+```
+
+List the model ids the running relay accepts (grouped by provider):
+
+```bash
+airelays models
 ```
 
 Use `airelays doctor --skip-response` to skip the tiny `/responses` smoke request.
@@ -231,9 +244,10 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 ## What AIRelays Exposes
 
 - `GET /v1/models`
-- `GET /v1/subscription/status`
+- `GET /v1/subscription/status` (OpenAI and `?provider=claude`)
 - `GET /v1/account/rate_limits`
 - `GET /v1/relay/status`
+- `POST /v1/relay/accounts/refresh`
 - `POST /v1/responses`
 - `POST /v1/chat/completions`
 - `POST /v1/completions`

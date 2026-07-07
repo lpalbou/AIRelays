@@ -46,17 +46,32 @@ Returns an OpenAI-style models list built from the enabled provider runtimes.
 
 ## `GET /v1/subscription/status`
 
-Returns the current OpenAI subscription snapshot from `chatgpt.com/backend-api/wham/usage`.
+Returns a normalized subscription-usage snapshot with per-window usage
+percentages, window labels ("5h", "weekly"), and reset times.
 
-- verified for the OpenAI runtime only
-- `?raw=true` includes the raw upstream payload
+- default provider is OpenAI (source: `chatgpt.com/backend-api/wham/usage`)
+- `?provider=claude` returns Claude subscription usage in the same
+  normalized shape (see [Subscription Status](subscription-status.md))
+- `?account=<email-or-prefix>` selects one enrolled OpenAI account
+- `?all_accounts=true` returns one entry per enrolled OpenAI account
+  (folds to the single-account shape when only one exists)
+- `?raw=true` includes the raw upstream payload (OpenAI only)
 
 `GET /v1/account/rate_limits` is an alias.
 
+## `POST /v1/relay/accounts/refresh`
+
+Clears usage-limit holds on enrolled OpenAI accounts and re-checks each
+account's capacity immediately, returning the refreshed account list. Use it
+when you know an account has recovered and don't want to wait for the
+scheduled reset. CLI equivalent: `airelays accounts refresh`.
+
 ## `GET /v1/relay/status`
 
-Returns relay diagnostics, provider readiness, and provider cache status.
-OpenAI model-list cache diagnostics live under `providers.openai.models_cache`.
+Returns relay diagnostics, provider readiness, provider cache status, and
+`requests_total` — the count of real (non-monitoring) requests served by
+this process, usable as a lightweight activity signal. OpenAI model-list
+cache diagnostics live under `providers.openai.models_cache`.
 
 ## CLI Diagnostics
 
@@ -64,7 +79,8 @@ OpenAI model-list cache diagnostics live under `providers.openai.models_cache`.
 state. `airelays doctor` runs the same local checks and also probes the OpenAI
 upstream `/models` route plus a tiny `/responses` smoke request when the OpenAI
 runtime is enabled and logged in. Use `airelays doctor --skip-response` to skip
-the response smoke request.
+the response smoke request. `airelays models` lists every model id the running
+relay accepts, grouped by provider (`--json` supported).
 
 ## `POST /v1/responses`
 

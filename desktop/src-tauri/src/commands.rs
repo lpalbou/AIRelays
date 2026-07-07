@@ -68,7 +68,12 @@ pub fn start_relay_blocking(app: &AppHandle) -> Result<u32, String> {
     let result = state.supervisor.start(&settings, resource_dir);
     if let Err(ref error) = result {
         state.supervisor.log("relay", error, true);
-        *robust_lock(&state.supervisor.lifecycle) = crate::relay::Lifecycle::Failed;
+        // "Already managed" is a benign race (double-click, auto-restart
+        // colliding with a manual start) — the relay is fine; marking the
+        // lifecycle Failed here would wrongly flip the UI to red.
+        if !state.supervisor.is_managed() {
+            *robust_lock(&state.supervisor.lifecycle) = crate::relay::Lifecycle::Failed;
+        }
     }
     crate::tray::refresh(app);
     result
@@ -284,7 +289,9 @@ pub fn get_state(app: AppHandle) -> UiState {
     let relay_status = robust_lock(&state.relay_status).clone();
     let ui_state = UiState {
         lifecycle: state.lifecycle(),
-        reachable: relay_status.is_some(),
+        // Debounced /healthz liveness — deliberately NOT derived from the
+        // status payload, whose fetch can fail while the relay is fine.
+        reachable: state.is_reachable(),
         managed: state.supervisor.is_managed(),
         auth_mismatch: *robust_lock(&state.auth_mismatch),
         login_url: robust_lock(&state.login_url).clone(),
@@ -347,6 +354,18 @@ pub async fn stop_relay(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn restart_relay(app: AppHandle) -> Result<u32, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        // Restarting only makes sense for a relay this app owns. With an
+        // external relay on the port, stop() is a no-op and start() fails
+        // to bind — flipping the UI to Failed while the external relay
+        // keeps serving its old config.
+        {
+            let state = app.state::<AppState>();
+            if !state.supervisor.is_managed() && state.is_reachable() {
+                return Err(
+                    "A relay outside this app is answering on this address; restart it where it was started (or stop it, then use Start here).".into(),
+                );
+            }
+        }
         stop_relay_blocking(&app);
         start_relay_blocking(&app)
     })
@@ -434,8 +453,15 @@ pub async fn run_doctor(app: AppHandle, skip_response: bool) -> Result<bool, Str
 /// closed, flow never finished) holds the fixed OAuth callback port for up
 /// to 15 minutes and makes every new attempt fail with "address in use".
 fn kill_previous_login(app: &AppHandle) {
-    let previous = robust_lock(&app.state::<AppState>().login_pid).take();
-    *robust_lock(&app.state::<AppState>().login_stdin) = None;
+    let state = app.state::<AppState>();
+    let previous = robust_lock(&state.login_pid).take();
+    // Clear all shared login state here: the dying child's own teardown
+    // deliberately no-ops once its pid is gone (see run_login_streamed),
+    // so this is the only place that resets the banner after a kill.
+    *robust_lock(&state.login_stdin) = None;
+    *robust_lock(&state.login_url) = None;
+    *robust_lock(&state.login_code) = None;
+    *robust_lock(&state.login_provider) = None;
     if let Some(pid) = previous {
         app.state::<AppState>()
             .supervisor
@@ -561,11 +587,17 @@ fn run_login_streamed(
         .wait()
         .map_err(|error| format!("Waiting for {program} failed: {error}"))?;
     std::thread::sleep(Duration::from_millis(120));
-    *robust_lock(&state.login_pid) = None;
-    *robust_lock(&state.login_url) = None;
-    *robust_lock(&state.login_code) = None;
-    *robust_lock(&state.login_provider) = None;
-    *robust_lock(&state.login_stdin) = None;
+    // Teardown only if the shared slots still belong to THIS login: a
+    // replacement login may already have been started (kill_previous_login
+    // + new spawn), and clearing unconditionally would wipe its state,
+    // leaving an orphaned, uncancellable flow holding the callback port.
+    if *robust_lock(&state.login_pid) == Some(child_pid) {
+        *robust_lock(&state.login_pid) = None;
+        *robust_lock(&state.login_url) = None;
+        *robust_lock(&state.login_code) = None;
+        *robust_lock(&state.login_provider) = None;
+        *robust_lock(&state.login_stdin) = None;
+    }
 
     if status.success() {
         Ok(())
@@ -577,6 +609,17 @@ fn run_login_streamed(
     } else {
         let stdout = robust_lock(&stdout_lines).join("\n");
         Err(concise_error(&stdout))
+    }
+}
+
+/// Program + leading args for an external CLI like `claude`. On Windows
+/// the CLI installs as a .cmd shim that CreateProcess cannot start
+/// directly, so it must run through `cmd /C`.
+fn external_cli_invocation(bin: &str) -> (String, Vec<String>) {
+    if cfg!(windows) && !bin.to_ascii_lowercase().ends_with(".exe") {
+        ("cmd".into(), vec!["/C".into(), bin.into()])
+    } else {
+        (bin.into(), Vec::new())
     }
 }
 
@@ -644,13 +687,9 @@ pub async fn run_login(app: AppHandle, provider: String) -> Result<(), String> {
                 let bin = robust_lock(&state.settings).claude_bin.clone();
                 bin
             };
-            run_login_streamed(
-                &app,
-                "claude-login",
-                "claude",
-                &claude_bin,
-                &["auth".into(), "login".into(), "--claudeai".into()],
-            )
+            let (program, mut args) = external_cli_invocation(&claude_bin);
+            args.extend(["auth".into(), "login".into(), "--claudeai".into()]);
+            run_login_streamed(&app, "claude-login", "claude", &program, &args)
         }
         other => Err(format!("Unknown login provider: {other}")),
     })
@@ -745,8 +784,10 @@ pub async fn logout_claude(app: AppHandle) -> Result<ClaudeLogoutOutcome, String
             let bin = robust_lock(&state.settings).claude_bin.clone();
             bin
         };
-        let (cli_signed_out, cli_error) = match Command::new(&claude_bin)
-            .args(["auth", "logout"])
+        let (program, mut logout_args) = external_cli_invocation(&claude_bin);
+        logout_args.extend(["auth".into(), "logout".into()]);
+        let (cli_signed_out, cli_error) = match Command::new(&program)
+            .args(&logout_args)
             .stdin(Stdio::null())
             .output()
         {

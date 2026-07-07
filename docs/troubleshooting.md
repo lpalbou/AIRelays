@@ -46,6 +46,31 @@ It is written 0600 to `~/.airelays/claude-token` and injected into every
 `claude` invocation automatically. `airelays status` shows the token source
 (`file`, `env`, or `none`) under the Claude provider.
 
+## Claude requests fail even though `claude auth login` succeeded
+
+A stored token (from `airelays claude set-token`) overrides the `claude`
+CLI's own sign-in for relay requests. If that stored token is stale, relay
+requests keep failing no matter how often you sign in through the CLI.
+
+Checks and fix:
+
+- `airelays status` shows the Claude token source; `file` means a stored
+  token is in effect
+- remove it with `airelays claude logout` (also signs the CLI out) or, in
+  the desktop app, open the Claude token dialog and use "Remove stored
+  token" (keeps the CLI sign-in)
+- verify with a `claude:*` test request or `airelays doctor`
+
+## Desktop app shows "Running — not responding"
+
+The relay process is alive but did not answer the app's health probe —
+usually heavy system load or a long request burst.
+
+- it recovers on its own once the relay answers again; the label flips back
+  to "Running"
+- if it persists, open the Console tab for relay output, or use Restart
+- Stop/Restart keep working: the app still manages the process
+
 ## `422` on Claude experimental routes
 
 The current Claude runtime supports only explicit `claude:*` models on text `chat.completions` and text `completions`.

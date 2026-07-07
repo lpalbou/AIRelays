@@ -1,28 +1,54 @@
 # AIRelays
 
+> AIRelays is a local OpenAI-compatible HTTP server backed by your own subscription logins: an OpenAI runtime (with multi-account balancing) and an experimental Claude runtime via the local `claude` CLI. It ships as a CLI/server package and as a cross-platform desktop tray app.
+
+## Document Index
+
+- README.md: overview, install (CLI and desktop), quick start, compatibility layer
+- docs/getting-started.md: setup, sign-in flows, verification
+- docs/configuration.md: config file shape and environment overrides
+- docs/security.md: relay auth, open local relay mode, Claude guardrails
+- docs/api.md: routes, compatibility adaptations, provider limits
+- docs/architecture.md: request flow and module boundaries
+- docs/subscription-status.md: usage reporting for OpenAI and Claude
+- docs/faq.md: common questions and limits
+- docs/troubleshooting.md: symptoms, causes, fixes
+- desktop/README.md: desktop app layout, build, supervision behavior
+
+---
+
+## Overview (from README.md)
+
 AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 - The default runtime uses an AIRelays-owned ChatGPT subscription login.
-- The local experimental branch also enables a Claude runtime that uses the local `claude` CLI for explicit `claude:*` text models.
-- AIRelays protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default.
-- Open local relay mode applies to all enabled providers.
+- An optional experimental Claude runtime uses the local `claude` CLI and its existing subscription auth state.
+- AIRelays protects the relay with its own bearer token by default; open local relay mode (`--no-auth`) disables only the client-token gate.
+- Every transit is logged to hourly JSONL files.
+- AIRelays is an independent third-party project designed for a single user running a local relay for personal convenience. It is not a shared, pooled, multi-user, or resale service (see DISCLAIMER.md).
 
-## First Run
+## Install
 
-Install:
+CLI / server (PyPI):
 
 ```bash
 python -m pip install airelays
 ```
 
+Desktop app (macOS, Windows, Linux): a Tauri tray app under `desktop/` with a dashboard for relay start/stop, auth and network modes, OpenAI and Claude sign-in/sign-out, per-account usage bars, a model list with copy-ready ids, live traffic, and diagnostics. The tray icon shows connection state and blinks on request activity; the app can start at login, starts the relay when it opens, and restarts a crashed relay automatically. Both installs share the same config (`~/.config/airelays`) and data (`~/.airelays`).
+
+## First Run (CLI)
+
 OpenAI runtime:
 
 ```bash
 airelays init
-airelays login
+airelays login          # repeat with another account to enroll it too
 airelays doctor
 airelays serve --port 8080
 ```
+
+Headless / server (SSH, no browser): `airelays login --device` — approve from a browser on any device. Auto-selected on SSH sessions and displayless Linux.
 
 Claude experimental runtime:
 
@@ -32,62 +58,69 @@ claude auth login --claudeai
 airelays serve --port 8080
 ```
 
-Claude headless:
+Claude headless: run `claude setup-token` on any browser-equipped machine, then `airelays claude set-token` on the relay machine (stores the token in a 0600 file that survives service managers and reboots). Sign out completely with `airelays claude logout` (also signs the `claude` CLI out machine-wide).
 
-```bash
-airelays init
-claude setup-token
-export CLAUDE_CODE_OAUTH_TOKEN='YOUR_CLAUDE_TOKEN'
-airelays serve --port 8080
-```
+## Client Configuration
 
-## Runtime Shape
+- Base URL: `http://127.0.0.1:8080/v1` (desktop app default port: 8317)
+- API key: the relay token (`airelays token show`); any placeholder in open mode
+- List accepted model ids: `airelays models` or `GET /v1/models`
 
-OpenAI runtime:
+## Multiple OpenAI Accounts
 
-- `GET /v1/models`
-- `POST /v1/responses`
-- `POST /v1/chat/completions`
-- `POST /v1/completions`
-- local files
-- local conversations
-- `GET /v1/subscription/status`
-- successful OpenAI upstream model-list responses are cached in memory for `models_cache_ttl_seconds` seconds
+One person can enroll several of their own OpenAI subscriptions; `airelays login` is additive. By default the relay uses the first account until it reaches its usage limit, then continues with the next, returning when the limit resets (`balance = "round_robin"` spreads requests evenly instead). Accounts whose usage report already shows a reached limit are skipped proactively. Manage with `airelays accounts` (list, order, refresh), sign out one with `airelays logout <email>`. Conversations stick to the account that served their first turn.
 
-Claude experimental runtime:
+## Routes
 
-- explicit `claude:*` model ids
-- `POST /v1/chat/completions`
-- `POST /v1/completions`
-- model ids starting with `claude:` route to this runtime when it is enabled
-- other model ids route to the OpenAI runtime when it is enabled
-- stateless only
-- no `/v1/responses`
-- no files, images, audio, tools, or structured outputs
+- `GET /v1/models` — models from all enabled providers, with an `airelays` extension block per record
+- `POST /v1/responses`, `POST /v1/chat/completions`, `POST /v1/completions` — text generation
+- `GET /v1/subscription/status` (alias `GET /v1/account/rate_limits`) — normalized usage; `?provider=claude`, `?account=`, `?all_accounts=true`, `?raw=true`
+- `POST /v1/relay/accounts/refresh` — clear usage-limit holds and re-check capacity
+- `GET /v1/relay/status` — diagnostics, provider readiness, `requests_total`
+- `POST/GET/DELETE /v1/files...`, `POST/GET/DELETE /v1/conversations...` — local files and conversations
+- `/no-tools/v1/*` — tool-disabled variants
+- `GET /healthz` — minimal public health check
 
-## Security
+## Compatibility Layer
 
-- relay bearer auth required by default
-- open local relay mode applies to all enabled providers, including Claude experimental mode
-- Claude experimental mode requires loopback binding
-- request and response contents can be written to local AIRelays log files; bearer tokens are redacted
-- repeated bad tokens trigger a temporary IP block
+The verified upstream is the ChatGPT subscription backend, not the public platform API:
+
+- `temperature`, `top_p`, `presence_penalty`, `frequency_penalty` are rejected by the upstream; the relay strips them and discloses it via the `x-airelays-ignored-parameters` response header and a `compatibility_adaptation` traffic record. Generation uses the upstream's own sampling defaults.
+- `reasoning_effort` (chat) and `reasoning.effort` (responses) pass through verbatim. Omitting them means the upstream's low default; set them explicitly for output quality comparable to the official apps.
+- `store=true`, output-token limit fields, `n>1`, and `best_of`/`echo`/`logprobs`/`suffix` are rejected loudly instead of silently adapted.
+- Claude runtime: explicit `claude:*` models only, text chat/completions only, stateless, loopback-only, no tools/files/images/structured outputs.
+
+## Subscription Usage
+
+`GET /v1/subscription/status` returns per-window `used_percent`, `window_label` ("5h", "weekly"), and reset times in one shape for both providers. OpenAI reads the subscription usage surface; multi-account installs can query one account (`?account=`) or all (`?all_accounts=true`). Claude (`?provider=claude`) returns the 5-hour and weekly windows plus per-model weekly caps when reported; its upstream source is not a publicly documented API, so the relay caches it briefly and degrades gracefully.
+
+## Security Defaults
+
+- default listener `127.0.0.1:8080` (CLI) / `0.0.0.0:8317` (desktop, with a one-click loopback switch)
+- protected routes `/v1/*` and `/no-tools/v1/*`; public: `/` and `GET /healthz`
+- rate limit 120 requests/minute (burst 40), 8 concurrent requests per IP, temporary IP block after repeated bad tokens
+- Claude experimental mode is loopback-only and follows the relay's auth mode
+
+## Configuration
+
+Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/config.toml` → defaults. Notable keys: `[server] host/port`, `[security] require_bearer_auth`, `[logging] stream_lines` (opt-in per-line stream logging; summary records are always kept), `[providers.openai] enabled/balance/account_cooldown_seconds`, `[providers.claude] enabled/bin/models`. See docs/configuration.md for the full file shape and variable list.
 
 ## Diagnostics
 
-- `airelays status` reports local relay, token, OpenAI login, and provider readiness state.
-- `airelays doctor` runs local setup checks, validates the relay token state, checks OpenAI login readiness, probes upstream `/models`, and sends a tiny `/responses` smoke request when the OpenAI runtime is enabled and logged in.
-- `airelays doctor --skip-response` skips the generation smoke request.
+- `airelays status` — local config, token, and provider readiness
+- `airelays doctor` — setup checks plus live upstream `/models` and a tiny `/responses` smoke request (`--skip-response` to skip)
+- `airelays models` — model ids the running relay accepts, grouped by provider
+- Traffic logs: hourly JSONL under `~/.airelays/logs`, with per-request records (tokens, status, serving account, adaptations)
 
-## Important Docs
+## Paths
 
-- [README.md](README.md)
-- [docs/getting-started.md](docs/getting-started.md)
-- [docs/configuration.md](docs/configuration.md)
-- [docs/security.md](docs/security.md)
-- [docs/api.md](docs/api.md)
-- [docs/architecture.md](docs/architecture.md)
-- [docs/subscription-status.md](docs/subscription-status.md)
-- [docs/faq.md](docs/faq.md)
-- [docs/troubleshooting.md](docs/troubleshooting.md)
-- [DISCLAIMER.md](DISCLAIMER.md)
+- config: `~/.config/airelays/config.toml`
+- data: `~/.airelays` (logs, relay token, per-account auth slots, stored Claude token)
+
+## Troubleshooting Pointers
+
+- 401 then 429: wrong/missing relay token; repeated failures trigger a temporary IP block
+- 422 on token-limit fields: the subscription backend does not accept them; remove the fields
+- browser login URL only works on the relay's own machine; use `airelays login --device` on servers
+- Claude not ready in network mode: the runtime is loopback-only; switch to loopback binding
+- see docs/troubleshooting.md for full workflows

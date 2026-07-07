@@ -105,11 +105,12 @@ impl RelaySupervisor {
         settings: &AppSettings,
         resource_dir: Option<PathBuf>,
     ) -> Result<u32, String> {
-        {
-            let guard = robust_lock(&self.child);
-            if guard.is_some() {
-                return Err("The relay is already managed by this app.".into());
-            }
+        // Held across the spawn: releasing it after only the check opens a
+        // TOCTOU window where two concurrent starts both pass and one child
+        // leaks unsupervised (tray Start + auto-restart, for example).
+        let mut child_slot = robust_lock(&self.child);
+        if child_slot.is_some() {
+            return Err("The relay is already managed by this app.".into());
         }
 
         write_relay_config(settings)?;
@@ -157,11 +158,12 @@ impl RelaySupervisor {
         }
 
         let pid = child.id();
-        *robust_lock(&self.child) = Some(Supervised {
+        *child_slot = Some(Supervised {
             child,
             #[cfg(windows)]
             job,
         });
+        drop(child_slot);
         *robust_lock(&self.lifecycle) = Lifecycle::Starting;
         self.desired_running
             .store(true, std::sync::atomic::Ordering::Relaxed);

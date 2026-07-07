@@ -48,8 +48,13 @@ pub fn recent_requests_in(logs_dir: &PathBuf) -> Vec<RequestSummary> {
         // stream records are skipped *before* the budget, so floods of
         // either can no longer evict real requests from the window.
         let mut kept = 0usize;
+        let mut scanned = 0usize;
         for line in content.lines().rev() {
-            if kept >= 2500 {
+            // Two independent budgets: `kept` bounds the useful records,
+            // `scanned` bounds CPU when the tail is dominated by skipped
+            // chatter (per-line stream logs) that never fills `kept`.
+            scanned += 1;
+            if kept >= 2500 || scanned >= 80_000 {
                 break;
             }
             let Ok(record) = serde_json::from_str::<Value>(line) else {
@@ -136,7 +141,10 @@ fn collect_logs(dir: &PathBuf, out: &mut Vec<(std::time::SystemTime, PathBuf)>, 
 fn is_stream_chatter(record: &Value) -> bool {
     matches!(
         record.get("phase").and_then(Value::as_str),
-        Some("upstream_stream_line") | Some("outbound_stream_chunk")
+        Some("upstream_stream_line")
+            | Some("outbound_stream_chunk")
+            | Some("provider_stream_line")
+            | Some("upstream_stream_chunk")
     )
 }
 

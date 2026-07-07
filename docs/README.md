@@ -2,6 +2,8 @@
 
 - [Getting Started](getting-started.md)
   - installation, OpenAI setup, Claude setup, and verification
+- [Desktop App](../desktop/README.md)
+  - the cross-platform tray app: layout, build, and supervision behavior
 - [Configuration](configuration.md)
   - config file shape, environment overrides, and provider toggles
 - [Security](security.md)
@@ -11,7 +13,7 @@
 - [Architecture](architecture.md)
   - request flow and module boundaries
 - [Subscription Status](subscription-status.md)
-  - OpenAI runtime subscription-status behavior
+  - usage reporting for the OpenAI and Claude runtimes
 - [FAQ](faq.md)
   - common usage and provider questions
 - [Troubleshooting](troubleshooting.md)

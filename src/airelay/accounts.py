@@ -265,7 +265,11 @@ class OpenAiAccountPool:
         if not self._discoverable:
             return False
         now = time.monotonic()
-        if now - self._last_reload_check < 2.0:
+        # 10s: discovery does per-slot credential loads (keyring IPC on
+        # macOS) on the event loop. At the old 2s throttle the desktop's
+        # 1.5s status poll re-triggered it on every other poll; account
+        # additions are rare and sign-in flows call hard_refresh anyway.
+        if now - self._last_reload_check < 10.0:
             return False
         self._last_reload_check = now
 

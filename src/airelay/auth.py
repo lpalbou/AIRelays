@@ -463,12 +463,43 @@ class AuthManager:
         self.issuer_base_url = issuer_base_url.rstrip("/")
         self.client_id = client_id
         self._refresh_lock = asyncio.Lock()
+        # Short-lived load cache. Storage reads can hit the OS keyring
+        # (securityd IPC, twice on a miss because of the legacy-service
+        # probe); status endpoints load per poll every ~1.5s, and under
+        # system load that IPC alone pushed polls past their deadline.
+        # In-process writes invalidate it; external file changes (another
+        # process signing in/out) are caught by the stat signature below.
+        self._load_cache: tuple[float, tuple, dict[str, Any] | None] | None = None
+        self._load_cache_ttl = 3.0
+
+    def _auth_file_signature(self) -> tuple:
+        """Cheap change detector for the on-disk auth file (one stat).
+        Keyring-mode changes from other processes have no file to stat and
+        are covered by the TTL alone."""
+        try:
+            stat = self.storage.auth_path.stat()
+            return (True, stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            return (False, 0, 0)
 
     def load(self) -> AuthRecord | None:
-        payload = self.storage.load()
+        now = time.monotonic()
+        signature = self._auth_file_signature()
+        if (
+            self._load_cache is not None
+            and now - self._load_cache[0] < self._load_cache_ttl
+            and self._load_cache[1] == signature
+        ):
+            payload = self._load_cache[2]
+        else:
+            payload = self.storage.load()
+            self._load_cache = (now, signature, payload)
         if payload is None:
             return None
         return AuthRecord(payload)
+
+    def _invalidate_load_cache(self) -> None:
+        self._load_cache = None
 
     def status(self) -> dict[str, Any]:
         record = self.load()
@@ -504,6 +535,7 @@ class AuthManager:
         }
 
     def logout(self) -> bool:
+        self._invalidate_load_cache()
         return self.storage.delete()
 
     async def ensure_fresh_tokens(self) -> AuthRecord:
@@ -577,6 +609,7 @@ class AuthManager:
                 bound_account_id=record.bound_account_id,
             )
             self.storage.save(refreshed)
+            self._invalidate_load_cache()
             return AuthRecord(refreshed)
 
     async def browser_login(
@@ -639,6 +672,7 @@ class AuthManager:
             bound_account_id=account_id,
         )
         self.storage.save(payload)
+        self._invalidate_load_cache()
         return AuthRecord(payload)
 
     async def device_login(
@@ -717,6 +751,7 @@ class AuthManager:
             bound_account_id=account_id,
         )
         self.storage.save(payload)
+        self._invalidate_load_cache()
         return AuthRecord(payload)
 
     async def _exchange_code_for_tokens(

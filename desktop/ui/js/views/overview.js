@@ -17,6 +17,8 @@ let pendingClaudeLogout = false;
 // Claude method chosen while the provider was off (network mode); resumed
 // after the user confirms the mode switch.
 let pendingClaudeMethod = null;
+// The outside-click menu closer, removed on unmount.
+let documentClickHandler = null;
 
 let usageLoadedOnce = false;
 // Last usage payload, keyed by account email, merged into the Accounts card.
@@ -45,6 +47,10 @@ export const overviewView = {
     }
   },
   unmount() {
+    if (documentClickHandler) {
+      document.removeEventListener("click", documentClickHandler);
+      documentClickHandler = null;
+    }
     root = null;
     lastState = null;
     revealedToken = null;
@@ -336,7 +342,7 @@ function bindActions(ctx) {
       return;
     }
     const token = await fetchToken();
-    if (token) setRevealed(token);
+    if (token && root) setRevealed(token);
   });
   el("ov-token-copy").addEventListener("click", async () => {
     const token = revealedToken ?? (await fetchToken());
@@ -349,7 +355,9 @@ function bindActions(ctx) {
     el("ov-rotate-dialog").close();
     const token = await call(api.tokenAction("rotate"), "Key rotation failed");
     if (token) {
-      setRevealed(token);
+      // The toast must fire even if the view unmounted mid-rotation: the
+      // old key is already invalid and the user has to know.
+      if (root) setRevealed(token);
       toast("New API key created", "Copy it into your apps — the old key no longer works.", "success");
     }
   });
@@ -362,6 +370,7 @@ function bindActions(ctx) {
     if (saved !== undefined) {
       toast("API key saved", "", "success");
       input.value = "";
+      if (!root) return;
       setRevealed(null);
       el("ov-token-dialog").close();
     }
@@ -407,6 +416,7 @@ function bindActions(ctx) {
     // live and Claude is effective.
     const done = await call(api.setNetworkExposure(false), "Mode switch failed");
     button.disabled = false;
+    if (!root) return;
     el("ov-claude-mode-dialog").close();
     if (done === undefined) return;
     toast("Switched to \u201CThis machine only\u201D", "Claude is available; network devices are disconnected.", "success");
@@ -415,7 +425,7 @@ function bindActions(ctx) {
   el("ov-claude-token-cancel").addEventListener("click", () => el("ov-claude-token-dialog").close());
   el("ov-claude-token-clear").addEventListener("click", async () => {
     const existed = await call(api.clearClaudeToken(), "Token removal failed");
-    if (existed === undefined) return;
+    if (existed === undefined || !root) return;
     el("ov-claude-token-dialog").close();
     toast(
       existed ? "Stored token removed" : "No stored token",
@@ -428,17 +438,20 @@ function bindActions(ctx) {
     const saved = await call(api.setClaudeToken(input.value), "Token save failed");
     if (saved !== undefined) {
       input.value = "";
-      el("ov-claude-token-dialog").close();
       toast("Claude token saved", "The relay uses it on the next Claude request.", "success");
+      if (root) el("ov-claude-token-dialog").close();
     }
   });
-  // Close any open method menu on an outside click.
-  document.addEventListener("click", () => {
+  // Close any open method menu on an outside click. Registered once per
+  // mount and removed on unmount — accumulating document listeners across
+  // view switches was a slow leak.
+  documentClickHandler = () => {
     for (const id of ["ov-login-menu", "ov-claude-menu"]) {
       const menu = root?.querySelector(`#${id}`);
       if (menu) menu.hidden = true;
     }
-  });
+  };
+  document.addEventListener("click", documentClickHandler);
 
   // Sign-out confirm dialog wiring (shared by both providers).
   el("ov-logout-cancel").addEventListener("click", () => el("ov-logout-dialog").close());
@@ -723,9 +736,17 @@ function render(state) {
   } else if (state.lifecycle === "starting") {
     dot.className = "dot dot-warn";
     stateLabel.textContent = "Starting…";
+  } else if (state.lifecycle === "stopping") {
+    dot.className = "dot dot-neutral";
+    stateLabel.textContent = "Stopping…";
   } else if (state.lifecycle === "failed") {
     dot.className = "dot dot-bad";
     stateLabel.textContent = "Failed — see Console tab";
+  } else if (state.managed) {
+    // The child process is alive but the endpoint isn't answering the
+    // health probe (overload, hang). "Stopped" here would be a lie.
+    dot.className = "dot dot-warn";
+    stateLabel.textContent = "Running — not responding";
   } else {
     dot.className = "dot dot-neutral";
     stateLabel.textContent = "Stopped";
@@ -784,11 +805,17 @@ function render(state) {
     ? "Add another OpenAI account"
     : "Sign in to OpenAI";
 
-  // Sign-in in progress: surface the URL (and pairing code) for copying.
+  // Sign-in in progress: the banner appears as soon as the flow starts —
+  // before the URL is printed it still offers Cancel (a flow stuck ahead
+  // of its URL was previously uncancellable from the UI).
   const banner = el("ov-login-banner");
-  banner.hidden = !state.login_url;
-  if (state.login_url) {
-    el("ov-login-url").textContent = state.login_url;
+  const loginActive = Boolean(state.login_url) || state.login_running;
+  banner.hidden = !loginActive;
+  if (loginActive) {
+    const hasUrl = Boolean(state.login_url);
+    el("ov-login-url").textContent = state.login_url ?? "";
+    el("ov-login-open").disabled = !hasUrl;
+    el("ov-login-copy").disabled = !hasUrl;
     const isClaude = state.login_provider === "claude";
     const hasCode = Boolean(state.login_code);
     el("ov-login-code-row").hidden = !hasCode;
@@ -798,8 +825,8 @@ function render(state) {
     // Claude's browser flow ends with a code shown on the callback page
     // that must be sent back to the CLI — collect it right here.
     el("ov-login-paste-row").hidden = !(isClaude && state.login_accepts_code);
-    el("ov-login-hint-browser").hidden = hasCode || isClaude;
-    el("ov-login-hint-device").hidden = !hasCode || isClaude;
+    el("ov-login-hint-browser").hidden = !hasUrl || hasCode || isClaude;
+    el("ov-login-hint-device").hidden = !hasUrl || !hasCode || isClaude;
   }
 
   renderAccounts(state);

@@ -106,22 +106,31 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let state = app.state::<AppState>();
     let reachable = state.is_reachable();
     let managed = state.supervisor.is_managed();
+    let auth_mismatch = *robust_lock(&state.auth_mismatch);
+    let lifecycle = *robust_lock(&state.supervisor.lifecycle);
     let endpoint = robust_lock(&state.settings).base_url();
 
+    // Same decision order as the dashboard hero and sidebar: the three
+    // surfaces must never contradict each other for one underlying state.
+    let status_text = if reachable {
+        "Running"
+    } else if auth_mismatch {
+        "Running — key mismatch"
+    } else if lifecycle == crate::relay::Lifecycle::Starting {
+        "Starting…"
+    } else if lifecycle == crate::relay::Lifecycle::Stopping {
+        "Stopping…"
+    } else if lifecycle == crate::relay::Lifecycle::Failed {
+        "Failed — see Console"
+    } else if managed {
+        "Running — not responding"
+    } else {
+        "Stopped"
+    };
     let status_line = MenuItem::with_id(
         app,
         "status",
-        format!(
-            "{} — {}",
-            if reachable {
-                "Running"
-            } else if managed {
-                "Starting"
-            } else {
-                "Stopped"
-            },
-            endpoint
-        ),
+        format!("{status_text} — {endpoint}"),
         false,
         None::<&str>,
     )?;

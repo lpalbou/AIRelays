@@ -1,33 +1,31 @@
 # AIRelays
 
-AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes. The default runtime uses an AIRelays-owned ChatGPT subscription login. The local experimental branch also enables a Claude runtime that uses the local `claude` CLI for explicit `claude:*` text models. AIRelays protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default and can run all enabled providers in open local relay mode.
+AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes. The default runtime uses an AIRelays-owned ChatGPT subscription login and can balance requests across multiple of your own OpenAI accounts. An experimental Claude runtime uses the local `claude` CLI for explicit `claude:*` text models. AIRelays protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default and can run all enabled providers in open local relay mode. A cross-platform desktop app (macOS, Windows, Linux) wraps the same relay with a system tray and dashboard.
 
 ## Key Docs
 
-- [README.md](README.md)
-- [docs/getting-started.md](docs/getting-started.md)
-- [docs/configuration.md](docs/configuration.md)
-- [docs/security.md](docs/security.md)
-- [docs/api.md](docs/api.md)
-- [docs/architecture.md](docs/architecture.md)
-- [docs/subscription-status.md](docs/subscription-status.md)
-- [docs/faq.md](docs/faq.md)
-- [docs/troubleshooting.md](docs/troubleshooting.md)
-- [DISCLAIMER.md](DISCLAIMER.md)
+- [README.md](README.md): overview, install (CLI and desktop), quick start, compatibility layer
+- [docs/getting-started.md](docs/getting-started.md): setup, sign-in flows, verification
+- [docs/configuration.md](docs/configuration.md): config file shape and environment overrides
+- [docs/security.md](docs/security.md): relay auth, open local relay mode, Claude guardrails
+- [docs/api.md](docs/api.md): routes, compatibility adaptations, provider limits
+- [docs/architecture.md](docs/architecture.md): request flow and module boundaries
+- [docs/subscription-status.md](docs/subscription-status.md): usage reporting for OpenAI and Claude
+- [docs/faq.md](docs/faq.md): common questions and limits
+- [docs/troubleshooting.md](docs/troubleshooting.md): symptoms, causes, fixes
+- [desktop/README.md](desktop/README.md): desktop app layout, build, supervision behavior
+- [DISCLAIMER.md](DISCLAIMER.md): independence and intended use
 
 ## Main Commands
 
-- `airelays init`
-- `airelays login`
-- `airelays doctor`
-- `airelays serve`
-- `airelays init --no-auth`
-- `airelays serve --no-auth`
-- `claude auth login --claudeai`
-- `claude setup-token`
-- `airelays status`
-- `airelays token show`
-- `airelays token rotate`
+- `airelays init` / `airelays init --no-auth`
+- `airelays login` (additive; repeat to enroll more accounts) / `airelays login --device` (headless)
+- `airelays logout <email>` / `airelays accounts` (list, order, refresh)
+- `airelays serve` / `airelays serve --no-auth`
+- `airelays status` / `airelays doctor` / `airelays models`
+- `airelays token show` / `airelays token rotate`
+- `airelays claude set-token` / `airelays claude logout`
+- `claude auth login --claudeai` / `claude setup-token`
 
 ## Important Notes
 
@@ -36,5 +34,14 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - models starting with `claude:` route to the Claude runtime when it is enabled
 - other model ids route to the OpenAI runtime when it is enabled
 - Claude runtime follows the relay's protected or open local auth mode and requires loopback binding
-- `GET /v1/subscription/status` applies to the OpenAI runtime only
+- `GET /v1/subscription/status` reports OpenAI usage by default and Claude usage with `?provider=claude`, both in one normalized shape
+- the upstream rejects `temperature`/`top_p`/penalty parameters; the relay strips them and discloses it via the `x-airelays-ignored-parameters` header
+- `reasoning_effort` passes through verbatim; set it explicitly for parity with the official apps
 - `airelays doctor` runs local setup checks plus live OpenAI `/models` and optional `/responses` probes
+
+## Optional
+
+- [CHANGELOG.md](CHANGELOG.md): release history
+- [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md): credits
+- [CONTRIBUTING.md](CONTRIBUTING.md): contributor workflow
+- [SECURITY.md](SECURITY.md): vulnerability reporting

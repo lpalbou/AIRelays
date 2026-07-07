@@ -82,13 +82,19 @@ function updateSidebarStatus(state) {
     label.textContent = "Running";
   } else if (state.auth_mismatch) {
     dot.className = "dot dot-warn";
-    label.textContent = "Running (token mismatch)";
+    label.textContent = "Running (key mismatch)";
   } else if (state.lifecycle === "starting") {
     dot.className = "dot dot-warn";
     label.textContent = "Starting…";
+  } else if (state.lifecycle === "stopping") {
+    dot.className = "dot dot-neutral";
+    label.textContent = "Stopping…";
   } else if (state.lifecycle === "failed") {
     dot.className = "dot dot-bad";
     label.textContent = "Failed";
+  } else if (state.managed) {
+    dot.className = "dot dot-warn";
+    label.textContent = "Not responding";
   } else {
     dot.className = "dot dot-neutral";
     label.textContent = "Stopped";

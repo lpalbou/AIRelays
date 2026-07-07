@@ -1,5 +1,10 @@
 # Getting Started
 
+This guide covers the CLI/server install. If you prefer a GUI, the desktop
+app (macOS, Windows, Linux) wraps the same relay with a system tray,
+dashboard, and one-click sign-in — see [desktop/README.md](../desktop/README.md)
+and the README's install section.
+
 ## Install
 
 From a source checkout:
@@ -51,6 +56,12 @@ airelays login --device
 `airelays login` selects the device flow automatically on SSH sessions and
 displayless Linux. The browser flow's URL only works in a browser on the
 same machine as the relay (its redirect targets `localhost:1455` there).
+
+You can enroll several of your own OpenAI accounts: running `airelays login`
+again with a different account adds it alongside the first, and the relay
+balances across them (see the README's "Multiple OpenAI Accounts" section).
+Sign an account out with `airelays logout <email>`; manage order and
+capacity holds with `airelays accounts`.
 
 Start the server:
 
@@ -107,6 +118,14 @@ airelays claude set-token   # paste the token; stored 0600, survives restarts
 Exporting `CLAUDE_CODE_OAUTH_TOKEN` also works, but it does not survive
 service managers (systemd, docker) or reboots.
 
+Sign Claude out completely (removes the stored token and runs
+`claude auth logout`, which signs out every tool using the `claude` CLI on
+this machine):
+
+```bash
+airelays claude logout
+```
+
 Start AIRelays with the Claude runtime enabled:
 
 ```bash
@@ -152,11 +171,18 @@ upstream `/models`, a tiny `/responses` smoke request, and Claude readiness
 when the experimental runtime is enabled. Use `airelays doctor --skip-response`
 to skip the response smoke request.
 
+List every model id the running relay accepts, grouped by provider:
+
+```bash
+airelays models
+```
+
 Machine-readable output:
 
 ```bash
 airelays status --json
 airelays doctor --json
+airelays models --json
 ```
 
 `airelays status` shows:
@@ -191,11 +217,19 @@ export AIRELAYS_TOKEN="$(tr -d '\n' < ~/.airelays/relay-token)"
 
 ## Subscription Status
 
-OpenAI subscription status:
+OpenAI subscription usage:
 
 ```bash
 curl http://127.0.0.1:8080/v1/subscription/status \
   -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
 ```
 
-This route is verified for the OpenAI runtime only.
+Claude subscription usage (same normalized shape):
+
+```bash
+curl 'http://127.0.0.1:8080/v1/subscription/status?provider=claude' \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
+```
+
+See [Subscription Status](subscription-status.md) for multi-account
+parameters and the payload shape.

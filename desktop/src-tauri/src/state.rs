@@ -15,6 +15,12 @@ use tauri_plugin_notification::NotificationExt;
 const RESTART_MAX_ATTEMPTS: u32 = 5;
 const RESTART_BASE_DELAY_SECS: u64 = 2;
 const RESTART_MAX_DELAY_SECS: u64 = 60;
+/// Liveness debounce: consecutive /healthz failures before declaring the
+/// relay down (~5s at the 1.5s cadence). Up-flips are instant.
+const HEALTH_FAILURES_TO_DECLARE_DOWN: u32 = 3;
+/// The rich status payload is fetched every Nth tick (~4.5s); it is data,
+/// not liveness.
+const STATUS_FETCH_EVERY_TICKS: u64 = 3;
 
 fn notify(app: &AppHandle, title: &str, body: &str) {
     // Best effort: a denied notification permission must never affect
@@ -25,6 +31,10 @@ fn notify(app: &AppHandle, title: &str, body: &str) {
 pub struct AppState {
     pub settings: Mutex<AppSettings>,
     pub supervisor: RelaySupervisor,
+    /// Debounced endpoint liveness from /healthz (auth- and rate-limit-
+    /// exempt). Decoupled from `relay_status`: the data payload can be
+    /// stale or missing while the endpoint is demonstrably alive.
+    pub relay_reachable: Mutex<bool>,
     /// Latest `/v1/relay/status` payload, None when unreachable.
     pub relay_status: Mutex<Option<Value>>,
     /// True when the relay answers with 401/403: running, but our token is
@@ -73,6 +83,7 @@ impl AppState {
         Self {
             settings: Mutex::new(settings),
             supervisor: RelaySupervisor::new(),
+            relay_reachable: Mutex::new(false),
             relay_status: Mutex::new(None),
             auth_mismatch: Mutex::new(false),
             settings_path,
@@ -99,7 +110,7 @@ impl AppState {
     }
 
     pub fn is_reachable(&self) -> bool {
-        robust_lock(&self.relay_status).is_some()
+        *robust_lock(&self.relay_reachable)
     }
 
     pub fn lifecycle(&self) -> Lifecycle {
@@ -140,13 +151,19 @@ pub fn spawn_launch_start(app: AppHandle) {
 /// process, and asks the tray to refresh when observable state changes.
 pub fn spawn_status_loop(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
+        // Per-request timeouts are set at each call site (4s liveness, 8s
+        // status payload); this is only the fallback.
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(2))
+            .timeout(Duration::from_secs(8))
             .build()
             .expect("reqwest client");
         let mut last_reachable: Option<bool> = None;
         // Served-request count from the previous poll, for the activity blink.
         let mut last_requests_total: Option<u64> = None;
+        // Liveness debounce and the status-fetch cadence divider.
+        let mut health_failures: u32 = 0;
+        let mut mismatch_streak: u32 = 0;
+        let mut tick: u64 = 0;
         // Crash-restart bookkeeping, local to the loop: no other code path
         // restarts the relay implicitly.
         let mut restart_attempts: u32 = 0;
@@ -160,13 +177,24 @@ pub fn spawn_status_loop(app: AppHandle) {
             // The child died without a user stop: schedule a respawn with
             // capped backoff, or give up after too many consecutive failures.
             if exited && restart_due.is_none() {
-                let (wants_restart, auto_restart_enabled) = {
+                let (wants_restart, auto_restart_enabled, still_reachable) = {
                     let state = app.state::<AppState>();
                     let wants = state.supervisor.desired_running();
                     let enabled = robust_lock(&state.settings).auto_restart_relay;
-                    (wants, enabled)
+                    (wants, enabled, state.is_reachable())
                 };
-                if wants_restart && auto_restart_enabled {
+                if wants_restart && auto_restart_enabled && still_reachable {
+                    // Our child died but something still answers on the
+                    // address — an external relay owns the port. Respawning
+                    // would fail-loop (and reachability would keep resetting
+                    // the attempt budget), so stand down explicitly.
+                    let state = app.state::<AppState>();
+                    state.supervisor.log(
+                        "relay",
+                        "Not auto-restarting: another relay is already answering on this address.",
+                        true,
+                    );
+                } else if wants_restart && auto_restart_enabled {
                     if restart_attempts >= RESTART_MAX_ATTEMPTS {
                         let state = app.state::<AppState>();
                         state.supervisor.log(
@@ -210,7 +238,11 @@ pub fn spawn_status_loop(app: AppHandle) {
                 // and after a stop the user wants it down.
                 let still_wanted = {
                     let state = app.state::<AppState>();
-                    state.supervisor.desired_running() && !state.supervisor.is_managed()
+                    state.supervisor.desired_running()
+                        && !state.supervisor.is_managed()
+                        // An external relay may have grabbed the port while
+                        // we waited out the backoff.
+                        && !state.is_reachable()
                 };
                 if still_wanted {
                     let app_clone = app.clone();
@@ -249,49 +281,126 @@ pub fn spawn_status_loop(app: AppHandle) {
                 let settings = robust_lock(&state.settings);
                 (settings.base_url(), settings.require_bearer_auth)
             };
-            let mut request = client.get(format!("{base_url}/relay/status"));
-            if requires_auth {
-                if let Ok(token) = std::fs::read_to_string(AppSettings::bearer_token_file()) {
-                    request = request.bearer_auth(token.trim());
+
+            // Liveness: /healthz — trivial handler, exempt from auth, rate
+            // limits, and concurrency caps, so it measures only "is the
+            // relay alive", not "is the expensive status route fast".
+            let health_ok = matches!(
+                client
+                    .get(format!("{base_url}/healthz"))
+                    .timeout(Duration::from_secs(4))
+                    .send()
+                    .await,
+                Ok(response) if response.status().is_success()
+            );
+            if health_ok {
+                health_failures = 0;
+            } else {
+                health_failures = health_failures.saturating_add(1);
+            }
+            // Debounced down, instant up: one slow sample under system load
+            // must not flip the UI/tray to "down" while traffic flows.
+            let was_reachable = {
+                let state = app.state::<AppState>();
+                let reachable = *robust_lock(&state.relay_reachable);
+                reachable
+            };
+            let reachable = if health_ok {
+                true
+            } else if health_failures >= HEALTH_FAILURES_TO_DECLARE_DOWN {
+                false
+            } else {
+                was_reachable
+            };
+
+            // Data payload: the richer (and costlier, auth-gated) status
+            // route, fetched less often and never treated as a liveness
+            // signal. Its failure means "data stale", not "relay down".
+            let mut fetched_status: Option<Option<Value>> = None;
+            let mut saw_auth_rejection: Option<bool> = None;
+            let due_for_status = reachable && (tick % STATUS_FETCH_EVERY_TICKS == 0 || !was_reachable);
+            if due_for_status {
+                let token = if requires_auth {
+                    match std::fs::read_to_string(AppSettings::bearer_token_file()) {
+                        Ok(token) => Some(token.trim().to_string()),
+                        // Token unreadable (rotation window, FS pressure):
+                        // skip the fetch entirely. Sending without a bearer
+                        // would 401 and feed the relay's failed-auth blocker
+                        // until it firewalls 127.0.0.1 — a self-lockout.
+                        Err(_) => None,
+                    }
+                } else {
+                    Some(String::new())
+                };
+                if let Some(token) = token {
+                    let mut request = client
+                        .get(format!("{base_url}/relay/status"))
+                        .timeout(Duration::from_secs(8));
+                    if requires_auth {
+                        request = request.bearer_auth(&token);
+                    }
+                    match request.send().await {
+                        Ok(response) if response.status().is_success() => {
+                            fetched_status = Some(response.json().await.ok());
+                            saw_auth_rejection = Some(false);
+                        }
+                        Ok(response)
+                            if response.status() == reqwest::StatusCode::UNAUTHORIZED
+                                || response.status() == reqwest::StatusCode::FORBIDDEN =>
+                        {
+                            saw_auth_rejection = Some(true);
+                        }
+                        _ => {}
+                    }
                 }
             }
-            let (status, auth_mismatch): (Option<Value>, bool) = match request.send().await {
-                Ok(response) if response.status().is_success() => {
-                    (response.json().await.ok(), false)
-                }
-                Ok(response)
-                    if response.status() == reqwest::StatusCode::UNAUTHORIZED
-                        || response.status() == reqwest::StatusCode::FORBIDDEN =>
-                {
-                    // Something is serving and rejecting us: running relay,
-                    // wrong/missing credential.
-                    (None, true)
-                }
-                _ => (None, false),
-            };
+            tick = tick.wrapping_add(1);
 
             {
                 let state = app.state::<AppState>();
-                let reachable = status.is_some();
                 if reachable {
                     state.supervisor.mark_running();
-                    // A healthy relay resets the crash budget: only
-                    // consecutive failures count against the give-up cap.
-                    restart_attempts = 0;
+                    // A healthy MANAGED relay resets the crash budget; an
+                    // external relay answering on the port must not (it
+                    // would turn a port-conflict crash loop into infinite
+                    // retries with a notification storm).
+                    if state.supervisor.is_managed() {
+                        restart_attempts = 0;
+                    }
                 }
+
+                // Auth mismatch is asserted only after consecutive genuine
+                // 401/403 answers, never from a transient failure.
+                match saw_auth_rejection {
+                    Some(true) => mismatch_streak = mismatch_streak.saturating_add(1),
+                    Some(false) => mismatch_streak = 0,
+                    None => {}
+                }
+
                 // Activity blink: the relay counts real requests; any
-                // increase since the last poll flashes the tray once.
-                let requests_total = status
-                    .as_ref()
-                    .and_then(|payload| payload.get("requests_total"))
-                    .and_then(Value::as_u64);
-                let should_pulse = matches!(
-                    (last_requests_total, requests_total),
-                    (Some(previous), Some(current)) if current > previous
-                );
-                last_requests_total = requests_total;
-                *robust_lock(&state.relay_status) = status;
-                *robust_lock(&state.auth_mismatch) = auth_mismatch;
+                // increase since the last fetched payload flashes the tray.
+                let mut should_pulse = false;
+                if let Some(status) = &fetched_status {
+                    let requests_total = status
+                        .as_ref()
+                        .and_then(|payload| payload.get("requests_total"))
+                        .and_then(Value::as_u64);
+                    should_pulse = matches!(
+                        (last_requests_total, requests_total),
+                        (Some(previous), Some(current)) if current > previous
+                    );
+                    if requests_total.is_some() {
+                        last_requests_total = requests_total;
+                    }
+                    *robust_lock(&state.relay_status) = status.clone();
+                }
+                if !reachable {
+                    // Declared down (debounced): the payload is no longer
+                    // trustworthy either.
+                    *robust_lock(&state.relay_status) = None;
+                }
+                *robust_lock(&state.relay_reachable) = reachable;
+                *robust_lock(&state.auth_mismatch) = mismatch_streak >= 2;
 
                 if exited || last_reachable != Some(reachable) {
                     last_reachable = Some(reachable);

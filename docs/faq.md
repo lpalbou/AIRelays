@@ -38,9 +38,21 @@ Yes, in a constrained experimental form.
 Use the local Claude CLI:
 
 - browser login: `claude auth login --claudeai`
-- headless login: `claude setup-token` then export `CLAUDE_CODE_OAUTH_TOKEN`
+- headless login: `claude setup-token` on a browser-equipped machine, then
+  `airelays claude set-token` on the relay machine (stores the token in a
+  0600 file that survives service managers and reboots)
 
-AIRelays does not store Claude subscription credentials.
+Sign out with `airelays claude logout`. Note that this signs the `claude`
+CLI out machine-wide, so other tools using it (including Claude Code) are
+signed out too. The desktop app offers the same sign-in and sign-out flows
+from the Accounts card.
+
+## Can I see my Claude subscription usage?
+
+Yes: `GET /v1/subscription/status?provider=claude` returns the 5-hour and
+weekly windows in the same normalized shape as OpenAI usage. The desktop
+app shows both providers' usage bars in the Accounts card. See
+[Subscription Status](subscription-status.md).
 
 ## Does AIRelays support Gemini?
 

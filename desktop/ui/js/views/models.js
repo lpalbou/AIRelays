@@ -7,7 +7,8 @@ import { icon } from "../icons.js";
 let root = null;
 let models = [];
 let filterText = "";
-let loadedOnce = false;
+let lastReachable = null;
+let loading = false;
 
 const PROVIDER_NAMES = { openai: "OpenAI", claude: "Claude" };
 
@@ -38,28 +39,41 @@ export const modelsView = {
       renderList();
     });
     root.querySelector("#mo-refresh").addEventListener("click", load);
-    loadedOnce = false;
+    lastReachable = Boolean(state?.reachable);
     await load();
-    loadedOnce = true;
   },
   async update(state) {
-    // The relay may come up after the tab was opened on a stopped relay.
-    if (state?.reachable && loadedOnce && models.length === 0) {
-      loadedOnce = false; // avoid re-entry while the load runs
+    // Reload only on the unreachable→reachable TRANSITION (relay started
+    // after this tab opened, or restarted with new accounts). Reloading
+    // whenever the list is empty would poll /v1/models every 1.5s forever
+    // on a relay with no models — real requests that also blink the tray.
+    const reachable = Boolean(state?.reachable);
+    const cameUp = reachable && lastReachable === false;
+    lastReachable = reachable;
+    if (cameUp && !loading) {
       await load();
-      loadedOnce = true;
     }
   },
   unmount() {
     root = null;
     models = [];
     filterText = "";
-    loadedOnce = false;
+    lastReachable = null;
+    loading = false;
   },
 };
 
 async function load() {
-  if (!root) return;
+  if (!root || loading) return;
+  loading = true;
+  try {
+    await loadInner();
+  } finally {
+    loading = false;
+  }
+}
+
+async function loadInner() {
   const list = root.querySelector("#mo-list");
   let payload;
   try {

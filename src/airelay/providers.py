@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -219,6 +220,13 @@ class ClaudeCliRuntime:
         # Last CLI status probe, reused for identity in the usage payload
         # (probing spawns the Node CLI — too slow to repeat per usage call).
         self._last_probe: dict[str, Any] | None = None
+        # Status probes spawn the Node CLI twice and block; the desktop
+        # polls status every ~1.5s, so probes are cached and refreshed in a
+        # background thread (stale-while-revalidate) — the status route must
+        # never wait on a subprocess.
+        self._probe_cached_at: float = 0.0
+        self._probe_refreshing = False
+        self._probe_lock = threading.Lock()
         # The usage endpoint is undocumented and rate-limited; cache briefly.
         self._usage_cache: dict[str, Any] | None = None
         self._usage_cache_at: float = 0.0
@@ -253,7 +261,7 @@ class ClaudeCliRuntime:
         )
 
     def status(self) -> dict[str, Any]:
-        probe = self._run_status_command()
+        probe = self._cached_probe()
         ready = bool(probe.get("installed") and probe.get("logged_in"))
         return {
             "enabled": True,
@@ -749,6 +757,38 @@ class ClaudeCliRuntime:
                 env.pop(name, None)
         return env
 
+    def _cached_probe(self) -> dict[str, Any]:
+        """Stale-while-revalidate CLI probe. The synchronous probe spawns
+        the Node CLI twice (seconds under load); running it in the request
+        path blocked the event loop, stalled every in-flight request, and
+        made the desktop's health poll time out — the relay looked down
+        while it was serving traffic. Status calls now always return
+        immediately; a stale cache triggers one background refresh."""
+        now = time.monotonic()
+        with self._probe_lock:
+            if self._last_probe is None:
+                # First call: pay the probe cost once, synchronously — a
+                # one-shot CLI command (doctor, status) needs a truthful
+                # answer, and one startup probe is harmless.
+                probe = self._run_status_command()
+                self._probe_cached_at = time.monotonic()
+                return probe
+            fresh = now - self._probe_cached_at < 30.0
+            if fresh or self._probe_refreshing:
+                return self._last_probe
+            self._probe_refreshing = True
+
+        def refresh() -> None:
+            try:
+                self._run_status_command()  # assigns self._last_probe
+            finally:
+                with self._probe_lock:
+                    self._probe_cached_at = time.monotonic()
+                    self._probe_refreshing = False
+
+        threading.Thread(target=refresh, name="claude-probe", daemon=True).start()
+        return self._last_probe
+
     # ----- subscription usage (same normalized shape as OpenAI) -----
 
     async def get_subscription_status(self, request_id: str) -> dict[str, Any]:
@@ -760,7 +800,9 @@ class ClaudeCliRuntime:
         now = time.monotonic()
         if self._usage_cache is not None and now - self._usage_cache_at < CLAUDE_USAGE_CACHE_SECONDS:
             return json.loads(json.dumps(self._usage_cache))
-        token = self._resolve_usage_token()
+        # Token resolution can shell out to the macOS keychain — never on
+        # the event loop.
+        token = await asyncio.to_thread(self._resolve_usage_token)
         if not token:
             raise ProviderError(
                 503,
@@ -776,8 +818,15 @@ class ClaudeCliRuntime:
             "User-Agent": f"claude-code/{(self._last_probe or {}).get('version') or '2.0.0'}",
             "Accept": "application/json",
         }
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(CLAUDE_USAGE_URL, headers=headers)
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(CLAUDE_USAGE_URL, headers=headers)
+        except httpx.HTTPError as exc:
+            raise ProviderError(
+                502,
+                f"The Claude usage endpoint is unreachable: {exc}",
+                code="provider_failure",
+            ) from exc
         if response.status_code in (401, 403):
             raise ProviderError(
                 502,
@@ -819,18 +868,16 @@ class ClaudeCliRuntime:
                     timeout=10,
                 )
                 if probe.returncode == 0:
-                    payload = json.loads(probe.stdout.strip())
-                    token = payload.get("claudeAiOauth", {}).get("accessToken")
+                    token = _fresh_oauth_access_token(json.loads(probe.stdout.strip()))
                     if token:
-                        return str(token)
+                        return token
             except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
                 pass
         credentials = Path.home() / ".claude" / ".credentials.json"
         try:
-            payload = json.loads(credentials.read_text(encoding="utf-8"))
-            token = payload.get("claudeAiOauth", {}).get("accessToken")
+            token = _fresh_oauth_access_token(json.loads(credentials.read_text(encoding="utf-8")))
             if token:
-                return str(token)
+                return token
         except (OSError, json.JSONDecodeError):
             pass
         return None
@@ -885,14 +932,12 @@ class ClaudeCliRuntime:
         status_payload: dict[str, Any] | None = None
         try:
             version = self._status_version_probe()
-        except RuntimeError:
-            installed = False
-        except FileNotFoundError:
+        except (RuntimeError, FileNotFoundError, subprocess.TimeoutExpired):
             installed = False
         if installed:
             try:
                 status_payload = self._status_auth_probe()
-            except RuntimeError:
+            except (RuntimeError, subprocess.TimeoutExpired):
                 status_payload = None
             except FileNotFoundError:
                 installed = False
@@ -915,6 +960,7 @@ class ClaudeCliRuntime:
             env=self._subprocess_env(),
             check=False,
             text=True,
+            timeout=5,
         )
         if process.returncode != 0:
             return None
@@ -928,6 +974,7 @@ class ClaudeCliRuntime:
             env=self._subprocess_env(),
             check=False,
             text=True,
+            timeout=5,
         )
         if process.returncode != 0:
             return None
@@ -964,7 +1011,10 @@ class ClaudeCliRuntime:
         )
 
     def _log_stream_line(self, request_id: str, line: str) -> None:
-        if self._traffic is None:
+        # Same opt-in as the OpenAI per-line stream logging: one streamed
+        # Claude response is hundreds of lines, which floods the traffic
+        # log and evicts real request records from every reader's window.
+        if self._traffic is None or not self._settings.log_stream_lines:
             return
         self._traffic.write(
             {
@@ -974,6 +1024,25 @@ class ClaudeCliRuntime:
                 "line": line,
             }
         )
+
+
+def _fresh_oauth_access_token(payload: Any) -> str | None:
+    """Access token from a claude CLI credential payload, skipping tokens
+    the payload itself declares expired (they only earn a confusing 401
+    from the usage endpoint; the CLI refreshes them on its next own run)."""
+    if not isinstance(payload, dict):
+        return None
+    oauth = payload.get("claudeAiOauth")
+    if not isinstance(oauth, dict):
+        return None
+    token = oauth.get("accessToken")
+    if not token:
+        return None
+    expires_at_ms = oauth.get("expiresAt")
+    if isinstance(expires_at_ms, (int, float)) and expires_at_ms > 0:
+        if expires_at_ms / 1000.0 <= datetime.now(timezone.utc).timestamp():
+            return None
+    return str(token)
 
 
 def _claude_usage_window(bucket: Any, window_seconds: int) -> dict[str, Any] | None:
