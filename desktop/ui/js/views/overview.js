@@ -187,7 +187,7 @@ function template() {
     <section class="card" aria-label="Access">
       <h2>Access</h2>
       <p class="card-caption">Changes apply immediately and restart a running relay.</p>
-      <div class="row" style="gap:28px">
+      <div class="control-row">
         <div class="control-group">
           <span class="control-label" id="ov-auth-label">Authentication</span>
           <div class="segmented" role="group" aria-labelledby="ov-auth-label">

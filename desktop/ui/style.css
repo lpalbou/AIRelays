@@ -170,7 +170,14 @@ html, body {
   margin-top: 12px;
 }
 
-.control-group + .control-group { margin-top: 12px; }
+/* Side-by-side labeled control groups (Access card): top-aligned so the
+   labels and their segmented controls sit on the same lines. */
+.control-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+  flex-wrap: wrap;
+}
 
 /* ---------- status ---------- */
 
