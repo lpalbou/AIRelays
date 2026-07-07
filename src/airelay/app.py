@@ -199,9 +199,14 @@ def create_app(settings: Settings) -> FastAPI:
         finally:
             protector.release(lease)
 
+    # Count of real (non-monitoring) requests served by this process. The
+    # desktop reads it from /v1/relay/status to blink the tray on activity.
+    request_counter = {"total": 0}
+
     async def log_inbound(request_id: str, request: Request, body: bytes) -> None:
         if request.url.path in MONITORING_PATHS:
             return
+        request_counter["total"] += 1
         traffic.write(
             {
                 "request_id": request_id,
@@ -349,6 +354,18 @@ def create_app(settings: Settings) -> FastAPI:
     ) -> JSONResponse:
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
+        if provider == "claude":
+            runtime = providers.claude_runtime
+            if runtime is None:
+                raise HTTPException(
+                    status_code=501,
+                    detail="The Claude experimental runtime is disabled for this AIRelays process.",
+                )
+            try:
+                payload = await runtime.get_subscription_status(request_id)
+            except Exception as exc:  # noqa: BLE001
+                raise _http_error(exc) from exc
+            return logged_json(request_id, payload, loggable=False)
         if provider != "openai":
             raise HTTPException(
                 status_code=501,
@@ -426,6 +443,7 @@ def create_app(settings: Settings) -> FastAPI:
             "object": "relay.status",
             "app_name": APP_NAME,
             "version": __version__,
+            "requests_total": request_counter["total"],
             "ready": {
                 "upstream_auth": any_provider_ready,
                 "openai_upstream_auth": bool(openai_status.get("ready_for_requests")),

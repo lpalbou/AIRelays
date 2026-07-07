@@ -29,7 +29,20 @@ pub struct UiState {
     pub login_url: Option<String>,
     /// Pairing code for a running device-code sign-in.
     pub login_code: Option<String>,
+    /// Provider of the running sign-in ("openai"/"claude"), for
+    /// provider-appropriate banner wording.
+    pub login_provider: Option<String>,
+    /// True while the running sign-in can accept a pasted code on stdin.
+    pub login_accepts_code: bool,
     pub login_running: bool,
+    /// Whether the Claude provider actually runs under the current settings
+    /// (feature flag AND loopback AND no X-Forwarded-For trust). Single
+    /// source of truth for the UI — re-deriving the rule in JS caused traps.
+    pub claude_effective: bool,
+    /// True when a stored Claude token file exists. It overrides the CLI's
+    /// own sign-in for relay requests, so the UI must offer sign-out even
+    /// when the row looks signed out (a stale token masks CLI auth).
+    pub claude_token_present: bool,
     pub settings: AppSettings,
     pub relay_status: Option<Value>,
     pub local_endpoint: String,
@@ -276,7 +289,11 @@ pub fn get_state(app: AppHandle) -> UiState {
         auth_mismatch: *robust_lock(&state.auth_mismatch),
         login_url: robust_lock(&state.login_url).clone(),
         login_code: robust_lock(&state.login_code).clone(),
+        login_provider: robust_lock(&state.login_provider).clone(),
+        login_accepts_code: robust_lock(&state.login_stdin).is_some(),
         login_running: robust_lock(&state.login_pid).is_some(),
+        claude_effective: settings.claude_effectively_enabled(),
+        claude_token_present: AppSettings::data_dir().join("claude-token").exists(),
         local_endpoint: settings.base_url(),
         lan_endpoints: if settings.is_loopback_host() {
             Vec::new()
@@ -418,6 +435,7 @@ pub async fn run_doctor(app: AppHandle, skip_response: bool) -> Result<bool, Str
 /// to 15 minutes and makes every new attempt fail with "address in use".
 fn kill_previous_login(app: &AppHandle) {
     let previous = robust_lock(&app.state::<AppState>().login_pid).take();
+    *robust_lock(&app.state::<AppState>().login_stdin) = None;
     if let Some(pid) = previous {
         app.state::<AppState>()
             .supervisor
@@ -441,6 +459,7 @@ fn kill_previous_login(app: &AppHandle) {
 fn run_login_streamed(
     app: &AppHandle,
     label: &str,
+    provider: &str,
     program: &str,
     args: &[String],
 ) -> Result<(), String> {
@@ -455,20 +474,61 @@ fn run_login_streamed(
         .args(args)
         .env("PYTHONUNBUFFERED", "1")
         .env("PYTHONDONTWRITEBYTECODE", "1")
+        // Piped, kept open: Claude's browser flow asks for a code on stdin
+        // (the dashboard collects it via submit_login_code). Inheriting the
+        // GUI's stdin would make interactive reads hit EOF or hang.
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     configure_platform(&mut command);
     let mut child = command
         .spawn()
         .map_err(|error| format!("Cannot run {program}: {error}"))?;
-    *robust_lock(&state.login_pid) = Some(child.id());
+    let child_pid = child.id();
+    *robust_lock(&state.login_pid) = Some(child_pid);
     *robust_lock(&state.login_url) = None;
     *robust_lock(&state.login_code) = None;
+    *robust_lock(&state.login_provider) = Some(provider.to_string());
+    *robust_lock(&state.login_stdin) = child.stdin.take();
+    state
+        .login_cancelled
+        .store(false, std::sync::atomic::Ordering::Relaxed);
 
-    if let Some(stderr) = child.stderr.take() {
-        spawn_console_pipe(state.supervisor.console_handle(), stderr, label.to_string(), false);
+    // Watchdog: external CLIs (claude) have no internal login timeout; an
+    // abandoned flow would otherwise pend forever and block future logins.
+    let timeout_secs = robust_lock(&state.settings).login_timeout_seconds.max(60);
+    {
+        let app_watchdog = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(timeout_secs));
+            let state = app_watchdog.state::<AppState>();
+            if *robust_lock(&state.login_pid) == Some(child_pid) {
+                state.supervisor.log(
+                    "login",
+                    &format!("Sign-in timed out after {timeout_secs}s; cancelling it."),
+                    true,
+                );
+                kill_previous_login(&app_watchdog);
+            }
+        });
     }
+
     let stdout_lines = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
+    if let Some(stderr) = child.stderr.take() {
+        // Stderr both streams to the console and joins the collected output
+        // so failure toasts can show the real error (CLIs print there).
+        let console = state.supervisor.console_handle();
+        let sink = std::sync::Arc::clone(&stdout_lines);
+        let source = label.to_string();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                crate::relay::push_console(&console, &source, &line, false);
+                robust_lock(&sink).push(line);
+            }
+        });
+    }
     if let Some(stdout) = child.stdout.take() {
         let console = state.supervisor.console_handle();
         let sink = std::sync::Arc::clone(&stdout_lines);
@@ -504,13 +564,57 @@ fn run_login_streamed(
     *robust_lock(&state.login_pid) = None;
     *robust_lock(&state.login_url) = None;
     *robust_lock(&state.login_code) = None;
+    *robust_lock(&state.login_provider) = None;
+    *robust_lock(&state.login_stdin) = None;
 
     if status.success() {
         Ok(())
+    } else if state
+        .login_cancelled
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        Err("Sign-in cancelled.".into())
     } else {
         let stdout = robust_lock(&stdout_lines).join("\n");
         Err(concise_error(&stdout))
     }
+}
+
+/// Cancels the running sign-in flow at the user's request.
+#[tauri::command]
+pub fn cancel_login(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    if robust_lock(&state.login_pid).is_none() {
+        return Ok(());
+    }
+    state
+        .login_cancelled
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    kill_previous_login(&app);
+    Ok(())
+}
+
+/// Delivers a code the user pasted in the dashboard to the stdin of the
+/// running sign-in flow (Claude's browser flow shows one on the callback
+/// page and reads it from the terminal).
+#[tauri::command]
+pub fn submit_login_code(app: AppHandle, code: String) -> Result<(), String> {
+    use std::io::Write;
+    let code = code.trim().to_string();
+    if code.is_empty() {
+        return Err("Paste the code shown in the browser first.".into());
+    }
+    let state = app.state::<AppState>();
+    let mut slot = robust_lock(&state.login_stdin);
+    let Some(stdin) = slot.as_mut() else {
+        return Err("No sign-in is waiting for a code right now.".into());
+    };
+    writeln!(stdin, "{code}").map_err(|error| format!("Cannot deliver the code: {error}"))?;
+    stdin.flush().ok();
+    state
+        .supervisor
+        .log("login", "Code delivered to the sign-in flow.", false);
+    Ok(())
 }
 
 #[tauri::command]
@@ -531,7 +635,7 @@ pub async fn run_login(app: AppHandle, provider: String) -> Result<(), String> {
             });
             args.push("--config".into());
             args.push(AppSettings::relay_config_path().to_string_lossy().into_owned());
-            run_login_streamed(&app, "openai-login", &program, &args)
+            run_login_streamed(&app, "openai-login", "openai", &program, &args)
         }
         "claude" => {
             // Claude auth lives in the external claude CLI, not the relay.
@@ -543,6 +647,7 @@ pub async fn run_login(app: AppHandle, provider: String) -> Result<(), String> {
             run_login_streamed(
                 &app,
                 "claude-login",
+                "claude",
                 &claude_bin,
                 &["auth".into(), "login".into(), "--claudeai".into()],
             )
@@ -588,6 +693,91 @@ pub async fn set_claude_token(app: AppHandle, token: String) -> Result<(), Strin
     .map_err(|error| error.to_string())?
 }
 
+/// Removes the stored Claude token. Needed because a stale stored token
+/// overrides the CLI's own login for every relay Claude request — without
+/// this, a bad token can permanently mask a valid browser sign-in.
+#[tauri::command]
+pub async fn clear_claude_token(app: AppHandle) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = AppSettings::data_dir().join("claude-token");
+        let existed = path.exists();
+        if existed {
+            std::fs::remove_file(&path)
+                .map_err(|error| format!("Cannot remove the token file: {error}"))?;
+            let state = app.state::<AppState>();
+            state.supervisor.log(
+                "claude-login",
+                "Stored Claude token removed; the relay now uses the claude CLI's own sign-in.",
+                false,
+            );
+        }
+        Ok(existed)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[derive(Serialize)]
+pub struct ClaudeLogoutOutcome {
+    /// A stored relay token file existed and was deleted.
+    pub token_removed: bool,
+    /// `claude auth logout` exited successfully.
+    pub cli_signed_out: bool,
+    pub cli_error: Option<String>,
+}
+
+/// Complete Claude sign-out: the stored relay token AND the claude CLI's
+/// own credentials. Token file first — it can mask CLI auth (ghost auth)
+/// and must go even on machines without the claude binary; the CLI step's
+/// result is reported separately so a partial sign-out is never presented
+/// as success.
+#[tauri::command]
+pub async fn logout_claude(app: AppHandle) -> Result<ClaudeLogoutOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = AppSettings::data_dir().join("claude-token");
+        let token_removed = path.exists();
+        if token_removed {
+            std::fs::remove_file(&path)
+                .map_err(|error| format!("Cannot remove the stored token: {error}"))?;
+        }
+        let claude_bin = {
+            let state = app.state::<AppState>();
+            let bin = robust_lock(&state.settings).claude_bin.clone();
+            bin
+        };
+        let (cli_signed_out, cli_error) = match Command::new(&claude_bin)
+            .args(["auth", "logout"])
+            .stdin(Stdio::null())
+            .output()
+        {
+            Ok(output) if output.status.success() => (true, None),
+            Ok(output) => {
+                let text = format!(
+                    "{}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                (false, Some(concise_error(&text)))
+            }
+            Err(error) => (false, Some(format!("Cannot run {claude_bin}: {error}"))),
+        };
+        let state = app.state::<AppState>();
+        state.supervisor.log(
+            "claude-logout",
+            &format!(
+                "Claude sign-out: stored token removed={token_removed}, CLI signed out={cli_signed_out}."
+            ),
+            cli_error.is_some(),
+        );
+        if let Some(error) = &cli_error {
+            state.supervisor.log("claude-logout", error, true);
+        }
+        Ok(ClaudeLogoutOutcome { token_removed, cli_signed_out, cli_error })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 /// Manual hard refresh: clears usage-limit benches on the running relay and
 /// re-checks capacity, so a recovered account returns to rotation without a
 /// restart. Talks to the relay over HTTP because bench state lives in the
@@ -619,9 +809,9 @@ pub async fn refresh_accounts(app: AppHandle) -> Result<Value, String> {
     response.json().await.map_err(|_| "Unexpected refresh response.".to_string())
 }
 
-/// Fetches per-account usage from the relay's subscription-status endpoint.
+/// Fetches the relay's model list (all providers), for the Models tab.
 #[tauri::command]
-pub async fn get_usage(app: AppHandle) -> Result<Value, String> {
+pub async fn get_models(app: AppHandle) -> Result<Value, String> {
     let (base_url, requires_auth) = {
         let state = app.state::<AppState>();
         let settings = robust_lock(&state.settings);
@@ -631,14 +821,57 @@ pub async fn get_usage(app: AppHandle) -> Result<Value, String> {
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|error| error.to_string())?;
-    // all_accounts folds to the single-account shape when only one exists.
-    let mut request = client.get(format!("{base_url}/subscription/status?all_accounts=true"));
+    let mut request = client.get(format!("{base_url}/models"));
     if requires_auth {
         if let Ok(token) = std::fs::read_to_string(AppSettings::bearer_token_file()) {
             request = request.bearer_auth(token.trim());
         }
     }
     let response = request
+        .send()
+        .await
+        .map_err(|_| "The relay is not reachable.".to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Relay answered {}.", response.status()));
+    }
+    response
+        .json()
+        .await
+        .map_err(|_| "Unexpected models payload.".to_string())
+}
+
+/// Fetches per-account usage from the relay's subscription-status endpoint,
+/// plus Claude usage (same normalized shape) when that runtime is on.
+#[tauri::command]
+pub async fn get_usage(app: AppHandle) -> Result<Value, String> {
+    let (base_url, requires_auth, claude_on) = {
+        let state = app.state::<AppState>();
+        let settings = robust_lock(&state.settings);
+        (
+            settings.base_url(),
+            settings.require_bearer_auth,
+            settings.claude_effectively_enabled(),
+        )
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let token = if requires_auth {
+        std::fs::read_to_string(AppSettings::bearer_token_file())
+            .ok()
+            .map(|token| token.trim().to_string())
+    } else {
+        None
+    };
+    let authed = |mut request: reqwest::RequestBuilder| {
+        if let Some(token) = &token {
+            request = request.bearer_auth(token);
+        }
+        request
+    };
+    // all_accounts folds to the single-account shape when only one exists.
+    let response = authed(client.get(format!("{base_url}/subscription/status?all_accounts=true")))
         .send()
         .await
         .map_err(|_| "The relay is not reachable.".to_string())?;
@@ -652,10 +885,30 @@ pub async fn get_usage(app: AppHandle) -> Result<Value, String> {
             .unwrap_or_else(|| format!("Relay answered {code}."));
         return Err(message);
     }
-    response
+    let mut payload: Value = response
         .json()
         .await
-        .map_err(|_| "Unexpected usage payload.".to_string())
+        .map_err(|_| "Unexpected usage payload.".to_string())?;
+
+    // Claude usage is best-effort: its absence must never break the OpenAI
+    // usage display.
+    if claude_on {
+        if let Ok(response) = authed(
+            client.get(format!("{base_url}/subscription/status?provider=claude")),
+        )
+        .send()
+        .await
+        {
+            if response.status().is_success() {
+                if let Ok(claude) = response.json::<Value>().await {
+                    if let Some(map) = payload.as_object_mut() {
+                        map.insert("claude".into(), claude);
+                    }
+                }
+            }
+        }
+    }
+    Ok(payload)
 }
 
 #[tauri::command]

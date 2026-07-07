@@ -74,6 +74,11 @@ pub fn run() {
             commands::get_autostart,
             commands::set_autostart,
             commands::set_claude_token,
+            commands::clear_claude_token,
+            commands::logout_claude,
+            commands::submit_login_code,
+            commands::cancel_login,
+            commands::get_models,
         ])
         .build(tauri::generate_context!())
         .expect("error building AIRelays desktop app")

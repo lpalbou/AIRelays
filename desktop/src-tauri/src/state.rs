@@ -42,6 +42,16 @@ pub struct AppState {
     pub login_url: std::sync::Arc<Mutex<Option<String>>>,
     /// The pairing code printed by a device-code sign-in flow.
     pub login_code: std::sync::Arc<Mutex<Option<String>>>,
+    /// Which provider the running sign-in belongs to ("openai"/"claude"),
+    /// so the UI can render provider-appropriate instructions.
+    pub login_provider: Mutex<Option<String>>,
+    /// Stdin of the running sign-in child. Claude's browser flow shows the
+    /// user a code that must be typed into the CLI; the dashboard collects
+    /// it and writes it here.
+    pub login_stdin: Mutex<Option<std::process::ChildStdin>>,
+    /// Set when the user cancels the running sign-in, so its non-zero exit
+    /// is reported as a cancellation instead of a failure.
+    pub login_cancelled: std::sync::atomic::AtomicBool,
 }
 
 impl AppState {
@@ -70,6 +80,9 @@ impl AppState {
             login_pid: Mutex::new(None),
             login_url: std::sync::Arc::new(Mutex::new(None)),
             login_code: std::sync::Arc::new(Mutex::new(None)),
+            login_provider: Mutex::new(None),
+            login_stdin: Mutex::new(None),
+            login_cancelled: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -132,6 +145,8 @@ pub fn spawn_status_loop(app: AppHandle) {
             .build()
             .expect("reqwest client");
         let mut last_reachable: Option<bool> = None;
+        // Served-request count from the previous poll, for the activity blink.
+        let mut last_requests_total: Option<u64> = None;
         // Crash-restart bookkeeping, local to the loop: no other code path
         // restarts the relay implicitly.
         let mut restart_attempts: u32 = 0;
@@ -264,12 +279,31 @@ pub fn spawn_status_loop(app: AppHandle) {
                     // consecutive failures count against the give-up cap.
                     restart_attempts = 0;
                 }
+                // Activity blink: the relay counts real requests; any
+                // increase since the last poll flashes the tray once.
+                let requests_total = status
+                    .as_ref()
+                    .and_then(|payload| payload.get("requests_total"))
+                    .and_then(Value::as_u64);
+                let should_pulse = matches!(
+                    (last_requests_total, requests_total),
+                    (Some(previous), Some(current)) if current > previous
+                );
+                last_requests_total = requests_total;
                 *robust_lock(&state.relay_status) = status;
                 *robust_lock(&state.auth_mismatch) = auth_mismatch;
 
                 if exited || last_reachable != Some(reachable) {
                     last_reachable = Some(reachable);
                     crate::tray::refresh(&app);
+                }
+                if should_pulse {
+                    crate::tray::pulse(&app);
+                } else {
+                    // Self-healing: re-assert the icon every tick; a missed
+                    // or failed set_icon no longer sticks until the next
+                    // reachability change.
+                    crate::tray::sync_icon(&app);
                 }
             }
             tokio::time::sleep(Duration::from_millis(1500)).await;

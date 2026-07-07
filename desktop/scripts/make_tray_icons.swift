@@ -96,9 +96,13 @@ func write(_ image: CGImage, _ name: String) {
 let green = CGColor(red: 0.24, green: 0.86, blue: 0.42, alpha: 1)
 let red = CGColor(red: 1.00, green: 0.30, blue: 0.26, alpha: 1)
 let black = CGColor(red: 0, green: 0, blue: 0, alpha: 1)
+// Activity pulse: a near-white flash of the connected glyph, shown for a
+// fraction of a second when the relay serves a request.
+let flash = CGColor(red: 0.95, green: 1.00, blue: 0.85, alpha: 1)
 
 write(render(color: green, arcs: true, glow: true), "tray-connected.png")
 write(render(color: red, arcs: false, glow: false), "tray-disconnected.png")
+write(render(color: flash, arcs: true, glow: true), "tray-pulse.png")
 write(render(color: black, arcs: true, glow: false), "tray-connected-template.png")
 write(render(color: black, arcs: false, glow: false), "tray-disconnected-template.png")
 print(outputDir.path)

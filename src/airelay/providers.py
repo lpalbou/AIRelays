@@ -4,11 +4,16 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, AsyncIterator
+
+import httpx
 
 from airelay.auth import AuthManager
 from airelay.backend import ChatGptCodexBackend
@@ -199,12 +204,24 @@ def _stderr_message(stderr: bytes, returncode: int) -> str:
     return text or f"claude exited with code {returncode}"
 
 
+CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+CLAUDE_USAGE_CACHE_SECONDS = 30.0
+CLAUDE_FIVE_HOUR_SECONDS = 5 * 3600
+CLAUDE_SEVEN_DAY_SECONDS = 7 * 86400
+
+
 class ClaudeCliRuntime:
     def __init__(self, settings: Settings, traffic: TrafficLogger | None = None) -> None:
         self._settings = settings
         self._traffic = traffic
         self._semaphore = asyncio.Semaphore(settings.claude_max_concurrent_requests)
         self._models = self._build_models(settings.claude_models)
+        # Last CLI status probe, reused for identity in the usage payload
+        # (probing spawns the Node CLI — too slow to repeat per usage call).
+        self._last_probe: dict[str, Any] | None = None
+        # The usage endpoint is undocumented and rate-limited; cache briefly.
+        self._usage_cache: dict[str, Any] | None = None
+        self._usage_cache_at: float = 0.0
 
     def _build_models(self, configured: tuple[str, ...]) -> dict[str, ProviderModel]:
         records: dict[str, ProviderModel] = {}
@@ -732,6 +749,136 @@ class ClaudeCliRuntime:
                 env.pop(name, None)
         return env
 
+    # ----- subscription usage (same normalized shape as OpenAI) -----
+
+    async def get_subscription_status(self, request_id: str) -> dict[str, Any]:
+        """Subscription usage normalized to the exact shape the OpenAI
+        runtime produces, so every consumer renders both providers with one
+        code path. Source: the endpoint Claude Code's own `/usage` command
+        calls (undocumented; degraded gracefully when it changes)."""
+        del request_id
+        now = time.monotonic()
+        if self._usage_cache is not None and now - self._usage_cache_at < CLAUDE_USAGE_CACHE_SECONDS:
+            return json.loads(json.dumps(self._usage_cache))
+        token = self._resolve_usage_token()
+        if not token:
+            raise ProviderError(
+                503,
+                "No Claude OAuth credential found. Sign in with `claude auth login` "
+                "or store a token with `airelays claude set-token`.",
+                code="provider_unavailable",
+            )
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "anthropic-beta": "oauth-2025-04-20",
+            # Without a claude-code User-Agent the endpoint answers from an
+            # aggressively rate-limited bucket (persistent 429s).
+            "User-Agent": f"claude-code/{(self._last_probe or {}).get('version') or '2.0.0'}",
+            "Accept": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(CLAUDE_USAGE_URL, headers=headers)
+        if response.status_code in (401, 403):
+            raise ProviderError(
+                502,
+                "The Claude credential was rejected by the usage endpoint. "
+                "Sign in again or refresh the stored token.",
+                code="upstream_auth_error",
+            )
+        if response.status_code >= 400:
+            raise ProviderError(
+                502,
+                f"The Claude usage endpoint answered {response.status_code}.",
+                code="provider_failure",
+            )
+        try:
+            payload = response.json()
+        except json.JSONDecodeError as exc:
+            raise ProviderError(
+                502, "The Claude usage endpoint returned a non-JSON payload.", code="provider_failure"
+            ) from exc
+        normalized = self._normalize_usage(payload if isinstance(payload, dict) else {})
+        self._usage_cache = normalized
+        self._usage_cache_at = now
+        return json.loads(json.dumps(normalized))
+
+    def _resolve_usage_token(self) -> str | None:
+        """OAuth access token for the usage endpoint, matching the request
+        path's precedence: stored file/env first, then the claude CLI's own
+        credential stores (macOS keychain, ~/.claude/.credentials.json)."""
+        stored = self._settings.resolve_claude_oauth_token()
+        if stored:
+            return stored
+        if sys.platform == "darwin":
+            try:
+                probe = subprocess.run(
+                    ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10,
+                )
+                if probe.returncode == 0:
+                    payload = json.loads(probe.stdout.strip())
+                    token = payload.get("claudeAiOauth", {}).get("accessToken")
+                    if token:
+                        return str(token)
+            except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+                pass
+        credentials = Path.home() / ".claude" / ".credentials.json"
+        try:
+            payload = json.loads(credentials.read_text(encoding="utf-8"))
+            token = payload.get("claudeAiOauth", {}).get("accessToken")
+            if token:
+                return str(token)
+        except (OSError, json.JSONDecodeError):
+            pass
+        return None
+
+    def _normalize_usage(self, payload: dict[str, Any]) -> dict[str, Any]:
+        probe = self._last_probe or {}
+        primary = _claude_usage_window(payload.get("five_hour"), CLAUDE_FIVE_HOUR_SECONDS)
+        secondary = _claude_usage_window(payload.get("seven_day"), CLAUDE_SEVEN_DAY_SECONDS)
+        additional = []
+        for key, label in (("seven_day_sonnet", "Sonnet"), ("seven_day_opus", "Opus")):
+            window = _claude_usage_window(payload.get(key), CLAUDE_SEVEN_DAY_SECONDS)
+            if window is not None:
+                additional.append(
+                    {
+                        "limit_name": label,
+                        "metered_feature": None,
+                        "rate_limit": {
+                            "allowed": None,
+                            "limit_reached": window["used_percent"] >= 100,
+                            "primary_window": window,
+                            "secondary_window": None,
+                        },
+                    }
+                )
+        reached_type = None
+        if primary is not None and primary["used_percent"] >= 100:
+            reached_type = "five_hour"
+        elif secondary is not None and secondary["used_percent"] >= 100:
+            reached_type = "seven_day"
+        return {
+            "object": "subscription_status",
+            "provider": "claude",
+            "account": {
+                "email": probe.get("email"),
+                "plan_type": probe.get("subscription_type"),
+            },
+            "rate_limit_reached_type": reached_type,
+            "rate_limits": {
+                "default": {
+                    "allowed": None,
+                    "limit_reached": reached_type is not None,
+                    "primary_window": primary,
+                    "secondary_window": secondary,
+                },
+                "additional": additional,
+            },
+        }
+
     def _run_status_command(self) -> dict[str, Any]:
         installed = True
         version = None
@@ -749,7 +896,7 @@ class ClaudeCliRuntime:
                 status_payload = None
             except FileNotFoundError:
                 installed = False
-        return {
+        probe = {
             "installed": installed,
             "version": version,
             "logged_in": bool(status_payload and status_payload.get("loggedIn")),
@@ -758,6 +905,8 @@ class ClaudeCliRuntime:
             "email": status_payload.get("email") if status_payload else None,
             "subscription_type": status_payload.get("subscriptionType") if status_payload else None,
         }
+        self._last_probe = probe
+        return probe
 
     def _status_version_probe(self) -> str | None:
         process = subprocess.run(
@@ -827,6 +976,36 @@ class ClaudeCliRuntime:
         )
 
 
+def _claude_usage_window(bucket: Any, window_seconds: int) -> dict[str, Any] | None:
+    """One usage bucket → the same window shape transforms.py produces for
+    OpenAI, so the UI's single renderer covers both providers."""
+    if not isinstance(bucket, dict):
+        return None
+    used_raw = bucket.get("utilization")
+    used = float(used_raw) if isinstance(used_raw, (int, float)) else 0.0
+    used = max(0.0, min(100.0, used))
+    resets_at_iso = bucket.get("resets_at")
+    reset_at: int | None = None
+    reset_after_seconds: int | None = None
+    if isinstance(resets_at_iso, str) and resets_at_iso:
+        try:
+            parsed = datetime.fromisoformat(resets_at_iso.replace("Z", "+00:00"))
+            reset_at = int(parsed.timestamp())
+            reset_after_seconds = max(0, reset_at - int(datetime.now(timezone.utc).timestamp()))
+        except ValueError:
+            pass
+    return {
+        "used_percent": used,
+        "remaining_percent": round(100.0 - used, 2),
+        "window_seconds": window_seconds,
+        "window_minutes": window_seconds // 60,
+        "window_label": "weekly" if window_seconds == CLAUDE_SEVEN_DAY_SECONDS else "5h",
+        "reset_after_seconds": reset_after_seconds,
+        "reset_at": reset_at,
+        "reset_at_iso": resets_at_iso if isinstance(resets_at_iso, str) else None,
+    }
+
+
 class ProviderRegistry:
     def __init__(
         self,
@@ -853,6 +1032,10 @@ class ProviderRegistry:
             if settings.enable_claude_experimental
             else None
         )
+
+    @property
+    def claude_runtime(self) -> ClaudeCliRuntime | None:
+        return self._claude
 
     def resolve_model(self, model_id: str) -> ResolvedModel:
         if self._claude is not None:

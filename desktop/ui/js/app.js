@@ -8,12 +8,14 @@
 import { api } from "./api.js";
 import { icon } from "./icons.js";
 import { overviewView } from "./views/overview.js";
+import { modelsView } from "./views/models.js";
 import { trafficView } from "./views/traffic.js";
 import { consoleView } from "./views/console.js";
 import { settingsView } from "./views/settings.js";
 
 const views = {
   overview: overviewView,
+  models: modelsView,
   traffic: trafficView,
   console: consoleView,
   settings: settingsView,

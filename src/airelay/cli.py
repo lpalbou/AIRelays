@@ -1305,6 +1305,89 @@ def _run_claude_set_token(args: argparse.Namespace) -> None:
     print()
 
 
+def _run_claude_logout(args: argparse.Namespace) -> None:
+    """Complete Claude sign-out, mirroring the desktop app: the stored
+    relay token first (it can mask CLI auth), then the claude CLI's own
+    credentials, with each result reported separately."""
+    import subprocess
+
+    settings = _base_settings(args)
+    _print_title("Claude Sign-Out")
+    token_file = settings.claude_oauth_token_file
+    if token_file.exists():
+        token_file.unlink()
+        _print_field("Stored token", f"removed ({token_file})", kind="good")
+    else:
+        _print_field("Stored token", "none stored")
+    try:
+        result = subprocess.run(
+            [settings.claude_bin, "auth", "logout"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        _print_field("claude CLI", f"not found ({settings.claude_bin}); nothing else to sign out", kind="warn")
+        return
+    except subprocess.TimeoutExpired:
+        raise SystemExit("`claude auth logout` timed out. Run it manually to finish the sign-out.")
+    if result.returncode == 0:
+        _print_field("claude CLI", "signed out on this machine", kind="good")
+        print("  Note: other tools using the claude CLI here (e.g. Claude Code)")
+        print("  are signed out too.")
+    else:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        raise SystemExit(
+            "`claude auth logout` failed: "
+            + (detail[-1] if detail else f"exit code {result.returncode}")
+        )
+
+
+def _run_models(args: argparse.Namespace) -> None:
+    """Lists model ids from the running relay — the same list the desktop
+    Models tab shows, one source of truth for what the endpoint accepts."""
+    import httpx
+
+    settings = _base_settings(args)
+    url = f"{settings.client_base_url().rstrip('/')}/models"
+    headers = {}
+    if settings.require_bearer_auth:
+        token = settings.resolve_bearer_token()
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+    try:
+        response = httpx.get(url, headers=headers, timeout=15.0)
+    except httpx.HTTPError:
+        raise SystemExit(
+            f"No running relay at {settings.client_base_url()}. Start it with "
+            "`airelays serve`, then retry."
+        )
+    if response.status_code >= 400:
+        raise SystemExit(f"Model listing failed ({response.status_code}): {response.text[:200]}")
+    payload = response.json()
+    if _json_requested(args):
+        _emit_json(payload)
+        return
+    models = payload.get("data", [])
+    _print_title("Models")
+    _print_field("Endpoint", settings.client_base_url())
+    by_provider: dict[str, list[dict]] = {}
+    for model in models:
+        provider = (model.get("airelays") or {}).get("provider", "other")
+        by_provider.setdefault(provider, []).append(model)
+    display_names = {"openai": "OpenAI", "claude": "Claude"}
+    for provider, entries in by_provider.items():
+        _print_section(display_names.get(provider, provider))
+        for model in entries:
+            experimental = (model.get("airelays") or {}).get("experimental")
+            suffix = "  (experimental)" if experimental else ""
+            print(f"  {model.get('id')}{suffix}")
+    print()
+    print("  Use these ids as `model` in requests to the endpoint above.")
+    print()
+
+
 def _run_token_rotate(args: argparse.Namespace) -> None:
     settings = _base_settings(args)
     settings.ensure_directories()
@@ -1507,6 +1590,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Store a Claude Code OAuth token (from `claude setup-token`) for headless use",
     )
     claude_set_token.set_defaults(func=_run_claude_set_token)
+    claude_logout = claude_subparsers.add_parser(
+        "logout",
+        parents=[shared],
+        help="Sign Claude out: remove the stored token and run `claude auth logout`",
+    )
+    claude_logout.set_defaults(func=_run_claude_logout)
+
+    models = subparsers.add_parser(
+        "models",
+        parents=[shared],
+        help="List the model ids the running relay accepts (all providers)",
+    )
+    _add_json_argument(models)
+    models.set_defaults(func=_run_models)
 
     token = subparsers.add_parser(
         "token",

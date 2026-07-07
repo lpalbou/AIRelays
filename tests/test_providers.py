@@ -182,3 +182,38 @@ def test_subprocess_env_falls_back_to_ambient_token(tmp_path, monkeypatch) -> No
     env = runtime._subprocess_env()
     assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "ambient-token"
     assert settings.claude_oauth_token_source() == "env"
+
+
+def test_claude_usage_normalizes_to_openai_shape(tmp_path) -> None:
+    """The Claude usage payload must produce the exact window shape the
+    OpenAI runtime produces, so one renderer covers both providers."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    runtime._last_probe = {"email": "me@example.com", "subscription_type": "pro", "version": "2.1.94"}
+
+    normalized = runtime._normalize_usage(
+        {
+            "five_hour": {"utilization": 35.0, "resets_at": "2099-01-01T05:00:00+00:00"},
+            "seven_day": {"utilization": 100.0, "resets_at": "2099-01-03T00:00:00+00:00"},
+            "seven_day_sonnet": {"utilization": 12.0, "resets_at": "2099-01-03T00:00:00+00:00"},
+            "seven_day_opus": None,
+        }
+    )
+
+    assert normalized["account"] == {"email": "me@example.com", "plan_type": "pro"}
+    primary = normalized["rate_limits"]["default"]["primary_window"]
+    secondary = normalized["rate_limits"]["default"]["secondary_window"]
+    assert primary["used_percent"] == 35.0
+    assert primary["window_label"] == "5h"
+    assert primary["reset_after_seconds"] > 0
+    assert secondary["window_label"] == "weekly"
+    # A 100% window marks the account as at its limit, like OpenAI.
+    assert normalized["rate_limit_reached_type"] == "seven_day"
+    additional = normalized["rate_limits"]["additional"]
+    assert len(additional) == 1 and additional[0]["limit_name"] == "Sonnet"
+
+
+def test_claude_usage_tolerates_missing_buckets(tmp_path) -> None:
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    normalized = runtime._normalize_usage({})
+    assert normalized["rate_limits"]["default"]["primary_window"] is None
+    assert normalized["rate_limit_reached_type"] is None
