@@ -276,10 +276,18 @@ pub fn spawn_status_loop(app: AppHandle) {
                 }
             }
 
-            let (base_url, requires_auth) = {
+            let (base_url, health_url, requires_auth) = {
                 let state = app.state::<AppState>();
                 let settings = robust_lock(&state.settings);
-                (settings.base_url(), settings.require_bearer_auth)
+                (
+                    settings.base_url(),
+                    // /healthz lives at the server ROOT, outside the /v1
+                    // prefix that base_url carries — appending it to
+                    // base_url probes a nonexistent, auth-gated path and
+                    // reports a healthy relay as down forever.
+                    format!("http://{}:{}/healthz", settings.client_host(), settings.port),
+                    settings.require_bearer_auth,
+                )
             };
 
             // Liveness: /healthz — trivial handler, exempt from auth, rate
@@ -287,7 +295,7 @@ pub fn spawn_status_loop(app: AppHandle) {
             // relay alive", not "is the expensive status route fast".
             let health_ok = matches!(
                 client
-                    .get(format!("{base_url}/healthz"))
+                    .get(&health_url)
                     .timeout(Duration::from_secs(4))
                     .send()
                     .await,
