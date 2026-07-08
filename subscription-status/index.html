@@ -473,10 +473,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#authentication" class="md-nav__link">
+  <a href="#openai" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Authentication
+        OpenAI
       
     </span>
   </a>
@@ -484,10 +484,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#returned-shape" class="md-nav__link">
+  <a href="#auth" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Returned Shape
+        Auth
       
     </span>
   </a>
@@ -776,10 +776,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#authentication" class="md-nav__link">
+  <a href="#openai" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Authentication
+        OpenAI
       
     </span>
   </a>
@@ -787,10 +787,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#returned-shape" class="md-nav__link">
+  <a href="#auth" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Returned Shape
+        Auth
       
     </span>
   </a>
@@ -821,44 +821,28 @@
 <p>AIRelays exposes:</p>
 <ul>
 <li><code>GET /v1/subscription/status</code></li>
-<li><code>GET /v1/account/rate_limits</code></li>
+<li><code>GET /v1/account/rate_limits</code> (alias)</li>
 </ul>
-<p>These routes read the verified upstream usage surface at <code>chatgpt.com/backend-api/wham/usage</code> and normalize the result into one OpenAI-shaped summary object.</p>
-<h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h2>
-<p>These routes use the same auth mode as the rest of <code>/v1/*</code>.</p>
-<ul>
-<li>default mode: protected by the AIRelays bearer token</li>
-<li>open local relay mode: accessible without <code>Authorization</code></li>
-</ul>
-<p>Example:</p>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>http://127.0.0.1:8080/v1/subscription/status
+<p>Usage is reported in one normalized shape: per-window <code>used_percent</code>,
+<code>window_label</code> ("5h", "weekly"), and reset times (<code>reset_after_seconds</code>,
+<code>reset_at_iso</code>).</p>
+<h2 id="openai">OpenAI<a class="headerlink" href="#openai" title="Permanent link">&para;</a></h2>
+<p>Reads the OpenAI subscription usage surface at
+<code>chatgpt.com/backend-api/wham/usage</code>.</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">&#39;http://127.0.0.1:8080/v1/subscription/status&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span>
 </code></pre></div>
-<p>Open local relay mode example:</p>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/v1/subscription/status
-</code></pre></div>
-<h2 id="returned-shape">Returned Shape<a class="headerlink" href="#returned-shape" title="Permanent link">&para;</a></h2>
-<p>The normalized response includes:</p>
+<p>With multiple enrolled accounts:</p>
 <ul>
-<li>account identity fields when the upstream exposes them</li>
-<li>the default rate-limit window set</li>
-<li>optional additional named rate-limit windows</li>
-<li>credits summary</li>
-<li>spend-control summary</li>
-<li>optional raw upstream payload via <code>?raw=true</code></li>
+<li><code>?account=&lt;email-or-prefix&gt;</code> selects one account</li>
+<li><code>?all_accounts=true</code> returns one entry per account (folds to the
+  single-account shape when only one exists)</li>
+<li><code>?raw=true</code> includes the raw upstream payload</li>
 </ul>
-<p>Typical fields:</p>
-<ul>
-<li><code>object</code></li>
-<li><code>account</code></li>
-<li><code>rate_limits.default.primary_window</code></li>
-<li><code>rate_limits.default.secondary_window</code></li>
-<li><code>rate_limits.additional</code></li>
-<li><code>credits</code></li>
-<li><code>spend_control</code></li>
-</ul>
-<p>AIRelays also labels known windows with human-friendly names such as <code>5h</code> and <code>weekly</code> when the upstream durations match those intervals.</p>
+<h2 id="auth">Auth<a class="headerlink" href="#auth" title="Permanent link">&para;</a></h2>
+<p>Default protected mode requires the relay bearer token, as shown above.
+Open local relay mode (<code>--no-auth</code>) accepts the same requests without the
+<code>Authorization</code> header.</p>
 
 
 

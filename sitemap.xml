@@ -2,62 +2,78 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://www.lpalbou.info/AIRelays/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/api/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/architecture/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/configuration/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/disclaimer/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/docs-index/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/faq/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/getting-started/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/security/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/subscription-status/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/troubleshooting/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/adr/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/adr/0001-no-silent-degradation-truncation-or-budget-invention/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/adr/0002-chatgpt-subscription-backend-compatibility-boundary/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/adr/0003-local-config-and-default-deny-relay-security/</loc>
-         <lastmod>2026-07-03</lastmod>
+         <lastmod>2026-07-08</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/overview/</loc>
+         <lastmod>2026-07-08</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/completed/providers/</loc>
+         <lastmod>2026-07-08</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/completed/providers/0001_provider_runtime_registry_for_subscription_relays/</loc>
+         <lastmod>2026-07-08</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/planned/providers/</loc>
+         <lastmod>2026-07-08</lastmod>
     </url>
 </urlset>

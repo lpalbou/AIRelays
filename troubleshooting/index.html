@@ -549,6 +549,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#i-opened-the-login-url-on-my-laptop-and-got-a-connection-error-at-localhost1455" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        I opened the login URL on my laptop and got a connection error at localhost:1455
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#desktop-app-shows-running-not-responding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desktop app shows "Running — not responding"
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#429-too-many-invalid-authentication-attempts-from-this-ip" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -560,10 +582,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#429-request-rate-limit-exceeded-for-this-ip" class="md-nav__link">
+  <a href="#413-on-uploads" class="md-nav__link">
     <span class="md-ellipsis">
       
-        429 Request rate limit exceeded for this IP
+        413 on uploads
       
     </span>
   </a>
@@ -571,43 +593,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#token-refresh-failed" class="md-nav__link">
+  <a href="#live-upstream-verification" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Token refresh failed
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#501-unsupported_error" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        501 unsupported_error
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#422-on-uploaded-files" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        422 on uploaded files
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#413-on-uploaded-files" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        413 on uploaded files
+        Live upstream verification
       
     </span>
   </a>
@@ -864,6 +853,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#i-opened-the-login-url-on-my-laptop-and-got-a-connection-error-at-localhost1455" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        I opened the login URL on my laptop and got a connection error at localhost:1455
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#desktop-app-shows-running-not-responding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desktop app shows "Running — not responding"
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#429-too-many-invalid-authentication-attempts-from-this-ip" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -875,10 +886,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#429-request-rate-limit-exceeded-for-this-ip" class="md-nav__link">
+  <a href="#413-on-uploads" class="md-nav__link">
     <span class="md-ellipsis">
       
-        429 Request rate limit exceeded for this IP
+        413 on uploads
       
     </span>
   </a>
@@ -886,43 +897,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#token-refresh-failed" class="md-nav__link">
+  <a href="#live-upstream-verification" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Token refresh failed
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#501-unsupported_error" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        501 unsupported_error
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#422-on-uploaded-files" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        422 on uploaded files
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#413-on-uploaded-files" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        413 on uploaded files
+        Live upstream verification
       
     </span>
   </a>
@@ -951,79 +929,65 @@
 
 <h1 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h1>
 <h2 id="401-missing-or-invalid-airelays-bearer-token"><code>401 Missing or invalid AIRelays bearer token</code><a class="headerlink" href="#401-missing-or-invalid-airelays-bearer-token" title="Permanent link">&para;</a></h2>
-<p>The client is not sending the relay token AIRelays expects.</p>
-<p>Checks:</p>
 <ul>
-<li>run <code>airelays doctor</code></li>
 <li>run <code>airelays status</code></li>
-<li>confirm the Relay section shows <code>Relay token: present</code></li>
-<li>confirm the client credential matches the current AIRelays token</li>
-<li>if needed, run <code>airelays token show</code> to reveal the current token, or <code>airelays token rotate</code> to issue a new one</li>
-<li>confirm the client is calling <code>http://HOST:PORT/v1/...</code>, not just <code>http://HOST:PORT/...</code></li>
-<li>use <code>airelays status --json</code> if you want field-based checks in automation</li>
-<li>if you intended an open local relay, restart with <code>airelays serve --no-auth</code> or <code>AIRELAYS_REQUIRE_BEARER_AUTH=false</code></li>
+<li>run <code>airelays doctor --skip-response</code></li>
+<li>confirm the relay token is present</li>
+<li>confirm the client is calling <code>http://HOST:PORT/v1/...</code></li>
+<li>use <code>airelays token show</code> if needed</li>
 </ul>
 <h2 id="503-no-chatgpt-login-found"><code>503 No ChatGPT login found</code><a class="headerlink" href="#503-no-chatgpt-login-found" title="Permanent link">&para;</a></h2>
-<p>AIRelays could not find reusable upstream auth.</p>
-<p>Checks:</p>
 <ul>
-<li>run <code>airelays doctor</code></li>
 <li>run <code>airelays status</code></li>
-<li>confirm the Upstream Session section shows <code>Ready: yes</code></li>
-<li>if not, run <code>airelays login</code></li>
-<li>if you upgraded from earlier AIRelay local state, AIRelays can reuse singular-path config or data directories and older <code>AIRelay Auth</code> keychain entries automatically</li>
-<li>if <code>airelays login</code> cannot bind <code>localhost:1455</code>, retry later or use <code>airelays login --device</code></li>
+<li>run <code>airelays doctor --skip-response</code></li>
+<li>if the OpenAI runtime is enabled, run <code>airelays login</code></li>
+<li>on a server or over SSH, run <code>airelays login --device</code></li>
+<li>if the browser flow cannot bind <code>localhost:1455</code>, use <code>airelays login --device</code></li>
+</ul>
+<h2 id="i-opened-the-login-url-on-my-laptop-and-got-a-connection-error-at-localhost1455">I opened the login URL on my laptop and got a connection error at <code>localhost:1455</code><a class="headerlink" href="#i-opened-the-login-url-on-my-laptop-and-got-a-connection-error-at-localhost1455" title="Permanent link">&para;</a></h2>
+<p>The browser flow's sign-in redirect goes to <code>localhost:1455</code> <strong>on the machine
+running the browser</strong> — pasting the URL into a browser on another computer
+sends the redirect to the wrong machine, so the login on the server never
+completes and eventually times out.</p>
+<p>Two fixes:</p>
+<ul>
+<li><strong>Device-code login (recommended):</strong> <code>airelays login --device</code> prints a
+  short code you approve from a browser on any device. This is the default
+  on SSH sessions and displayless Linux.</li>
+<li><strong>SSH tunnel (if you specifically need the full browser flow, e.g. for a
+  browser-profile picker):</strong> run <code>ssh -L 1455:localhost:1455 user@server</code>
+  first, then open the printed URL in your local browser. The tunnel can be
+  opened even after <code>airelays login</code> has started waiting.</li>
+</ul>
+<h2 id="desktop-app-shows-running-not-responding">Desktop app shows "Running — not responding"<a class="headerlink" href="#desktop-app-shows-running-not-responding" title="Permanent link">&para;</a></h2>
+<p>The relay process is alive but did not answer the app's health probe —
+usually heavy system load or a long request burst.</p>
+<ul>
+<li>it recovers on its own once the relay answers again; the label flips back
+  to "Running"</li>
+<li>if it persists, open the Console tab for relay output, or use Restart</li>
+<li>Stop/Restart keep working: the app still manages the process</li>
 </ul>
 <h2 id="429-too-many-invalid-authentication-attempts-from-this-ip"><code>429 Too many invalid authentication attempts from this IP</code><a class="headerlink" href="#429-too-many-invalid-authentication-attempts-from-this-ip" title="Permanent link">&para;</a></h2>
-<p>AIRelays temporarily blocked the client after repeated bad tokens.</p>
-<p>Checks:</p>
 <ul>
-<li>wait for the <code>Retry-After</code> window to pass</li>
-<li>update the client to the correct token</li>
-<li>consider rotating the relay token if the wrong value leaked into automation</li>
-<li>remember that repeated <code>401</code> responses from the same IP cause the temporary <code>429</code> block</li>
+<li>wait for the <code>Retry-After</code> window</li>
+<li>update the client to the correct relay token</li>
+<li>rotate the token if needed</li>
 </ul>
-<h2 id="429-request-rate-limit-exceeded-for-this-ip"><code>429 Request rate limit exceeded for this IP</code><a class="headerlink" href="#429-request-rate-limit-exceeded-for-this-ip" title="Permanent link">&para;</a></h2>
-<p>The local per-IP request budget was exceeded.</p>
-<p>Options:</p>
+<h2 id="413-on-uploads"><code>413</code> on uploads<a class="headerlink" href="#413-on-uploads" title="Permanent link">&para;</a></h2>
 <ul>
-<li>reduce client concurrency</li>
-<li>spread traffic over time</li>
-<li>raise the configured limits in <code>config.toml</code> if this is expected local usage</li>
+<li>confirm the file is below the per-file upload ceiling</li>
+<li>confirm the relay has not reached the total stored-upload quota</li>
 </ul>
-<h2 id="token-refresh-failed"><code>Token refresh failed</code><a class="headerlink" href="#token-refresh-failed" title="Permanent link">&para;</a></h2>
-<p>The stored upstream ChatGPT login could not be refreshed.</p>
-<p>Checks:</p>
-<ul>
-<li>run <code>airelays doctor --skip-response</code> to verify config, relay token, upstream auth, and live <code>/models</code></li>
-<li>run <code>airelays login</code> again</li>
-<li>confirm <code>airelays status</code> reports an authenticated upstream login</li>
-</ul>
-<h2 id="501-unsupported_error"><code>501 unsupported_error</code><a class="headerlink" href="#501-unsupported_error" title="Permanent link">&para;</a></h2>
-<p>The route is not yet verified against the subscription backend.</p>
-<p>Current unverified categories include:</p>
-<ul>
-<li>embeddings</li>
-<li>image generation</li>
-<li>audio</li>
-<li>realtime sessions</li>
-</ul>
-<h2 id="422-on-uploaded-files"><code>422</code> on uploaded files<a class="headerlink" href="#422-on-uploaded-files" title="Permanent link">&para;</a></h2>
-<p>AIRelays only inlines supported text-like files up to 1 MB and supported images.</p>
-<p>Checks:</p>
-<ul>
-<li>confirm the file type is text-like or an image</li>
-<li>confirm the file is not too large for text inlining</li>
-<li>use <code>/v1/files/{file_id}</code> and <code>/v1/files/{file_id}/content</code> to inspect what was stored locally</li>
-</ul>
-<h2 id="413-on-uploaded-files"><code>413</code> on uploaded files<a class="headerlink" href="#413-on-uploaded-files" title="Permanent link">&para;</a></h2>
-<p>AIRelays rejected the upload before or during local storage.</p>
-<p>Checks:</p>
-<ul>
-<li>confirm the file is below the configured per-file upload ceiling</li>
-<li>confirm the relay has not reached its configured total stored-upload quota</li>
-<li>review <code>docs/configuration.md</code> if you need to raise <code>max_upload_bytes</code> or <code>max_total_upload_bytes</code></li>
-</ul>
+<h2 id="live-upstream-verification">Live upstream verification<a class="headerlink" href="#live-upstream-verification" title="Permanent link">&para;</a></h2>
+<p>Use <code>airelays doctor</code> when local state looks correct but client requests still
+fail. It checks local setup, then verifies the OpenAI upstream <code>/models</code> route
+and runs a tiny <code>/responses</code> smoke request when the OpenAI runtime is enabled
+and logged in.</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>doctor
+</code></pre></div>
+<p>Use <code>airelays doctor --skip-response</code> when you want setup and model-list checks
+without sending a generation request.</p>
 
 
 

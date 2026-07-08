@@ -457,17 +457,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#operational-notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Operational Notes
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -896,17 +885,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#operational-notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Operational Notes
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -930,90 +908,65 @@
 <h1 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h1>
 <p>AIRelays separates two authority domains:</p>
 <ul>
-<li>upstream provider auth: the ChatGPT subscription login stored in AIRelays-owned auth storage</li>
-<li>relay auth: the local bearer token required to call AIRelays itself</li>
+<li>upstream provider auth</li>
+<li>local client access to AIRelays itself</li>
 </ul>
-<p>The upstream login is not the relay access credential.</p>
+<p>The upstream subscription login is not the relay access credential.</p>
 <h2 id="protected-routes">Protected Routes<a class="headerlink" href="#protected-routes" title="Permanent link">&para;</a></h2>
-<p>AIRelays protects these route families by default:</p>
+<p>Protected by default:</p>
 <ul>
 <li><code>/v1/*</code></li>
 <li><code>/no-tools/v1/*</code></li>
 </ul>
-<p>Public routes remain:</p>
+<p>Public:</p>
 <ul>
 <li><code>/</code></li>
-<li><code>/healthz</code></li>
+<li><code>GET /healthz</code></li>
 </ul>
-<p><code>/healthz</code> is intentionally minimal. Use the protected <code>GET /v1/relay/status</code> route when you need detailed relay diagnostics.</p>
+<p>Detailed diagnostics live behind <code>GET /v1/relay/status</code> unless you intentionally launch an open local relay.</p>
 <h2 id="relay-token">Relay Token<a class="headerlink" href="#relay-token" title="Permanent link">&para;</a></h2>
-<p><code>airelays init</code> creates a strong bearer token and stores it at:</p>
-<div class="highlight"><pre><span></span><code>~/.airelays/relay-token
+<p>The normal path is:</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init
 </code></pre></div>
-<p>Use that token as the client credential when you point OpenAI SDKs or HTTP clients at AIRelays.</p>
-<p>Show the current token with:</p>
+<p>Show the current token:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>token<span class="w"> </span>show
 </code></pre></div>
-<p>If you want to launch the server with a specific token value instead of the default token file:</p>
-<div class="highlight"><pre><span></span><code><span class="nv">AIRELAYS_BEARER_TOKEN</span><span class="o">=</span><span class="s1">&#39;YOUR_AIRELAYS_TOKEN&#39;</span><span class="w"> </span>airelays<span class="w"> </span>serve<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
-</code></pre></div>
-<p>If you want to launch the server with a specific token file:</p>
-<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>serve<span class="w"> </span>--bearer-token-file<span class="w"> </span>/path/to/relay-token<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+<p>Rotate it:</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>token<span class="w"> </span>rotate
 </code></pre></div>
 <h2 id="open-local-relay-mode">Open Local Relay Mode<a class="headerlink" href="#open-local-relay-mode" title="Permanent link">&para;</a></h2>
-<p>If you want AIRelays to accept client requests without a relay bearer token:</p>
+<p>Open local relay mode disables the AIRelays client-token gate.</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init<span class="w"> </span>--no-auth
 airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
 <p>Equivalent environment override:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">AIRELAYS_REQUIRE_BEARER_AUTH</span><span class="o">=</span><span class="nb">false</span><span class="w"> </span>airelays<span class="w"> </span>serve<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
-<p>In this mode:</p>
-<ul>
-<li><code>/v1/*</code> and <code>/no-tools/v1/*</code> are accessible without <code>Authorization</code></li>
-<li><code>GET /v1/relay/status</code> is also accessible without <code>Authorization</code></li>
-<li>rate limits and concurrent-request caps still apply</li>
-<li>the default loopback listener is the safest way to run it</li>
-<li>if a client library insists on an API key field, any non-empty placeholder string is acceptable</li>
-<li>the upstream ChatGPT login from <code>airelays login</code> is still required for model requests</li>
-</ul>
-<p>Rotate the token with:</p>
-<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>token<span class="w"> </span>rotate
-</code></pre></div>
 <h2 id="rate-limits">Rate Limits<a class="headerlink" href="#rate-limits" title="Permanent link">&para;</a></h2>
 <p>Default single-process protections:</p>
 <ul>
 <li><code>120</code> requests/minute per IP</li>
-<li>burst capacity <code>40</code></li>
+<li>burst <code>40</code></li>
 <li><code>8</code> concurrent requests per IP</li>
-<li><code>8</code> failed auth attempts inside <code>300</code> seconds</li>
-<li>temporary block for <code>900</code> seconds after repeated failed auth</li>
+<li>temporary IP block after repeated bad tokens</li>
 </ul>
-<p>Repeated requests without the relay token, or with the wrong token, first return <code>401</code> and then trigger a temporary <code>429</code> block once the failed-auth threshold is exceeded.</p>
-<p>These settings are configurable through <code>config.toml</code> or <code>AIRELAYS_*</code> overrides.</p>
 <h2 id="upload-ceilings">Upload Ceilings<a class="headerlink" href="#upload-ceilings" title="Permanent link">&para;</a></h2>
-<p>Local uploads are bounded by default:</p>
 <ul>
 <li><code>32</code> MiB per file</li>
 <li><code>256</code> MiB total stored file bytes</li>
 </ul>
-<p>AIRelays rejects uploads that would exceed either limit with <code>413</code>.</p>
 <h2 id="logging">Logging<a class="headerlink" href="#logging" title="Permanent link">&para;</a></h2>
-<p>Security-relevant events are logged to the normal hourly JSONL traffic log:</p>
+<p>AIRelays logs:</p>
 <ul>
-<li>endpoint auth failures</li>
+<li>inbound requests</li>
+<li>provider resolution</li>
 <li>endpoint rejects</li>
-<li>token bootstrap at startup</li>
-<li>upstream and downstream request flow</li>
+<li>provider and upstream requests</li>
+<li>provider and upstream responses</li>
+<li>provider stream lines</li>
+<li>usage summaries</li>
 </ul>
-<p>Raw bearer tokens are never written to logs. Request headers are redacted before persistence.</p>
-<h2 id="operational-notes">Operational Notes<a class="headerlink" href="#operational-notes" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Keep the default loopback listener unless you intentionally need remote access.</li>
-<li>If you bind to a broader interface, keep bearer auth enabled.</li>
-<li>Do not enable <code>trust_x_forwarded_for</code> unless a trusted proxy is in front of AIRelays.</li>
-<li>Use <code>GET /v1/relay/status</code> to inspect relay auth, storage, and limiter state. Keep bearer auth enabled if you do not want that route exposed.</li>
-</ul>
+<p>Request and response contents, including prompts and model outputs, can be written to the local AIRelays log files. Raw bearer tokens are redacted.</p>
 
 
 

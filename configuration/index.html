@@ -387,10 +387,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#cli-overrides" class="md-nav__link">
+  <a href="#important-environment-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CLI Overrides
+        Important Environment Variables
       
     </span>
   </a>
@@ -409,32 +409,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#important-environment-variables" class="md-nav__link">
+  <a href="#provider-notes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Important Environment Variables
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Notes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#legacy-compatibility" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Legacy Compatibility
+        Provider Notes
       
     </span>
   </a>
@@ -853,10 +831,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#cli-overrides" class="md-nav__link">
+  <a href="#important-environment-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CLI Overrides
+        Important Environment Variables
       
     </span>
   </a>
@@ -875,32 +853,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#important-environment-variables" class="md-nav__link">
+  <a href="#provider-notes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Important Environment Variables
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Notes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#legacy-compatibility" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Legacy Compatibility
+        Provider Notes
       
     </span>
   </a>
@@ -928,23 +884,23 @@
 
 
 <h1 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h1>
-<p>AIRelays resolves settings from these sources, highest precedence first:</p>
+<p>AIRelays resolves settings in this order:</p>
 <ol>
-<li>explicit CLI flags such as <code>--config</code>, <code>--port</code>, <code>--auth-storage</code></li>
+<li>CLI flags</li>
 <li><code>AIRELAYS_*</code> environment variables</li>
-<li>legacy <code>OPENAI_ENDPOINT_*</code> environment variables where supported as a migration fallback</li>
+<li>legacy <code>OPENAI_ENDPOINT_*</code> migration variables where supported</li>
 <li><code>~/.config/airelays/config.toml</code></li>
 <li>built-in defaults</li>
 </ol>
-<p>If an earlier AIRelay config already exists at <code>~/.config/airelay/config.toml</code>, AIRelays can continue using that path for compatibility.</p>
 <h2 id="default-paths">Default Paths<a class="headerlink" href="#default-paths" title="Permanent link">&para;</a></h2>
 <ul>
 <li>config: <code>~/.config/airelays/config.toml</code></li>
 <li>data dir: <code>~/.airelays</code></li>
-<li>upstream auth fallback file: <code>~/.airelays/auth.json</code></li>
 <li>logs dir: <code>~/.airelays/logs</code></li>
+<li>auth fallback file: <code>~/.airelays/auth.json</code></li>
 <li>relay token file: <code>~/.airelays/relay-token</code></li>
 </ul>
+<p>Earlier singular AIRelay paths remain compatible for local upgrades.</p>
 <h2 id="sample-config">Sample Config<a class="headerlink" href="#sample-config" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="k">[server]</span>
 <span class="n">host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;127.0.0.1&quot;</span>
@@ -981,41 +937,16 @@
 <span class="k">[uploads]</span>
 <span class="n">max_upload_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">33554432</span>
 <span class="n">max_total_upload_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">268435456</span>
-</code></pre></div>
-<h2 id="cli-overrides">CLI Overrides<a class="headerlink" href="#cli-overrides" title="Permanent link">&para;</a></h2>
-<p>These flags override config-file values:</p>
-<ul>
-<li><code>--config</code></li>
-<li><code>--data-dir</code></li>
-<li><code>--logs-dir</code></li>
-<li><code>--auth-storage</code></li>
-<li><code>--bearer-token-file</code></li>
-<li><code>serve --host</code></li>
-<li><code>serve --port</code></li>
-<li><code>serve --no-auth</code></li>
-<li><code>init --no-auth</code></li>
-</ul>
-<h2 id="relay-token-inputs">Relay Token Inputs<a class="headerlink" href="#relay-token-inputs" title="Permanent link">&para;</a></h2>
-<p>AIRelays resolves the relay token for server startup in this order:</p>
-<ol>
-<li><code>AIRELAYS_BEARER_TOKEN</code></li>
-<li>the configured <code>bearer_token_file</code></li>
-</ol>
-<p>Default token file:</p>
-<div class="highlight"><pre><span></span><code>~/.airelays/relay-token
-</code></pre></div>
-<p>Examples:</p>
-<div class="highlight"><pre><span></span><code><span class="nv">AIRELAYS_BEARER_TOKEN</span><span class="o">=</span><span class="s1">&#39;YOUR_AIRELAYS_TOKEN&#39;</span><span class="w"> </span>airelays<span class="w"> </span>serve<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>serve<span class="w"> </span>--bearer-token-file<span class="w"> </span>/path/to/relay-token<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
-</code></pre></div>
-<p>To disable relay auth for the current process:</p>
-<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
-</code></pre></div>
-<p>To persist that mode through config or environment:</p>
-<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init<span class="w"> </span>--no-auth
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="nv">AIRELAYS_REQUIRE_BEARER_AUTH</span><span class="o">=</span><span class="nb">false</span><span class="w"> </span>airelays<span class="w"> </span>serve<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+
+<span class="k">[logging]</span>
+<span class="c1"># Opt-in: log every raw upstream SSE line. Hundreds of records per</span>
+<span class="c1"># streamed response (~50x log growth under load); summary records</span>
+<span class="c1"># (request, usage, response, errors) are always logged regardless.</span>
+<span class="n">stream_lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+
+<span class="k">[providers.openai]</span>
+<span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="n">models_cache_ttl_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">300.0</span>
 </code></pre></div>
 <h2 id="important-environment-variables">Important Environment Variables<a class="headerlink" href="#important-environment-variables" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1035,35 +966,36 @@
 <li><code>AIRELAYS_REQUIRE_BEARER_AUTH</code></li>
 <li><code>AIRELAYS_BEARER_TOKEN</code></li>
 <li><code>AIRELAYS_BEARER_TOKEN_FILE</code></li>
-<li><code>AIRELAYS_AUTO_GENERATE_BEARER_TOKEN</code></li>
-<li><code>AIRELAYS_RATE_LIMIT_PER_MINUTE</code></li>
-<li><code>AIRELAYS_RATE_LIMIT_BURST</code></li>
-<li><code>AIRELAYS_CONCURRENT_REQUESTS_PER_IP</code></li>
-<li><code>AIRELAYS_FAILED_AUTH_WINDOW_SECONDS</code></li>
-<li><code>AIRELAYS_FAILED_AUTH_MAX_ATTEMPTS</code></li>
-<li><code>AIRELAYS_FAILED_AUTH_BLOCK_SECONDS</code></li>
-<li><code>AIRELAYS_TRUST_X_FORWARDED_FOR</code></li>
-<li><code>AIRELAYS_MAX_UPLOAD_BYTES</code></li>
-<li><code>AIRELAYS_MAX_TOTAL_UPLOAD_BYTES</code></li>
+<li><code>AIRELAYS_LOG_STREAM_LINES</code></li>
+<li><code>AIRELAYS_ENABLE_OPENAI</code></li>
+<li><code>AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS</code></li>
 </ul>
-<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
+<h2 id="relay-token-inputs">Relay Token Inputs<a class="headerlink" href="#relay-token-inputs" title="Permanent link">&para;</a></h2>
+<p>AIRelays resolves the relay token in this order:</p>
+<ol>
+<li><code>AIRELAYS_BEARER_TOKEN</code></li>
+<li>the configured <code>bearer_token_file</code></li>
+</ol>
+<p>Override examples:</p>
+<div class="highlight"><pre><span></span><code><span class="nv">AIRELAYS_BEARER_TOKEN</span><span class="o">=</span><span class="s1">&#39;YOUR_AIRELAYS_TOKEN&#39;</span><span class="w"> </span>airelays<span class="w"> </span>serve<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>serve<span class="w"> </span>--bearer-token-file<span class="w"> </span>/path/to/relay-token<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+</code></pre></div>
+<h2 id="provider-notes">Provider Notes<a class="headerlink" href="#provider-notes" title="Permanent link">&para;</a></h2>
+<p>OpenAI runtime:</p>
 <ul>
-<li><code>airelays init</code> is the normal way to create the relay token. <code>airelays serve</code> only auto-generates a token when you explicitly enable <code>auto_generate_bearer_token</code>.</li>
-<li><code>airelays init --no-auth</code> writes config with bearer auth disabled and skips relay-token creation.</li>
-<li><code>AIRELAYS_BEARER_TOKEN</code> overrides the token file for the current process.</li>
-<li><code>auth.storage = "auto"</code> prefers the AIRelays keyring namespace and falls back to <code>~/.airelays/auth.json</code> when keyring access is unavailable.</li>
-<li><code>auth.storage = "auto"</code> also recognizes earlier <code>AIRelay Auth</code> keychain entries and migrates them into the AIRelays-owned namespace when they are encountered.</li>
-<li><code>AIRELAYS_TRUST_X_FORWARDED_FOR</code> should stay <code>false</code> unless you intentionally run behind a trusted proxy.</li>
-<li>The listener remains loopback-only by default. Change <code>host</code> explicitly if you need broader access.</li>
+<li>enabled by default</li>
+<li>uses AIRelays-owned auth storage</li>
+<li><code>airelays login</code> manages its subscription session</li>
+<li>caches successful upstream model-list responses for <code>models_cache_ttl_seconds</code> seconds
+  by default</li>
+<li>the model-list cache is process-local, in-memory, and disabled when
+  <code>models_cache_ttl_seconds = 0</code></li>
+<li>cache state is visible under <code>providers.openai.models_cache</code> in
+  <code>GET /v1/relay/status</code></li>
 </ul>
-<h2 id="legacy-compatibility">Legacy Compatibility<a class="headerlink" href="#legacy-compatibility" title="Permanent link">&para;</a></h2>
-<p>AIRelays keeps compatibility with earlier singular AIRelay naming where it matters for local upgrades:</p>
-<ul>
-<li>legacy config path: <code>~/.config/airelay/config.toml</code></li>
-<li>legacy data dir: <code>~/.airelay</code></li>
-<li>legacy keychain service name: <code>AIRelay Auth</code></li>
-</ul>
-<p>If those paths or entries already exist, AIRelays can continue using or importing them instead of forcing a fresh login or a manual migration.</p>
+<p><code>AIRELAYS_MODELS_CACHE_TTL_SECONDS</code> remains accepted as a shorter alias for
+<code>AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS</code>.</p>
 
 
 
