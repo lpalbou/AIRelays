@@ -230,6 +230,18 @@ class ClaudeCliRuntime:
         # The usage endpoint is undocumented and rate-limited; cache briefly.
         self._usage_cache: dict[str, Any] | None = None
         self._usage_cache_at: float = 0.0
+        # Last successful payload, kept indefinitely: when the upstream
+        # rate-limits us (429 with retry-after up to an hour), serving
+        # honest stale data beats serving nothing.
+        self._usage_last_good: dict[str, Any] | None = None
+        self._usage_last_good_epoch: float = 0.0
+        # Monotonic deadline from the last 429's retry-after; until it
+        # passes, no request is sent upstream (poking a rate-limited
+        # endpoint extends the lockout).
+        self._usage_blocked_until: float = 0.0
+        # Single-flight: concurrent callers at cache expiry must not each
+        # poke the aggressively rate-limited endpoint.
+        self._usage_fetch_lock = asyncio.Lock()
 
     def _build_models(self, configured: tuple[str, ...]) -> dict[str, ProviderModel]:
         records: dict[str, ProviderModel] = {}
@@ -800,6 +812,24 @@ class ClaudeCliRuntime:
         now = time.monotonic()
         if self._usage_cache is not None and now - self._usage_cache_at < CLAUDE_USAGE_CACHE_SECONDS:
             return json.loads(json.dumps(self._usage_cache))
+        # Inside a rate-limit window: never poke the upstream again (that
+        # can extend the lockout). Serve honest stale data when we have it.
+        if now < self._usage_blocked_until:
+            return self._stale_or_rate_limit_error(now)
+        async with self._usage_fetch_lock:
+            # Re-check after acquiring: a concurrent caller may have just
+            # refilled the cache or hit a 429 while this one waited.
+            now = time.monotonic()
+            if (
+                self._usage_cache is not None
+                and now - self._usage_cache_at < CLAUDE_USAGE_CACHE_SECONDS
+            ):
+                return json.loads(json.dumps(self._usage_cache))
+            if now < self._usage_blocked_until:
+                return self._stale_or_rate_limit_error(now)
+            return await self._fetch_usage()
+
+    async def _fetch_usage(self) -> dict[str, Any]:
         # Token resolution can shell out to the macOS keychain — never on
         # the event loop.
         token = await asyncio.to_thread(self._resolve_usage_token)
@@ -827,6 +857,15 @@ class ClaudeCliRuntime:
                 f"The Claude usage endpoint is unreachable: {exc}",
                 code="provider_failure",
             ) from exc
+        if response.status_code == 429:
+            # Fresh monotonic: `now` predates the keychain shell-out and the
+            # HTTP round-trip (up to ~25s), which would under-wait the window
+            # and re-poke a still-limited endpoint.
+            arrived = time.monotonic()
+            self._usage_blocked_until = arrived + _retry_after_seconds(
+                response.headers.get("retry-after")
+            )
+            return self._stale_or_rate_limit_error(arrived)
         if response.status_code in (401, 403):
             raise ProviderError(
                 502,
@@ -848,8 +887,32 @@ class ClaudeCliRuntime:
             ) from exc
         normalized = self._normalize_usage(payload if isinstance(payload, dict) else {})
         self._usage_cache = normalized
-        self._usage_cache_at = now
+        self._usage_cache_at = time.monotonic()
+        self._usage_last_good = normalized
+        self._usage_last_good_epoch = time.time()
+        self._usage_blocked_until = 0.0
         return json.loads(json.dumps(normalized))
+
+    def _stale_or_rate_limit_error(self, now: float) -> dict[str, Any]:
+        """Inside an upstream rate-limit window: the last good snapshot,
+        annotated as stale, or an explicit rate-limited error when no
+        snapshot exists yet. Callers can rely on `stale`/`as_of_epoch`/
+        `retry_after_seconds` to present the state honestly."""
+        retry_after = max(0, int(self._usage_blocked_until - now))
+        if self._usage_last_good is not None:
+            stale = json.loads(json.dumps(self._usage_last_good))
+            _refresh_stale_windows(stale)
+            stale["stale"] = True
+            stale["as_of_epoch"] = int(self._usage_last_good_epoch)
+            stale["retry_after_seconds"] = retry_after
+            return stale
+        minutes = max(1, retry_after // 60)
+        raise ProviderError(
+            503,
+            f"Claude rate-limits its usage endpoint; retrying in ~{minutes}m. "
+            "Requests are unaffected.",
+            code="provider_rate_limited",
+        )
 
     def _resolve_usage_token(self) -> str | None:
         """OAuth access token for the usage endpoint, matching the request
@@ -1024,6 +1087,57 @@ class ClaudeCliRuntime:
                 "line": line,
             }
         )
+
+
+def _refresh_stale_windows(snapshot: dict[str, Any]) -> None:
+    """Re-derives the time-dependent fields of a cached usage snapshot.
+    `reset_after_seconds` was computed at fetch time and would otherwise be
+    served frozen for up to two hours; a window whose reset has passed also
+    no longer justifies an "at limit" state."""
+    wall_now = int(datetime.now(timezone.utc).timestamp())
+    windows: list[dict[str, Any]] = []
+    limits = snapshot.get("rate_limits") or {}
+    default = limits.get("default") or {}
+    for key in ("primary_window", "secondary_window"):
+        if isinstance(default.get(key), dict):
+            windows.append(default[key])
+    for extra in limits.get("additional") or []:
+        rate = (extra or {}).get("rate_limit") or {}
+        for key in ("primary_window", "secondary_window"):
+            if isinstance(rate.get(key), dict):
+                windows.append(rate[key])
+
+    any_still_limited = False
+    for window in windows:
+        reset_at = window.get("reset_at")
+        if isinstance(reset_at, (int, float)) and reset_at > 0:
+            remaining = max(0, int(reset_at) - wall_now)
+            window["reset_after_seconds"] = remaining
+            if remaining == 0:
+                # The window rolled over while we were locked out: its
+                # percentages are unknown but a reached limit is certainly
+                # gone.
+                window["used_percent"] = None
+                window["remaining_percent"] = None
+        used = window.get("used_percent")
+        if isinstance(used, (int, float)) and used >= 100:
+            any_still_limited = True
+    if not any_still_limited:
+        snapshot["rate_limit_reached_type"] = None
+        if isinstance(default, dict) and default:
+            default["limit_reached"] = False
+
+
+def _retry_after_seconds(header: str | None) -> int:
+    """Upstream retry-after header → a sane wait. Missing or malformed
+    values default to the endpoint's observed window (1h); the clamp keeps
+    a hostile or buggy header (including inf/overflow) from wedging usage
+    reporting for days or turning it into a hammer."""
+    try:
+        seconds = int(float(header)) if header else 3600
+    except (ValueError, OverflowError):
+        seconds = 3600
+    return max(60, min(seconds, 7200))
 
 
 def _fresh_oauth_access_token(payload: Any) -> str | None:

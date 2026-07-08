@@ -916,7 +916,12 @@ pub async fn get_usage(app: AppHandle) -> Result<Value, String> {
         .send()
         .await
         .map_err(|_| "The relay is not reachable.".to_string())?;
-    if !response.status().is_success() {
+    let mut payload: Value = if response.status().is_success() {
+        response
+            .json()
+            .await
+            .map_err(|_| "Unexpected usage payload.".to_string())?
+    } else {
         let code = response.status();
         let detail: Value = response.json().await.unwrap_or(Value::Null);
         let message = detail
@@ -924,29 +929,42 @@ pub async fn get_usage(app: AppHandle) -> Result<Value, String> {
             .and_then(Value::as_str)
             .map(String::from)
             .unwrap_or_else(|| format!("Relay answered {code}."));
-        return Err(message);
-    }
-    let mut payload: Value = response
-        .json()
-        .await
-        .map_err(|_| "Unexpected usage payload.".to_string())?;
+        // An OpenAI failure (e.g. the provider is disabled → 501) must not
+        // abort the whole command: a Claude-only relay still has Claude
+        // usage to show.
+        if !claude_on {
+            return Err(message);
+        }
+        serde_json::json!({ "error": message })
+    };
 
     // Claude usage is best-effort: its absence must never break the OpenAI
-    // usage display.
+    // usage display. Failures are forwarded as {"error": ...} so the UI can
+    // say WHY usage is missing (e.g. the upstream rate-limits its usage
+    // endpoint for up to an hour) instead of showing a blank row.
     if claude_on {
-        if let Ok(response) = authed(
+        let claude_value = match authed(
             client.get(format!("{base_url}/subscription/status?provider=claude")),
         )
         .send()
         .await
         {
-            if response.status().is_success() {
-                if let Ok(claude) = response.json::<Value>().await {
-                    if let Some(map) = payload.as_object_mut() {
-                        map.insert("claude".into(), claude);
-                    }
-                }
+            Ok(response) if response.status().is_success() => {
+                response.json::<Value>().await.ok()
             }
+            Ok(response) => {
+                let detail: Value = response.json().await.unwrap_or(Value::Null);
+                let message = detail
+                    .get("detail")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Usage is temporarily unavailable.")
+                    .to_string();
+                Some(serde_json::json!({ "error": message }))
+            }
+            Err(_) => None,
+        };
+        if let (Some(claude), Some(map)) = (claude_value, payload.as_object_mut()) {
+            map.insert("claude".into(), claude);
         }
     }
     Ok(payload)

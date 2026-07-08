@@ -1085,7 +1085,11 @@ function claudeBlock(claude, paused) {
   if (!claude.ready_for_requests) {
     const note = document.createElement("div");
     note.className = "account-plan";
-    note.textContent = "Not signed in — use Sign in above.";
+    // A usage-fetch error (e.g. the relay process predates a settings
+    // change) is more accurate than assuming the user is signed out.
+    note.textContent = claudeUsage?.error
+      ? `Usage unavailable — ${claudeUsage.error}`
+      : "Not signed in — use Sign in above.";
     block.appendChild(note);
     return block;
   }
@@ -1095,6 +1099,30 @@ function claudeBlock(claude, paused) {
     for (const [label, window] of usageWindows(claudeUsage)) {
       block.appendChild(usageWindowRow(label, window));
     }
+    // Stale snapshot served during an upstream rate-limit window: show the
+    // bars (better than nothing) but say they are cached and when a fresh
+    // read becomes possible.
+    if (claudeUsage.stale) {
+      const note = document.createElement("div");
+      note.className = "account-plan";
+      const age = claudeUsage.as_of_epoch
+        ? formatDuration(Math.max(0, Date.now() / 1000 - claudeUsage.as_of_epoch))
+        : null;
+      const retry = claudeUsage.retry_after_seconds
+        ? formatDuration(claudeUsage.retry_after_seconds)
+        : null;
+      note.textContent =
+        `Cached usage${age ? ` from ${age} ago` : ""}` +
+        `${retry ? ` — refreshes in ~${retry}` : ""} (Claude rate-limits its usage endpoint).`;
+      block.appendChild(note);
+    }
+  } else if (claudeUsage?.error) {
+    // No usable snapshot: explain why the bars are missing instead of
+    // leaving the row silently blank.
+    const note = document.createElement("div");
+    note.className = "account-plan";
+    note.textContent = `Usage unavailable — ${claudeUsage.error}`;
+    block.appendChild(note);
   }
   return block;
 }

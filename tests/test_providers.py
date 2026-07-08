@@ -217,3 +217,108 @@ def test_claude_usage_tolerates_missing_buckets(tmp_path) -> None:
     normalized = runtime._normalize_usage({})
     assert normalized["rate_limits"]["default"]["primary_window"] is None
     assert normalized["rate_limit_reached_type"] is None
+
+
+def test_claude_usage_serves_stale_snapshot_during_rate_limit(tmp_path) -> None:
+    """A 429 from the undocumented usage endpoint must not blank the UI:
+    the last good snapshot is served, annotated as stale with the retry
+    horizon, and no further upstream request is made inside the window."""
+    import time as _time
+
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    runtime._usage_last_good = {"account": {"email": "a@b.c"}, "rate_limits": {"default": None, "additional": []}}
+    runtime._usage_last_good_epoch = _time.time() - 120
+    runtime._usage_blocked_until = _time.monotonic() + 1800
+
+    stale = runtime._stale_or_rate_limit_error(_time.monotonic())
+
+    assert stale["stale"] is True
+    assert 0 < stale["retry_after_seconds"] <= 1800
+    assert stale["account"]["email"] == "a@b.c"
+    # The stored snapshot itself must stay unannotated (deep-copied).
+    assert "stale" not in runtime._usage_last_good
+
+
+def test_claude_usage_raises_actionable_error_without_snapshot(tmp_path) -> None:
+    import time as _time
+
+    import pytest as _pytest
+
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    runtime._usage_blocked_until = _time.monotonic() + 3600
+
+    with _pytest.raises(ProviderError) as excinfo:
+        runtime._stale_or_rate_limit_error(_time.monotonic())
+
+    assert excinfo.value.status_code == 503
+    assert "rate-limit" in str(excinfo.value).lower()
+    assert excinfo.value.code == "provider_rate_limited"
+
+
+def test_retry_after_seconds_clamps_and_defaults() -> None:
+    from airelay.providers import _retry_after_seconds
+
+    assert _retry_after_seconds(None) == 3600
+    assert _retry_after_seconds("garbage") == 3600
+    assert _retry_after_seconds("120") == 120
+    assert _retry_after_seconds("5") == 60          # floor: no hammering
+    assert _retry_after_seconds("999999") == 7200   # ceiling: no multi-day wedge
+
+
+@pytest.mark.asyncio
+async def test_claude_usage_429_blocks_upstream_until_window_passes(tmp_path, monkeypatch) -> None:
+    """End-to-end orchestration: a 429 sets the block from retry-after, no
+    request is sent inside the window, and the first call after the window
+    succeeds and clears the block."""
+    import time as _time
+
+    import httpx as _httpx
+
+    calls = {"count": 0}
+    responses = [
+        _httpx.Response(429, headers={"retry-after": "120"}, json={"error": "rate_limit"}),
+        _httpx.Response(200, json={"five_hour": {"utilization": 10.0, "resets_at": "2099-01-01T00:00:00+00:00"}}),
+    ]
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, headers=None):
+            response = responses[min(calls["count"], len(responses) - 1)]
+            calls["count"] += 1
+            return response
+
+    monkeypatch.setattr("airelay.providers.httpx.AsyncClient", FakeClient)
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    monkeypatch.setattr(runtime, "_resolve_usage_token", lambda: "tok")
+
+    # 1) First call hits upstream, gets 429, no snapshot yet → clear error.
+    with pytest.raises(ProviderError) as excinfo:
+        await runtime.get_subscription_status("req-1")
+    assert excinfo.value.code == "provider_rate_limited"
+    assert calls["count"] == 1
+    assert runtime._usage_blocked_until > _time.monotonic()
+
+    # 2) Inside the window: no upstream request at all.
+    with pytest.raises(ProviderError):
+        await runtime.get_subscription_status("req-2")
+    assert calls["count"] == 1
+
+    # 3) Window passed: fetch succeeds, block clears, payload is fresh.
+    runtime._usage_blocked_until = _time.monotonic() - 1
+    payload = await runtime.get_subscription_status("req-3")
+    assert calls["count"] == 2
+    assert "stale" not in payload
+    assert payload["rate_limits"]["default"]["primary_window"]["used_percent"] == 10.0
+    assert runtime._usage_blocked_until == 0.0
+
+    # 4) Fresh cache: still no extra upstream call.
+    await runtime.get_subscription_status("req-4")
+    assert calls["count"] == 2
