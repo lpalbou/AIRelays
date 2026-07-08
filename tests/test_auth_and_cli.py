@@ -268,6 +268,10 @@ def test_cli_status_defaults_to_human_output_and_supports_json(
     tmp_path, capsys, monkeypatch
 ) -> None:
     _clear_airelay_env(monkeypatch)
+    # The login hint depends on the machine (desktop → browser flow,
+    # headless → device flow); pin it so the assertion is deterministic
+    # on displayless CI runners.
+    monkeypatch.setattr("airelay.cli._is_headless_environment", lambda: False)
     parser = build_parser()
     config_path = tmp_path / "config.toml"
     data_dir = tmp_path / "state"
@@ -300,6 +304,8 @@ def test_cli_doctor_reports_actionable_failures_for_missing_setup(
     tmp_path, capsys, monkeypatch
 ) -> None:
     _clear_airelay_env(monkeypatch)
+    # Pin the environment-dependent login hint (see status test above).
+    monkeypatch.setattr("airelay.cli._is_headless_environment", lambda: False)
     parser = build_parser()
     config_path = tmp_path / "config.toml"
     data_dir = tmp_path / "state"
