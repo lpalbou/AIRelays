@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -206,7 +207,12 @@ def _stderr_message(stderr: bytes, returncode: int) -> str:
 
 
 CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-CLAUDE_USAGE_CACHE_SECONDS = 30.0
+# The usage endpoint's budget is tiny (observed lockouts of an hour or
+# more). Five minutes keeps the meter useful while treating every upstream
+# call as precious; attempts are additionally spaced a minute apart no
+# matter how they end.
+CLAUDE_USAGE_CACHE_SECONDS = 300.0
+CLAUDE_USAGE_MIN_ATTEMPT_INTERVAL = 60.0
 CLAUDE_FIVE_HOUR_SECONDS = 5 * 3600
 CLAUDE_SEVEN_DAY_SECONDS = 7 * 86400
 
@@ -242,6 +248,21 @@ class ClaudeCliRuntime:
         # Single-flight: concurrent callers at cache expiry must not each
         # poke the aggressively rate-limited endpoint.
         self._usage_fetch_lock = asyncio.Lock()
+        # Fingerprint of a token the upstream rejected (401/403). Claude
+        # Code rotates its access token; retrying a dead one both fails and
+        # burns the rate budget. Blocked until the resolved token CHANGES.
+        self._usage_rejected_fingerprint: str | None = None
+        # Source of the rejected token ("file" is static and needs user
+        # action; CLI sources self-heal on rotation) — drives the message.
+        self._usage_rejected_source: str | None = None
+        # Attempt spacing across all outcome classes.
+        self._usage_last_attempt_at: float = -CLAUDE_USAGE_MIN_ATTEMPT_INTERVAL
+        # Guardrail state survives restarts: the block window and the last
+        # good snapshot are persisted, so restarting the relay can never
+        # turn into a fresh poke at a locked-out endpoint (the exact
+        # hammering pattern that earns hour-long lockouts).
+        self._usage_state_path = settings.data_dir / "claude-usage-state.json"
+        self._load_usage_state()
 
     def _build_models(self, configured: tuple[str, ...]) -> dict[str, ProviderModel]:
         records: dict[str, ProviderModel] = {}
@@ -815,7 +836,7 @@ class ClaudeCliRuntime:
         # Inside a rate-limit window: never poke the upstream again (that
         # can extend the lockout). Serve honest stale data when we have it.
         if now < self._usage_blocked_until:
-            return self._stale_or_rate_limit_error(now)
+            return self._stale_or_usage_error(now, "rate_limited")
         async with self._usage_fetch_lock:
             # Re-check after acquiring: a concurrent caller may have just
             # refilled the cache or hit a 429 while this one waited.
@@ -826,20 +847,39 @@ class ClaudeCliRuntime:
             ):
                 return json.loads(json.dumps(self._usage_cache))
             if now < self._usage_blocked_until:
-                return self._stale_or_rate_limit_error(now)
+                return self._stale_or_usage_error(now, "rate_limited")
             return await self._fetch_usage()
 
     async def _fetch_usage(self) -> dict[str, Any]:
         # Token resolution can shell out to the macOS keychain — never on
         # the event loop.
-        token = await asyncio.to_thread(self._resolve_usage_token)
+        token, source = await asyncio.to_thread(self._resolve_usage_token)
+        now = time.monotonic()
         if not token:
+            if source == "expired":
+                # Signed in, but the access token lapsed between rotations.
+                # The CLI mints a fresh one on its next served request; this
+                # is not a sign-in problem, so never say "sign in".
+                return self._stale_or_usage_error(now, "credential_rejected")
             raise ProviderError(
                 503,
-                "No Claude OAuth credential found. Sign in with `claude auth login` "
+                "No Claude sign-in found. Sign in with `claude auth login`, "
                 "or store a token with `airelays claude set-token`.",
                 code="provider_unavailable",
             )
+        # A token the upstream already rejected stays rejected: retrying it
+        # burns rate budget for a guaranteed failure. A CLI-owned token
+        # clears itself the moment the CLI rotates it (its next real
+        # request, including relay-served ones); a stored-file token is
+        # static, so recovery there needs the user to replace/remove it.
+        if _token_fingerprint(token) == self._usage_rejected_fingerprint:
+            return self._stale_or_usage_error(now, "credential_rejected", source=source)
+        # Attempt spacing: whatever the outcome class (network error, 5xx),
+        # never hit the upstream more than once a minute.
+        if now - self._usage_last_attempt_at < CLAUDE_USAGE_MIN_ATTEMPT_INTERVAL:
+            return self._stale_or_usage_error(now, "cooling_down")
+        self._usage_last_attempt_at = now
+        self._save_usage_state()
         headers = {
             "Authorization": f"Bearer {token}",
             "anthropic-beta": "oauth-2025-04-20",
@@ -858,21 +898,20 @@ class ClaudeCliRuntime:
                 code="provider_failure",
             ) from exc
         if response.status_code == 429:
-            # Fresh monotonic: `now` predates the keychain shell-out and the
-            # HTTP round-trip (up to ~25s), which would under-wait the window
-            # and re-poke a still-limited endpoint.
+            # Fresh monotonic: the timestamps above predate the keychain
+            # shell-out and the HTTP round-trip (up to ~25s), which would
+            # under-wait the window and re-poke a still-limited endpoint.
             arrived = time.monotonic()
             self._usage_blocked_until = arrived + _retry_after_seconds(
                 response.headers.get("retry-after")
             )
-            return self._stale_or_rate_limit_error(arrived)
+            self._save_usage_state()
+            return self._stale_or_usage_error(arrived, "rate_limited")
         if response.status_code in (401, 403):
-            raise ProviderError(
-                502,
-                "The Claude credential was rejected by the usage endpoint. "
-                "Sign in again or refresh the stored token.",
-                code="upstream_auth_error",
-            )
+            self._usage_rejected_fingerprint = _token_fingerprint(token)
+            self._usage_rejected_source = source
+            self._save_usage_state()
+            return self._stale_or_usage_error(time.monotonic(), "credential_rejected", source=source)
         if response.status_code >= 400:
             raise ProviderError(
                 502,
@@ -891,21 +930,50 @@ class ClaudeCliRuntime:
         self._usage_last_good = normalized
         self._usage_last_good_epoch = time.time()
         self._usage_blocked_until = 0.0
+        self._usage_rejected_fingerprint = None
+        self._usage_rejected_source = None
+        self._save_usage_state()
         return json.loads(json.dumps(normalized))
 
-    def _stale_or_rate_limit_error(self, now: float) -> dict[str, Any]:
-        """Inside an upstream rate-limit window: the last good snapshot,
-        annotated as stale, or an explicit rate-limited error when no
-        snapshot exists yet. Callers can rely on `stale`/`as_of_epoch`/
+    def _stale_or_usage_error(
+        self, now: float, reason: str, source: str | None = None
+    ) -> dict[str, Any]:
+        """Usage is temporarily unobtainable (rate-limited, dead credential
+        awaiting rotation, or attempt spacing): the last good snapshot
+        annotated as stale, or an explicit error when none exists yet.
+        Callers can rely on `stale`/`stale_reason`/`as_of_epoch`/
         `retry_after_seconds` to present the state honestly."""
         retry_after = max(0, int(self._usage_blocked_until - now))
+        # A stored-file token is static: CLI rotation can't fix it, so the
+        # recovery guidance differs from a CLI-owned credential.
+        file_sourced = source == "file"
         if self._usage_last_good is not None:
             stale = json.loads(json.dumps(self._usage_last_good))
             _refresh_stale_windows(stale)
             stale["stale"] = True
+            stale["stale_reason"] = reason
             stale["as_of_epoch"] = int(self._usage_last_good_epoch)
-            stale["retry_after_seconds"] = retry_after
+            if reason == "credential_rejected" and file_sourced:
+                stale["stale_reason"] = "credential_rejected_file"
+            if reason == "rate_limited" and retry_after:
+                stale["retry_after_seconds"] = retry_after
             return stale
+        if reason == "credential_rejected":
+            if file_sourced:
+                raise ProviderError(
+                    503,
+                    "The stored Claude token was rejected. Replace it with "
+                    "`airelays claude set-token`, or remove it to fall back to "
+                    "the claude CLI's own sign-in. Requests are unaffected.",
+                    code="provider_rate_limited",
+                )
+            raise ProviderError(
+                503,
+                "Claude's usage credential renews automatically on the claude "
+                "CLI's next request; usage will appear then. Requests are "
+                "unaffected.",
+                code="provider_rate_limited",
+            )
         minutes = max(1, retry_after // 60)
         raise ProviderError(
             503,
@@ -914,13 +982,86 @@ class ClaudeCliRuntime:
             code="provider_rate_limited",
         )
 
-    def _resolve_usage_token(self) -> str | None:
-        """OAuth access token for the usage endpoint, matching the request
-        path's precedence: stored file/env first, then the claude CLI's own
-        credential stores (macOS keychain, ~/.claude/.credentials.json)."""
+    # ----- usage guardrail persistence -----
+    # The block window, rejected-token fingerprint, and last snapshot are
+    # persisted so a relay restart can never turn into a fresh poke at a
+    # locked-out endpoint (restart-loops were exactly how the hour-long
+    # lockouts were earned).
+
+    def _load_usage_state(self) -> None:
+        try:
+            state = json.loads(self._usage_state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(state, dict):
+            return
+        blocked_epoch = state.get("blocked_until_epoch")
+        if isinstance(blocked_epoch, (int, float)):
+            remaining = blocked_epoch - time.time()
+            if remaining > 0:
+                self._usage_blocked_until = time.monotonic() + min(remaining, 7200)
+        fingerprint = state.get("rejected_fingerprint")
+        if isinstance(fingerprint, str) and fingerprint:
+            self._usage_rejected_fingerprint = fingerprint
+        rejected_source = state.get("rejected_source")
+        if isinstance(rejected_source, str) and rejected_source:
+            self._usage_rejected_source = rejected_source
+        attempt_epoch = state.get("last_attempt_epoch")
+        if isinstance(attempt_epoch, (int, float)):
+            elapsed = time.time() - attempt_epoch
+            if 0 <= elapsed < CLAUDE_USAGE_MIN_ATTEMPT_INTERVAL:
+                # Map remaining wall-clock spacing onto monotonic so a
+                # restart loop can't poke once per restart.
+                self._usage_last_attempt_at = time.monotonic() - elapsed
+        last_good = state.get("last_good")
+        last_good_epoch = state.get("last_good_epoch")
+        if isinstance(last_good, dict) and isinstance(last_good_epoch, (int, float)):
+            # Snapshots older than a day describe windows that have long
+            # since rolled over; showing them helps nobody.
+            if time.time() - last_good_epoch < 86400:
+                self._usage_last_good = last_good
+                self._usage_last_good_epoch = float(last_good_epoch)
+
+    def _save_usage_state(self) -> None:
+        mono = time.monotonic()
+        remaining = max(0.0, self._usage_blocked_until - mono)
+        attempt_ago = max(0.0, mono - self._usage_last_attempt_at)
+        state = {
+            "blocked_until_epoch": time.time() + remaining if remaining else 0,
+            "rejected_fingerprint": self._usage_rejected_fingerprint,
+            "rejected_source": self._usage_rejected_source,
+            "last_attempt_epoch": time.time() - attempt_ago,
+            "last_good": self._usage_last_good,
+            "last_good_epoch": self._usage_last_good_epoch,
+        }
+        try:
+            self._usage_state_path.parent.mkdir(parents=True, exist_ok=True)
+            # Atomic replace: a second relay sharing data_dir must never read
+            # a half-written state file (a torn read would fail open and poke
+            # a locked endpoint).
+            tmp = self._usage_state_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(state, ensure_ascii=True), encoding="utf-8")
+            os.replace(tmp, self._usage_state_path)
+        except OSError:
+            pass  # best-effort: guardrails still hold for this process
+
+    def _resolve_usage_token(self) -> tuple[str | None, str]:
+        """OAuth access token for the usage endpoint plus its source, in the
+        same precedence the request path uses: stored file, then the
+        `CLAUDE_CODE_OAUTH_TOKEN` env var, then the claude CLI's own stores
+        (macOS keychain, ~/.claude/.credentials.json).
+
+        Returns ``(token, source)``. When no usable token is found the source
+        is ``"expired"`` if a CLI-owned credential exists but its access
+        token has lapsed between rotations (renews on the CLI's next
+        request), or ``"none"`` if there is genuinely no sign-in."""
         stored = self._settings.resolve_claude_oauth_token()
         if stored:
-            return stored
+            return stored, "file"
+        env_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+        if env_token:
+            return env_token, "env"
+        saw_expired = False
         if sys.platform == "darwin":
             try:
                 probe = subprocess.run(
@@ -931,19 +1072,23 @@ class ClaudeCliRuntime:
                     timeout=10,
                 )
                 if probe.returncode == 0:
-                    token = _fresh_oauth_access_token(json.loads(probe.stdout.strip()))
+                    payload = json.loads(probe.stdout.strip())
+                    token = _fresh_oauth_access_token(payload)
                     if token:
-                        return token
+                        return token, "keychain"
+                    saw_expired = saw_expired or _has_oauth_access_token(payload)
             except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
                 pass
         credentials = Path.home() / ".claude" / ".credentials.json"
         try:
-            token = _fresh_oauth_access_token(json.loads(credentials.read_text(encoding="utf-8")))
+            payload = json.loads(credentials.read_text(encoding="utf-8"))
+            token = _fresh_oauth_access_token(payload)
             if token:
-                return token
+                return token, "credentials"
+            saw_expired = saw_expired or _has_oauth_access_token(payload)
         except (OSError, json.JSONDecodeError):
             pass
-        return None
+        return None, ("expired" if saw_expired else "none")
 
     def _normalize_usage(self, payload: dict[str, Any]) -> dict[str, Any]:
         probe = self._last_probe or {}
@@ -1128,6 +1273,11 @@ def _refresh_stale_windows(snapshot: dict[str, Any]) -> None:
             default["limit_reached"] = False
 
 
+def _token_fingerprint(token: str) -> str:
+    """Stable non-reversible identity for a credential, safe to persist."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
 def _retry_after_seconds(header: str | None) -> int:
     """Upstream retry-after header → a sane wait. Missing or malformed
     values default to the endpoint's observed window (1h); the clamp keeps
@@ -1138,6 +1288,17 @@ def _retry_after_seconds(header: str | None) -> int:
     except (ValueError, OverflowError):
         seconds = 3600
     return max(60, min(seconds, 7200))
+
+
+def _has_oauth_access_token(payload: Any) -> bool:
+    """True when a claude CLI credential payload carries an access token at
+    all — used to tell "signed in but token lapsed between rotations" from
+    "no sign-in", which need different messages."""
+    return bool(
+        isinstance(payload, dict)
+        and isinstance(payload.get("claudeAiOauth"), dict)
+        and payload["claudeAiOauth"].get("accessToken")
+    )
 
 
 def _fresh_oauth_access_token(payload: Any) -> str | None:

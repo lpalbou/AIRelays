@@ -678,17 +678,28 @@ function usageWindowRow(label, window) {
 
   const bar = document.createElement("div");
   bar.className = "usage-bar";
+  const detail = document.createElement("span");
+  detail.className = "usage-detail";
+
+  // A null used_percent means the window rolled over while we couldn't
+  // reach the endpoint (stale snapshot): the old numbers are meaningless,
+  // so show an empty bar and say so rather than fabricating "0% · <1m".
+  if (window.used_percent == null) {
+    detail.textContent = "awaiting fresh data";
+    row.append(name, bar, detail);
+    return row;
+  }
+
   const fill = document.createElement("div");
   fill.className = "usage-fill";
-  const used = Math.max(0, Math.min(100, window.used_percent ?? 0));
+  const used = Math.max(0, Math.min(100, window.used_percent));
   fill.style.width = `${used}%`;
   if (used >= 100) fill.classList.add("full");
   else if (used >= 80) fill.classList.add("high");
   bar.appendChild(fill);
 
-  const detail = document.createElement("span");
-  detail.className = "usage-detail";
-  const resets = formatDuration(window.reset_after_seconds);
+  const resets =
+    window.reset_after_seconds > 0 ? formatDuration(window.reset_after_seconds) : null;
   detail.textContent =
     `${used.toFixed(0)}% used` + (resets ? ` · resets in ${resets}` : "");
 
@@ -784,18 +795,14 @@ function render(state) {
   el("ov-claude-section").hidden = !state.settings.enableClaudeExperimental;
   el("ov-claude-off-badge").hidden = state.claude_effective;
 
-  // Claude holds a single account (the claude CLI has one login), so
-  // sign-in is disabled while signed in; sign out first to switch.
+  // Sign-in stays enabled while signed in: the claude CLI treats a repeat
+  // sign-in as a credential refresh / account switch, both legitimate.
   const claudeSignedIn = Boolean(
     state.claude_effective && state.relay_status?.providers?.claude?.ready_for_requests
   );
-  for (const id of ["ov-login-claude", "ov-login-claude-menu"]) {
-    const button = el(id);
-    button.disabled = claudeSignedIn;
-    button.title = claudeSignedIn
-      ? "Already signed in — sign out from the account row to switch accounts."
-      : "";
-  }
+  el("ov-login-claude").title = claudeSignedIn
+    ? "Signing in again refreshes credentials or switches the account."
+    : "";
 
   // Both sign-in buttons carry the provider name; repeated OpenAI sign-ins
   // are additive (the CLI guard keeps existing accounts), so one label
@@ -1035,6 +1042,9 @@ function claudeBlock(claude, paused) {
 
   const badge = document.createElement("span");
   const atLimit = Boolean(claudeUsage?.rate_limit_reached_type);
+  // Usage state is part of the row's health: "Ready" with a broken usage
+  // meter would be a half-truth.
+  const usageBlocked = Boolean(claudeUsage?.error);
   if (paused) {
     badge.className = "badge badge-neutral";
     badge.textContent = "Paused";
@@ -1043,6 +1053,10 @@ function claudeBlock(claude, paused) {
     badge.className = "badge badge-warn";
     badge.textContent = "At limit";
     badge.title = "Usage limit reached; it resets on schedule.";
+  } else if (claude.ready_for_requests && usageBlocked) {
+    badge.className = "badge badge-warn";
+    badge.textContent = "Usage unavailable";
+    badge.title = "Requests work; the usage meter is temporarily unavailable (see the note below).";
   } else if (claude.ready_for_requests) {
     badge.className = "badge badge-accent";
     badge.textContent = "Ready";
@@ -1099,9 +1113,8 @@ function claudeBlock(claude, paused) {
     for (const [label, window] of usageWindows(claudeUsage)) {
       block.appendChild(usageWindowRow(label, window));
     }
-    // Stale snapshot served during an upstream rate-limit window: show the
-    // bars (better than nothing) but say they are cached and when a fresh
-    // read becomes possible.
+    // Stale snapshot: show the bars (better than nothing) but say they are
+    // cached, and why a fresh read isn't possible yet.
     if (claudeUsage.stale) {
       const note = document.createElement("div");
       note.className = "account-plan";
@@ -1111,9 +1124,17 @@ function claudeBlock(claude, paused) {
       const retry = claudeUsage.retry_after_seconds
         ? formatDuration(claudeUsage.retry_after_seconds)
         : null;
-      note.textContent =
-        `Cached usage${age ? ` from ${age} ago` : ""}` +
-        `${retry ? ` — refreshes in ~${retry}` : ""} (Claude rate-limits its usage endpoint).`;
+      let why;
+      if (claudeUsage.stale_reason === "credential_rejected_file") {
+        why = "stored token rejected — replace it with a new token or remove it";
+      } else if (claudeUsage.stale_reason === "credential_rejected") {
+        why = "updates on Claude's next served request";
+      } else if (retry) {
+        why = `refreshes in ~${retry} (rate-limited upstream)`;
+      } else {
+        why = "refreshes shortly";
+      }
+      note.textContent = `Cached usage${age ? ` from ${age} ago` : ""} — ${why}.`;
       block.appendChild(note);
     }
   } else if (claudeUsage?.error) {
@@ -1121,7 +1142,7 @@ function claudeBlock(claude, paused) {
     // leaving the row silently blank.
     const note = document.createElement("div");
     note.className = "account-plan";
-    note.textContent = `Usage unavailable — ${claudeUsage.error}`;
+    note.textContent = claudeUsage.error;
     block.appendChild(note);
   }
   return block;

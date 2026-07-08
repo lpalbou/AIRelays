@@ -230,9 +230,10 @@ def test_claude_usage_serves_stale_snapshot_during_rate_limit(tmp_path) -> None:
     runtime._usage_last_good_epoch = _time.time() - 120
     runtime._usage_blocked_until = _time.monotonic() + 1800
 
-    stale = runtime._stale_or_rate_limit_error(_time.monotonic())
+    stale = runtime._stale_or_usage_error(_time.monotonic(), "rate_limited")
 
     assert stale["stale"] is True
+    assert stale["stale_reason"] == "rate_limited"
     assert 0 < stale["retry_after_seconds"] <= 1800
     assert stale["account"]["email"] == "a@b.c"
     # The stored snapshot itself must stay unannotated (deep-copied).
@@ -248,7 +249,7 @@ def test_claude_usage_raises_actionable_error_without_snapshot(tmp_path) -> None
     runtime._usage_blocked_until = _time.monotonic() + 3600
 
     with _pytest.raises(ProviderError) as excinfo:
-        runtime._stale_or_rate_limit_error(_time.monotonic())
+        runtime._stale_or_usage_error(_time.monotonic(), "rate_limited")
 
     assert excinfo.value.status_code == 503
     assert "rate-limit" in str(excinfo.value).lower()
@@ -297,7 +298,7 @@ async def test_claude_usage_429_blocks_upstream_until_window_passes(tmp_path, mo
 
     monkeypatch.setattr("airelay.providers.httpx.AsyncClient", FakeClient)
     runtime = ClaudeCliRuntime(make_settings(tmp_path))
-    monkeypatch.setattr(runtime, "_resolve_usage_token", lambda: "tok")
+    monkeypatch.setattr(runtime, "_resolve_usage_token", lambda: ("tok", "keychain"))
 
     # 1) First call hits upstream, gets 429, no snapshot yet → clear error.
     with pytest.raises(ProviderError) as excinfo:
@@ -311,8 +312,10 @@ async def test_claude_usage_429_blocks_upstream_until_window_passes(tmp_path, mo
         await runtime.get_subscription_status("req-2")
     assert calls["count"] == 1
 
-    # 3) Window passed: fetch succeeds, block clears, payload is fresh.
+    # 3) Window passed (and attempt spacing elapsed): fetch succeeds,
+    # block clears, payload is fresh.
     runtime._usage_blocked_until = _time.monotonic() - 1
+    runtime._usage_last_attempt_at = _time.monotonic() - 3600
     payload = await runtime.get_subscription_status("req-3")
     assert calls["count"] == 2
     assert "stale" not in payload
@@ -322,3 +325,120 @@ async def test_claude_usage_429_blocks_upstream_until_window_passes(tmp_path, mo
     # 4) Fresh cache: still no extra upstream call.
     await runtime.get_subscription_status("req-4")
     assert calls["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_claude_usage_never_retries_a_rejected_token(tmp_path, monkeypatch) -> None:
+    """A 401 marks the token dead: no upstream retry with the same token
+    (even after the attempt-spacing interval), automatic recovery when the
+    resolved token changes, and the guardrail survives a restart."""
+    import time as _time
+
+    import httpx as _httpx
+
+    calls = {"count": 0}
+    responses = [
+        _httpx.Response(401, json={"error": "auth"}),
+        _httpx.Response(200, json={"five_hour": {"utilization": 5.0, "resets_at": "2099-01-01T00:00:00+00:00"}}),
+    ]
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, headers=None):
+            response = responses[min(calls["count"], len(responses) - 1)]
+            calls["count"] += 1
+            return response
+
+    monkeypatch.setattr("airelay.providers.httpx.AsyncClient", FakeClient)
+    settings = make_settings(tmp_path)
+    runtime = ClaudeCliRuntime(settings)
+    token = {"value": "dead-token"}
+    monkeypatch.setattr(runtime, "_resolve_usage_token", lambda: (token["value"], "keychain"))
+
+    # 1) 401 → actionable error, token fingerprinted as rejected.
+    with pytest.raises(ProviderError) as excinfo:
+        await runtime.get_subscription_status("req-1")
+    assert "renews automatically" in str(excinfo.value)
+    assert calls["count"] == 1
+
+    # 2) Same token, attempt spacing elapsed → still no upstream call.
+    runtime._usage_last_attempt_at = _time.monotonic() - 3600
+    with pytest.raises(ProviderError):
+        await runtime.get_subscription_status("req-2")
+    assert calls["count"] == 1
+
+    # 3) Restart: guardrail persists via the state file.
+    restarted = ClaudeCliRuntime(settings)
+    monkeypatch.setattr(restarted, "_resolve_usage_token", lambda: (token["value"], "keychain"))
+    with pytest.raises(ProviderError):
+        await restarted.get_subscription_status("req-3")
+    assert calls["count"] == 1
+
+    # 4) Token rotates → fetch allowed again, succeeds, block cleared.
+    token["value"] = "fresh-token"
+    restarted._usage_last_attempt_at = _time.monotonic() - 3600
+    payload = await restarted.get_subscription_status("req-4")
+    assert calls["count"] == 2
+    assert payload["rate_limits"]["default"]["primary_window"]["used_percent"] == 5.0
+    assert restarted._usage_rejected_fingerprint is None
+
+
+def test_resolve_usage_token_reports_expired_vs_absent(tmp_path, monkeypatch) -> None:
+    """A lapsed-but-present CLI credential is 'expired' (renews itself), not
+    'none' (needs sign-in) — the distinction the incident hinged on."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    monkeypatch.setattr(
+        type(runtime._settings), "resolve_claude_oauth_token", lambda self: None
+    )
+    import json as _json
+    import sys as _sys
+
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setattr(_sys, "platform", "linux")  # skip keychain probe
+
+    creds = tmp_path / ".claude" / ".credentials.json"
+    creds.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("airelay.providers.Path.home", staticmethod(lambda: tmp_path))
+
+    creds.write_text(_json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": 1}}), encoding="utf-8")
+    token, source = runtime._resolve_usage_token()
+    assert token is None and source == "expired"
+
+    creds.write_text(_json.dumps({}), encoding="utf-8")
+    token, source = runtime._resolve_usage_token()
+    assert token is None and source == "none"
+
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "env-tok")
+    token, source = runtime._resolve_usage_token()
+    assert token == "env-tok" and source == "env"
+
+
+def test_refresh_stale_windows_clears_rolled_over_state() -> None:
+    from airelay.providers import _refresh_stale_windows
+
+    snapshot = {
+        "rate_limit_reached_type": "five_hour",
+        "rate_limits": {
+            "default": {
+                "limit_reached": True,
+                "primary_window": {"used_percent": 100, "reset_at": 1},  # long past
+                "secondary_window": {"used_percent": 40, "reset_at": 4102444800},  # far future
+            },
+            "additional": [],
+        },
+    }
+    _refresh_stale_windows(snapshot)
+    primary = snapshot["rate_limits"]["default"]["primary_window"]
+    assert primary["used_percent"] is None  # rolled over → unknown
+    assert primary["reset_after_seconds"] == 0
+    # A future window that is not maxed clears the account-level limit flag.
+    assert snapshot["rate_limit_reached_type"] is None
+    assert snapshot["rate_limits"]["default"]["limit_reached"] is False
