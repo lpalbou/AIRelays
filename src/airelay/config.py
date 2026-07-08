@@ -115,6 +115,18 @@ class Settings:
     trust_x_forwarded_for: bool = False
     max_upload_bytes: int = 32 * 1024 * 1024
     max_total_upload_bytes: int = 256 * 1024 * 1024
+    # Log every raw upstream SSE line to the traffic log. Invaluable for
+    # deep protocol debugging but enormous under load (a single streamed
+    # response is hundreds of lines), so it is opt-in. The per-request
+    # summary records (request, usage, response, errors) are always logged.
+    log_stream_lines: bool = False
+    enable_openai_provider: bool = True
+    models_cache_ttl_seconds: float = 300.0
+    # Multiple own accounts: "ordered" uses the first account until it hits
+    # its usage limit, then continues with the next; "round_robin" spreads
+    # requests evenly across healthy accounts.
+    openai_balance: str = "ordered"
+    openai_account_cooldown_seconds: int = 300
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -284,6 +296,36 @@ class Settings:
                 or _cfg(payload, "uploads", "max_total_upload_bytes"),
                 256 * 1024 * 1024,
             ),
+            log_stream_lines=_bool(
+                _env("AIRELAYS_LOG_STREAM_LINES")
+                or _cfg(payload, "logging", "stream_lines"),
+                False,
+            ),
+            enable_openai_provider=_bool(
+                _env("AIRELAYS_ENABLE_OPENAI", "AIRELAY_ENABLE_OPENAI")
+                or _cfg(payload, "providers", "openai", "enabled"),
+                True,
+            ),
+            models_cache_ttl_seconds=_float(
+                _env(
+                    "AIRELAYS_MODELS_CACHE_TTL_SECONDS",
+                    "AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS",
+                    "AIRELAY_MODELS_CACHE_TTL_SECONDS",
+                    "AIRELAY_OPENAI_MODELS_CACHE_TTL_SECONDS",
+                )
+                or _cfg(payload, "providers", "openai", "models_cache_ttl_seconds"),
+                300.0,
+            ),
+            openai_balance=str(
+                _env("AIRELAYS_OPENAI_BALANCE")
+                or _cfg(payload, "providers", "openai", "balance")
+                or "ordered"
+            ),
+            openai_account_cooldown_seconds=_int(
+                _env("AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS")
+                or _cfg(payload, "providers", "openai", "account_cooldown_seconds"),
+                300,
+            ),
         )
 
     def ensure_directories(self) -> None:
@@ -391,6 +433,15 @@ trust_x_forwarded_for = {str(self.trust_x_forwarded_for).lower()}
 [uploads]
 max_upload_bytes = {self.max_upload_bytes}
 max_total_upload_bytes = {self.max_total_upload_bytes}
+
+[logging]
+stream_lines = {str(self.log_stream_lines).lower()}
+
+[providers.openai]
+enabled = {str(self.enable_openai_provider).lower()}
+models_cache_ttl_seconds = {self.models_cache_ttl_seconds}
+balance = "{self.openai_balance}"
+account_cooldown_seconds = {self.openai_account_cooldown_seconds}
 """
 
     def client_base_url(self) -> str:
@@ -424,4 +475,12 @@ max_total_upload_bytes = {self.max_total_upload_bytes}
             "max_upload_bytes": self.max_upload_bytes,
             "max_total_upload_bytes": self.max_total_upload_bytes,
             "client_base_url": self.client_base_url(),
+            "providers": {
+                "openai": {
+                    "enabled": self.enable_openai_provider,
+                    "models_cache_ttl_seconds": self.models_cache_ttl_seconds,
+                    "balance": self.openai_balance,
+                    "account_cooldown_seconds": self.openai_account_cooldown_seconds,
+                },
+            },
         }

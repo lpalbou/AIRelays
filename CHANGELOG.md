@@ -1,10 +1,40 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+
+- Models listing: a desktop Models tab and a CLI command (`airelays models`, `--json` supported) list every model id the running relay accepts, with one-click copy of the exact id.
+- Desktop supervision: crash auto-restart with capped backoff and native notifications (Settings → Launch, default on; a deliberate Stop never respawns), "Start AIRelays at login" via the OS-native mechanism on all three platforms, and automatic relay start when the app opens (skipped when a relay already answers on the address).
+- Tray activity indicator: the tray icon blinks once when new requests were served since the last poll (`requests_total` in `/v1/relay/status`).
+- Sign-in flows can be cancelled from the banner; a deliberate cancel is reported as information, not a failure.
+- Account balancing proactively skips accounts whose usage report already shows a reached limit, in addition to reacting to live 429s; `POST /v1/relay/accounts/refresh` (CLI: `airelays accounts refresh`) clears the holds and re-checks capacity on demand.
+- Multiple-account management from the desktop: per-account sign-out buttons and an "Add account" split button offering browser or device-code sign-in per attempt.
+
+### Changed
+
+- Relay health is now reported truthfully and robustly. The desktop derives liveness from `/healthz` (exempt from auth and rate limits) with brief down-flip debouncing, fetches the rich status payload separately, and shows "Running — not responding" instead of "Stopped" when the relay process is alive but not answering. The dashboard, sidebar, and tray always agree.
+- The relay's status route no longer runs provider probes in the request path: credential reads are briefly cached and account rediscovery is throttled. Status responses return immediately.
+- Per-line stream logging (one record per upstream SSE line) is now opt-in via `[logging] stream_lines` / `AIRELAYS_LOG_STREAM_LINES` (default off). Summary records — request, tokens, status, errors — are always logged. This keeps traffic logs compact and the Traffic view complete on busy relays.
+- The Overview tab was restructured: one Accounts card with per-account usage bars labeled with the real window names ("5h window", "Weekly"), a single Refresh action, quieter tertiary buttons, and amber (not red) for self-resetting quota limits. Endpoint URLs appear once, and only real, reachable addresses are listed (self-assigned 169.254.x.x interfaces are filtered out).
+- Documented the compatibility layer in README ("What The Relay Changes") and docs/api.md: rejected sampling parameters are stripped and disclosed via the `x-airelays-ignored-parameters` header; `reasoning_effort` passes through verbatim, and omitting it means the upstream's low default — set it explicitly for parity with the official apps.
+
+### Fixed
+
+- Desktop: the app now extends its PATH with standard user bin directories at startup (GUI apps inherit a minimal PATH), so PATH-installed relays are found.
+- Traffic view: real requests are no longer evicted from the view by monitoring or stream chatter; token counts (input/output) are shown per request; the reader's memory and CPU are bounded.
+- Tray icon: the icon re-asserts itself on every poll, so it can no longer stick out of sync with the actual connection state.
+- Sign-in flows: replacing or cancelling a sign-in cleans up completely (no orphaned flow holding the OAuth callback port), abandoned flows time out, and failure messages include the CLI's stderr.
+- Supervision edge cases: concurrent starts cannot double-spawn the relay; a benign start collision no longer mislabels a healthy relay as Failed; auto-restart stands down when an external relay owns the port; Restart explains itself when the answering relay isn't app-managed.
+- Multiple-account discovery derives identity from the auth record (email/plan now always populate), and a newly added account is picked up by the running relay without a restart.
+- Model-aware routing for mixed-plan pools: requests route only to accounts that expose the requested model, and `/v1/models` advertises the intersection.
+- Headless sign-in: `airelays login` auto-selects the device-code flow on SSH and displayless machines; device-flow errors are readable.
+
 ## 0.2.5
 
-- Added `airelays doctor` for end-to-end local diagnostics covering config, relay-token setup, upstream OpenAI subscription login, live `/models`, and an optional tiny `/responses` smoke probe.
-- Added machine-readable `airelays doctor --json` output and actionable next-step hints for setup and auth failures.
-- Refreshed the documentation and LLM index files with the new diagnostic workflow.
+- Added `airelays doctor` for local setup checks, relay-token validation, OpenAI login readiness, live upstream `/models` probing, and an optional tiny `/responses` smoke test.
+- Cached successful OpenAI upstream model-list responses for five minutes by default, with an explicit `models_cache_ttl_seconds` setting, auth/account-scoped invalidation, and `/v1/relay/status` cache diagnostics.
+- Documented the OpenAI model-list cache controls, including `AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS` and `models_cache_ttl_seconds = 0` to disable caching.
 
 ## 0.2.4
 

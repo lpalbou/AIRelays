@@ -2,7 +2,6 @@ from __future__ import annotations
 
 def render_home(
     *,
-    upstream_ready: bool,
     relay_token_ready: bool,
     require_bearer_auth: bool,
     host: str,
@@ -10,17 +9,22 @@ def render_home(
     client_base_url: str,
     bearer_token_file: str,
     security: dict[str, object],
+    providers: dict[str, object],
 ) -> str:
-    auth_state = "Upstream ChatGPT login ready" if upstream_ready else "Upstream ChatGPT login missing"
+    openai_provider = dict(providers.get("openai", {}))
+    openai_enabled = bool(openai_provider.get("enabled"))
+    openai_ready = bool(openai_provider.get("ready_for_requests"))
+    provider_ready = openai_ready
+    auth_state = "Upstream ChatGPT login ready" if openai_ready else "Upstream ChatGPT login missing"
+    provider_state = "OpenAI runtime enabled"
     if require_bearer_auth:
         token_state = "Relay client token ready" if relay_token_ready else "Relay client token missing"
-        next_step = (
-            f"airelays serve --host {host} --port {port}"
-            if upstream_ready and relay_token_ready
-            else "airelays init"
-            if not relay_token_ready
-            else "airelays login"
-        )
+        if not relay_token_ready:
+            next_step = "airelays init"
+        elif provider_ready:
+            next_step = f"airelays serve --host {host} --port {port}"
+        else:
+            next_step = "airelays login"
         client_credential_copy = (
             "Use the AIRelays bearer token as the client credential so standard "
             "OpenAI-compatible SDKs send <code>Authorization: Bearer ...</code>. "
@@ -32,9 +36,13 @@ def render_home(
         surface_value = "<code>/v1/*</code> and <code>/no-tools/v1/*</code>"
         first_run_copy = (
             "<li><code>airelays init</code> writes a config file and relay token</li>"
-            "<li><code>airelays login</code> creates an AIRelays-owned subscription session</li>"
-            "<li><code>airelays serve --port 8080</code> launches the protected local endpoint</li>"
-            "<li><code>airelays status</code> shows config, token, and upstream-auth readiness</li>"
+            + (
+                "<li><code>airelays login</code> creates an AIRelays-owned OpenAI subscription session</li>"
+                if openai_enabled
+                else ""
+            )
+            + "<li><code>airelays serve --port 8080</code> launches the protected local endpoint</li>"
+            + "<li><code>airelays status</code> shows config, token, and provider-readiness details</li>"
         )
         protected_surface_copy = (
             "<li><code>GET /v1/models</code>, <code>POST /v1/responses</code>, and other API routes require the relay token</li>"
@@ -51,7 +59,12 @@ def render_home(
         )
     else:
         token_state = "Relay auth disabled"
-        next_step = f"airelays serve --host {host} --port {port} --no-auth" if upstream_ready else "airelays login"
+        if provider_ready:
+            next_step = f"airelays serve --host {host} --port {port} --no-auth"
+        elif openai_enabled:
+            next_step = "airelays login"
+        else:
+            next_step = "Complete provider login first"
         client_credential_copy = (
             "Clients can call this AIRelays base URL without <code>Authorization</code>. "
             "If your SDK insists on an <code>api_key</code> value, any non-empty placeholder string is acceptable."
@@ -65,9 +78,9 @@ def render_home(
         surface_value = "<code>/v1/*</code> and <code>/no-tools/v1/*</code>"
         first_run_copy = (
             "<li><code>airelays init --no-auth</code> writes a config file with bearer auth disabled</li>"
-            "<li><code>airelays login</code> creates an AIRelays-owned subscription session</li>"
+            "<li><code>airelays login</code> creates an AIRelays-owned OpenAI subscription session</li>"
             "<li><code>airelays serve --no-auth --port 8080</code> launches the open local endpoint</li>"
-            "<li><code>airelays status</code> shows config and upstream-auth readiness</li>"
+            "<li><code>airelays status</code> shows config and provider-readiness details</li>"
         )
         protected_surface_copy = (
             "<li>All documented API routes are accessible without a relay token in this process</li>"
@@ -243,12 +256,14 @@ def render_home(
       <div class="chips">
         <div class="chip">{auth_state}</div>
         <div class="chip safe">{token_state}</div>
+        <div class="chip safe">{provider_state}</div>
       </div>
       <h1>AIRelays provides an OpenAI-compatible endpoint over your subscription login.</h1>
       <p>
         AIRelays stores its own subscription login, protects the relay with your own bearer token,
-        and lets standard OpenAI clients talk to one local base URL. Tool-enabled and
-        tool-disabled routes stay separate, and every transit is logged to JSONL.
+        and lets standard OpenAI clients talk to one local base URL. OpenAI subscription routes
+        stay first-class, and optional provider adapters can expose smaller compatible subsets.
+        Tool-enabled and tool-disabled routes stay separate, and every transit is logged to JSONL.
       </p>
       <p>
         AIRelays is an independent third-party project for single-user local convenience. It is
@@ -258,7 +273,7 @@ def render_home(
         <div class="action">
           <strong>Next Step</strong>
           <code>{next_step}</code>
-          <p>Run <code>airelays login</code> before serving. Use <code>airelays init</code> when you want config plus the default protected token path, or <code>airelays init --no-auth</code> for an open local relay.</p>
+          <p>Use <code>airelays init</code> when you want config plus the default protected token path, or <code>airelays init --no-auth</code> for an open local relay. Provider login depends on the enabled runtime.</p>
         </div>
         <div class="action">
           <strong>Client Base URL</strong>
@@ -274,6 +289,7 @@ def render_home(
       <div class="stats">
         <div class="stat"><strong>Listener</strong><span>{host}:{port}</span></div>
         <div class="stat"><strong>{surface_label}</strong><span>{surface_value}</span></div>
+        <div class="stat"><strong>Providers</strong><span>{provider_state}</span></div>
         <div class="stat"><strong>Public Status</strong><span><code>GET /healthz</code></span></div>
         <div class="stat"><strong>{"Protected Diagnostics" if require_bearer_auth else "Relay Diagnostics"}</strong><span><code>GET /v1/relay/status</code></span></div>
       </div>

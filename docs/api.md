@@ -1,200 +1,116 @@
 # API Notes
 
-## Supported Routes
+## Compatibility Adaptations (read this first)
 
-### `GET /v1/models`
+The verified upstream is the ChatGPT subscription backend, not the public
+platform API. AIRelays adapts requests on the three text-generation routes
+(`/v1/responses`, `/v1/chat/completions`, `/v1/completions`) rather than
+letting them fail, and always discloses what it changed:
 
-Returns an OpenAI-style models list built from the subscription backend catalog.
+- **Removed sampling parameters:** `temperature`, `top_p`,
+  `presence_penalty`, and `frequency_penalty` are stripped before the
+  upstream call because the upstream rejects them
+  (`"Unsupported parameter: temperature"`). The names of removed
+  parameters are returned in the `x-airelays-ignored-parameters` response
+  header and logged as a `compatibility_adaptation` traffic record with the
+  reason. Generation runs with the upstream's own sampling defaults.
+- **Reasoning effort:** `reasoning_effort` (chat completions) and
+  `reasoning.effort` (responses) are forwarded verbatim. Requests that omit
+  it run at upstream effort `none`, which is lower than the `medium` the
+  official ChatGPT apps use for the same models — set it explicitly when
+  comparing model quality.
+- **Rejected loudly instead of adapted:** `store=true`, output-token limit
+  fields (`max_tokens`, `max_completion_tokens`, `max_output_tokens`),
+  `n>1`, and `best_of`/`echo`/`logprobs`/`suffix` on `/v1/completions`.
+  These change semantics in ways silent stripping would hide, so they
+  return a clear error.
+- **Account affinity:** with multiple OpenAI accounts, a conversation is
+  pinned to the account that served its first turn (protects upstream
+  prompt caching); failover to another account happens only at turn
+  boundaries, logged as an `account_failover` traffic record.
 
-### `GET /v1/subscription/status`
+## `GET /v1/models`
 
-Returns the current ChatGPT subscription snapshot from the verified upstream usage endpoint.
+Returns an OpenAI-style models list built from the OpenAI runtime.
 
-Supported behavior:
+- OpenAI models come from the verified ChatGPT subscription backend when that runtime is ready.
+- All model ids route to the OpenAI runtime.
+- Each model record includes an `airelays` extension block with provider identity and route capabilities.
+- Successful OpenAI upstream model-list responses are cached in memory for
+  `models_cache_ttl_seconds` seconds. The default is 300 seconds; `0`
+  disables the cache.
+- Cached OpenAI model lists are scoped to the current local OpenAI auth account
+  and ignored after logout or account changes.
 
-- fetches usage from `chatgpt.com/backend-api/wham/usage`
-- normalized account summary
-- normalized primary and secondary windows
-- normalized additional named rate limits when the upstream exposes them
-- normalized credits and spend-control information
-- `?raw=true` to include the raw upstream payload alongside the normalized summary
+## `GET /v1/subscription/status`
 
-### `GET /v1/account/rate_limits`
+Returns a normalized subscription-usage snapshot with per-window usage
+percentages, window labels ("5h", "weekly"), and reset times.
 
-Alias of `/v1/subscription/status`.
+- provider is OpenAI (source: `chatgpt.com/backend-api/wham/usage`)
+- `?account=<email-or-prefix>` selects one enrolled OpenAI account
+- `?all_accounts=true` returns one entry per enrolled OpenAI account
+  (folds to the single-account shape when only one exists)
+- `?raw=true` includes the raw upstream payload (OpenAI only)
 
-### `GET /v1/relay/status`
+`GET /v1/account/rate_limits` is an alias.
 
-Returns protected AIRelays diagnostics for operators.
+## `POST /v1/relay/accounts/refresh`
 
-Supported behavior:
+Clears usage-limit holds on enrolled OpenAI accounts and re-checks each
+account's capacity immediately, returning the refreshed account list. Use it
+when you know an account has recovered and don't want to wait for the
+scheduled reset. CLI equivalent: `airelays accounts refresh`.
 
-- readiness flags for upstream auth and relay-token presence
-- resolved relay config summary
-- protected auth summary
-- limiter diagnostics for the current client IP
-- local storage counters for files and conversations
+## `GET /v1/relay/status`
 
-For a CLI self-test that also probes live upstream `/models` and a tiny `/responses` request, run `airelays doctor`. Add `--json` for machine-readable output or `--skip-response` to avoid the response smoke request.
+Returns relay diagnostics, provider readiness, provider cache status, and
+`requests_total` — the count of real (non-monitoring) requests served by
+this process, usable as a lightweight activity signal. OpenAI model-list
+cache diagnostics live under `providers.openai.models_cache`.
 
-### `POST /v1/completions`
+## CLI Diagnostics
 
-Supported behavior:
+`airelays status` reports local config, relay-token, and provider readiness
+state. `airelays doctor` runs the same local checks and also probes the OpenAI
+upstream `/models` route plus a tiny `/responses` smoke request when the OpenAI
+runtime is enabled and logged in. Use `airelays doctor --skip-response` to skip
+the response smoke request. `airelays models` lists every model id the running
+relay accepts (`--json` supported).
 
-- legacy prompt-in, text-out shape
+## `POST /v1/responses`
+
+- general OpenAI Responses envelope
 - `stream=true|false`
-- `conversation`
-- common generation controls such as `stop`, `metadata`, and `user`
+- local conversations
+- local files and verified `input_file` forms
 
-Currently rejected:
+Current limits:
 
-- `n` other than `1`
-- `max_tokens`
-- `best_of`
-- `echo`
-- `logprobs`
-- `suffix`
-- upstream `store=true`
+- `store=true` rejected
+- output-token limit fields rejected explicitly
 
-### `POST /v1/responses`
+## `POST /v1/chat/completions`
 
-Supported behavior:
+- current AIRelays OpenAI compatibility path
 
-- `input` as string, object, or array
-- `stream=true|false`
-- `conversation` for local stateful sessions
-- `tools` when using the normal route
-- file inputs by external `file_url`
-- raw Base64 `input_file.file_data` when `filename` is provided
-- AIRelays local `file_id` values from `POST /v1/files`
+## `POST /v1/completions`
 
-Notes:
+- current AIRelays OpenAI compatibility path
 
-- AIRelays preserves the general OpenAI Responses request and response envelopes, but parameter parity is not complete on this route
-- upstream storage is forced to `false`
-- `conversation` accepts a local conversation id string or `{ "id": "..." }`
-- `max_output_tokens` is rejected explicitly because the verified subscription backend does not currently accept it on this route
-- missing instructions are adapted to the verified minimal placeholder `"."`
-- `text.format.type=json_schema` is normalized to match the stricter verified subscription-backend schema rules
-- `text.format.type=json_object` is rejected as unverified
-- non-stream requests are reconstructed from streamed upstream output
-- raw `input_file.file_data` is normalized into inline data URLs for the subscription backend when AIRelays can determine the content type from `filename`
-- AIRelays local uploaded-file ids are expanded into inline file or image inputs before the upstream call
-- unsupported upstream sampling parameters are omitted before the upstream call; when that happens AIRelays adds `x-airelays-ignored-parameters`
+## `POST /v1/files`
 
-### `POST /no-tools/v1/responses`
+Local AIRelays file storage for the OpenAI runtime compatibility path.
 
-Same as `/v1/responses`, but rejects tool-bearing requests.
+## `POST /v1/conversations`
 
-### `POST /v1/chat/completions`
+Local AIRelays conversation storage for the OpenAI runtime compatibility path.
 
-Supported behavior:
-
-- system and developer messages are folded into upstream `instructions`
-- user and assistant messages are mapped into upstream input items
-- assistant function tool calls and tool outputs are mapped into upstream function call items
-- `stream=true|false`
-- `conversation`
-- common generation parameters such as `metadata`, `service_tier`, and `user`
-
-Currently rejected:
-
-- `n` other than `1`
-- `max_completion_tokens`
-- `audio`
-- `modalities`
-- `prediction`
-- `response_format.type=json_object`
-- upstream `store=true`
-
-### `POST /no-tools/v1/chat/completions`
-
-Same as `/v1/chat/completions`, but rejects tool-bearing requests.
-
-### `POST /v1/files`
-
-Stores a file locally and returns an OpenAI-style file record.
-
-Upload limits:
-
-- `32` MiB per file by default
-- `256` MiB total stored file bytes by default
-- `413` when either ceiling would be exceeded
-
-### `GET /v1/files`
-
-Lists locally stored file metadata.
-
-### `GET /v1/files/{file_id}`
-
-Returns file metadata.
-
-### `GET /v1/files/{file_id}/content`
-
-Returns the raw stored file content.
-
-### `DELETE /v1/files/{file_id}`
-
-Deletes the locally stored file.
-
-### `POST /v1/conversations`
-
-Creates a local conversation container with optional metadata and seed items.
-
-### `GET /v1/conversations/{conversation_id}`
-
-Returns the stored local conversation state.
-
-### `POST /v1/conversations/{conversation_id}`
-
-Merges new metadata into a stored local conversation.
-
-### `DELETE /v1/conversations/{conversation_id}`
-
-Deletes a stored local conversation.
-
-## Explicitly Unsupported Routes
+## Unsupported Routes
 
 These currently return `501 unsupported_error`:
 
-- `POST /v1/embeddings`
-- `POST /v1/images/{operation}`
-- `POST /v1/audio/{operation}`
-- `POST /v1/realtime/sessions`
-
-## File Expansion Rules
-
-Text-like MIME types:
-
-- `text/*`
-- `application/json`
-- `application/xml`
-- `application/yaml`
-- `application/x-yaml`
-- `application/csv`
-
-Rules:
-
-- text-like files larger than 1 MB are rejected
-- images are passed as `input_image`
-- local `input_file` references are expanded into inline file data so PDFs and other supported document types can be reused on `/v1/responses`
-
-## Relay Auth
-
-AIRelays protects `/v1/*` and `/no-tools/v1/*`.
-
-Public routes:
-
-- `GET /`
-- `GET /healthz`
-
-Clients should send:
-
-```http
-Authorization: Bearer YOUR_AIRELAYS_TOKEN
-```
-
-OpenAI-compatible SDKs will do this automatically when you set the AIRelays token as the client credential for the AIRelays base URL.
-Requests that omit the token, or use the wrong token, return `401`. Repeating that mistake enough times from the same IP triggers a temporary `429` block.
-
-If you start AIRelays with `airelays serve --no-auth` or `AIRELAYS_REQUIRE_BEARER_AUTH=false`, these route families become openly accessible for that server process. In that mode, the relay does not require `Authorization`, though some client SDKs may still need a non-empty placeholder `api_key` value on their side. Upstream ChatGPT login is still required; when it is missing, AIRelays returns a `503 authentication_error` instead of treating the problem as a local client-token failure.
+- embeddings
+- image generation
+- audio
+- realtime sessions

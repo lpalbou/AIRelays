@@ -1,5 +1,10 @@
 # Getting Started
 
+This guide covers the CLI/server install. If you prefer a GUI, the desktop
+app (macOS, Windows, Linux) wraps the same relay with a system tray,
+dashboard, and one-click sign-in — see [desktop/README.md](../desktop/README.md)
+and the README's install section.
+
 ## Install
 
 From a source checkout:
@@ -8,15 +13,11 @@ From a source checkout:
 python -m pip install .
 ```
 
-From a published package:
+From PyPI:
 
 ```bash
 python -m pip install airelays
 ```
-
-Open local relay mode uses the same package and login flow. The difference is whether you keep the default bearer-token protection or disable it for the running process.
-It does not bypass the upstream ChatGPT login. Run `airelays login` before expecting model routes to succeed.
-If you already have earlier AIRelay local state under singular paths such as `~/.config/airelay` or `~/.airelay`, AIRelays can continue using it for compatibility.
 
 ## Initialize AIRelays
 
@@ -24,179 +25,120 @@ If you already have earlier AIRelay local state under singular paths such as `~/
 airelays init
 ```
 
-This creates the local control-plane files when they do not already exist:
+This prepares:
 
 - config: `~/.config/airelays/config.toml`
-- relay token: `~/.airelays/relay-token`
 - data dir: `~/.airelays`
 - logs dir: `~/.airelays/logs`
+- relay token: `~/.airelays/relay-token`
 
-The command prints a readable setup summary and, when it creates a new token, the token to use from normal OpenAI-compatible clients that you point at AIRelays.
-If a token already exists, `airelays init` keeps it and does not reveal the value again by default.
-Use `airelays init --json` when you need machine-readable output.
-
-The relay token protects AIRelays itself. Clients calling `/v1/*` or `/no-tools/v1/*` must send:
-
-```http
-Authorization: Bearer YOUR_AIRELAYS_TOKEN
-```
-
-## Inspect Status
+Show the current relay token at any time:
 
 ```bash
-airelays status
-airelays doctor
+airelays token show
 ```
 
-`airelays status` shows the resolved local state. `airelays doctor` goes further and probes setup, upstream `/models`, and a tiny `/responses` request.
+## OpenAI Runtime
 
-The status output contains:
-
-- relay configuration summary
-- whether a relay bearer token is present
-- whether AIRelays-owned upstream ChatGPT auth is present and ready
-- the next recommended command
-
-Typical unauthenticated terminal output:
-
-```text
-AIRelays Status
-
-Relay
-  Config exists:     yes
-  Relay token:       present
-
-Upstream Session
-  Ready:             no
-  Authenticated:     no
-
-Next Steps
-  1. airelays login
-```
-
-Use `airelays status --json` or `airelays doctor --json` for machine-readable output. Use `airelays doctor --skip-response` when you want setup and model checks without sending the tiny `/responses` smoke request.
-
-## Log In Upstream
-
-Browser login:
+Log in:
 
 ```bash
 airelays login
 ```
 
-By default, AIRelays prints the login URL so you can open it in the browser profile you choose. Set `AIRELAYS_BROWSER_OPEN=true` if you want AIRelays to try opening the browser automatically.
-Existing macOS keychain sessions stored under the earlier `AIRelay Auth` service name are recognized automatically.
-
-If the browser flow cannot bind `localhost:1455`, use device-code login instead:
-
-Device-code login:
+On a server or over SSH (no local browser), use device-code login — you
+approve the sign-in from a browser on any other device:
 
 ```bash
 airelays login --device
 ```
 
-Restrict login to one workspace:
+`airelays login` selects the device flow automatically on SSH sessions and
+displayless Linux. The browser flow's URL only works in a browser on the
+same machine as the relay (its redirect targets `localhost:1455` there).
+
+You can enroll several of your own OpenAI accounts: running `airelays login`
+again with a different account adds it alongside the first, and the relay
+balances across them (see the README's "Multiple OpenAI Accounts" section).
+Sign an account out with `airelays logout <email>`; manage order and
+capacity holds with `airelays accounts`.
+
+Start the server:
 
 ```bash
-airelays login --workspace-id YOUR_WORKSPACE_ID
-```
-
-## Start The Server
-
-```bash
+airelays doctor
 airelays serve --host 127.0.0.1 --port 8080
 ```
 
-By default, AIRelays protects `/v1/*` and `/no-tools/v1/*` with the relay bearer token.
-If bearer auth is enabled and no relay token exists, `airelays serve` exits with a clear setup error instead of silently generating one.
-On startup AIRelays prints the base URL, the token file path, and the required `Authorization` header shape.
-
-To launch the server with an explicit token instead of the default token file:
+Verify:
 
 ```bash
-AIRELAYS_BEARER_TOKEN='YOUR_AIRELAYS_TOKEN' airelays serve --host 127.0.0.1 --port 8080
+curl http://127.0.0.1:8080/v1/models \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
+
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "gpt-5.5",
+    "messages": [{"role": "user", "content": "Reply with exactly: OPENAI AIRelays OK"}]
+  }'
 ```
 
-To launch the server with a specific token file:
-
-```bash
-airelays serve \
-  --bearer-token-file /path/to/relay-token \
-  --host 127.0.0.1 \
-  --port 8080
-```
-
-To start an open local relay with no client-side bearer auth:
+## OpenAI Open Local Relay Mode
 
 ```bash
 airelays init --no-auth
+airelays login
 airelays serve --no-auth --host 127.0.0.1 --port 8080
 ```
 
-To do the same through environment or config:
+In this mode AIRelays does not require `Authorization` on `/v1/*`.
+
+## Status
+
+Inspect relay and provider readiness:
 
 ```bash
-AIRELAYS_REQUIRE_BEARER_AUTH=false airelays serve --host 127.0.0.1 --port 8080
+airelays status
 ```
 
-When bearer auth is disabled, clients can call `/v1/*` and `/no-tools/v1/*` without `Authorization`. If a client library insists on an API key field, use any non-empty placeholder string.
-If `airelays login` has not completed yet, model routes still fail because AIRelays has no upstream ChatGPT session to use.
-
-## Verify The Server
-
-Public liveness:
+Run local setup checks plus live upstream probes:
 
 ```bash
-curl http://127.0.0.1:8080/healthz
+airelays doctor
 ```
 
-Protected diagnostics:
+`airelays doctor` checks config, relay-token state, OpenAI login readiness,
+upstream `/models`, and a tiny `/responses` smoke request. Use
+`airelays doctor --skip-response` to skip the response smoke request.
+
+List every model id the running relay accepts:
 
 ```bash
-curl \
-  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
-  http://127.0.0.1:8080/v1/relay/status
+airelays models
 ```
 
-`/healthz` is intentionally minimal. Use `/v1/relay/status` when you need protected config, auth, storage, and limiter details.
-If you launched with `--no-auth`, the same `/v1/relay/status` request works without the `Authorization` header.
-
-Protected model listing:
+Machine-readable output:
 
 ```bash
-curl \
-  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
-  http://127.0.0.1:8080/v1/models
+airelays status --json
+airelays doctor --json
+airelays models --json
 ```
 
-Protected simple query:
+`airelays status` shows:
 
-```bash
-curl \
-  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
-  -H 'content-type: application/json' \
-  http://127.0.0.1:8080/v1/chat/completions \
-  -d '{
-    "model": "gpt-5.5",
-    "messages": [{"role": "user", "content": "Reply with exactly: AIRelays OK"}]
-  }'
-```
+- relay config and token state
+- OpenAI runtime readiness
+- next recommended commands
 
-Open local relay equivalents:
+## Provider Routing
 
-```bash
-curl http://127.0.0.1:8080/v1/models
+- all model ids route to the OpenAI runtime
+- AIRelays rejects requests when the runtime is disabled or the route is outside its published subset
 
-curl \
-  -H 'content-type: application/json' \
-  http://127.0.0.1:8080/v1/chat/completions \
-  -d '{
-    "model": "gpt-5.5",
-    "messages": [{"role": "user", "content": "Reply with exactly: AIRelays OK"}]
-  }'
-```
-
-## Point Your Client
+## Client Configuration
 
 Base URL:
 
@@ -204,72 +146,23 @@ Base URL:
 http://127.0.0.1:8080/v1
 ```
 
-Use the relay token from `airelays init` as the client credential. That works directly with standard OpenAI SDKs because they send `Authorization: Bearer <api-key>` to whichever `base_url` you configure.
+Standard OpenAI SDKs can use the AIRelays relay token through their normal `api_key` field when the `base_url` points at AIRelays.
 
-Shell example:
+Example shell setup:
 
 ```bash
 export OPENAI_BASE_URL='http://127.0.0.1:8080/v1'
 export AIRELAYS_TOKEN="$(tr -d '\n' < ~/.airelays/relay-token)"
 ```
 
-If your SDK insists on an `api_key` argument, pass the relay token from `AIRELAYS_TOKEN`.
+## Subscription Status
 
-Open local relay mode with a placeholder client value:
-
-```bash
-export OPENAI_BASE_URL='http://127.0.0.1:8080/v1'
-export AIRELAYS_CLIENT_PLACEHOLDER='local-open-relay'
-```
-
-## Show The Relay Token
-
-Show the current relay token:
+OpenAI subscription usage:
 
 ```bash
-airelays token show
+curl http://127.0.0.1:8080/v1/subscription/status \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
 ```
 
-Use `airelays token show --json` when you need the current token in machine-readable form.
-
-## Rotate The Relay Token
-
-```bash
-airelays token rotate
-```
-
-After rotation, update your clients to use the new token. New requests start using the rotated token immediately.
-Use `airelays token rotate --json` if you need the new token in machine-readable form.
-
-## Inspect Subscription Windows
-
-Once the server is running:
-
-```bash
-curl \
-  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
-  http://127.0.0.1:8080/v1/subscription/status
-```
-
-For the normalized payload plus the raw upstream body:
-
-```bash
-curl \
-  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
-  'http://127.0.0.1:8080/v1/subscription/status?raw=true'
-```
-
-If you launched with `--no-auth`, those same requests work without the `Authorization` header after `airelays login` has created an upstream session.
-
-See [Subscription Status](subscription-status.md) for field details.
-
-## Useful Commands
-
-```bash
-airelays init
-airelays status
-airelays login
-airelays logout
-airelays token show
-airelays token rotate
-```
+See [Subscription Status](subscription-status.md) for multi-account
+parameters and the payload shape.

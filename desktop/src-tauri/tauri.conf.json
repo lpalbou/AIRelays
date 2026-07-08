@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AIRelays",
+  "version": "0.3.0",
+  "identifier": "info.lpalbou.airelays",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "AIRelays",
+        "width": 1020,
+        "height": 720,
+        "minWidth": 760,
+        "minHeight": 540,
+        "visible": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "nsis", "appimage", "deb"],
+    "linux": {
+      "deb": {
+        "depends": ["libayatana-appindicator3-1", "xdg-utils"]
+      }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "icons/tray-connected.png": "icons/tray-connected.png",
+      "icons/tray-disconnected.png": "icons/tray-disconnected.png",
+      "runtime": "runtime"
+    },
+    "category": "DeveloperTool",
+    "shortDescription": "Local OpenAI-compatible relay control",
+    "longDescription": "AIRelays supervises a local OpenAI-compatible relay and exposes start/stop, auth and network controls, live traffic, and diagnostics from the system tray."
+  }
+}

@@ -148,14 +148,22 @@ class ChatGptCodexBackend:
 
                 event_name = "message"
                 data_lines: list[str] = []
+                # Per-line logging is opt-in (config [logging] stream_lines):
+                # a single streamed response is hundreds of lines, which
+                # bloats the traffic log ~50x under load and evicts real
+                # request records from every log reader's window. Summary
+                # records (upstream_request/usage/response, errors) are
+                # always written regardless.
+                log_lines = self._settings.log_stream_lines
                 async for raw_line in response.aiter_lines():
-                    self._traffic.write(
-                        {
-                            "request_id": request_id,
-                            "phase": "upstream_stream_line",
-                            "line": raw_line,
-                        }
-                    )
+                    if log_lines:
+                        self._traffic.write(
+                            {
+                                "request_id": request_id,
+                                "phase": "upstream_stream_line",
+                                "line": raw_line,
+                            }
+                        )
                     if raw_line == "":
                         if data_lines:
                             event = SSEEvent(event=event_name, data="\n".join(data_lines))

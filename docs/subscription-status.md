@@ -3,50 +3,31 @@
 AIRelays exposes:
 
 - `GET /v1/subscription/status`
-- `GET /v1/account/rate_limits`
+- `GET /v1/account/rate_limits` (alias)
 
-These routes read the verified upstream usage surface at `chatgpt.com/backend-api/wham/usage` and normalize the result into one OpenAI-shaped summary object.
+Usage is reported in one normalized shape: per-window `used_percent`,
+`window_label` ("5h", "weekly"), and reset times (`reset_after_seconds`,
+`reset_at_iso`).
 
-## Authentication
+## OpenAI
 
-These routes use the same auth mode as the rest of `/v1/*`.
-
-- default mode: protected by the AIRelays bearer token
-- open local relay mode: accessible without `Authorization`
-
-Example:
+Reads the OpenAI subscription usage surface at
+`chatgpt.com/backend-api/wham/usage`.
 
 ```bash
-curl \
-  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
-  http://127.0.0.1:8080/v1/subscription/status
+curl 'http://127.0.0.1:8080/v1/subscription/status' \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
 ```
 
-Open local relay mode example:
+With multiple enrolled accounts:
 
-```bash
-curl http://127.0.0.1:8080/v1/subscription/status
-```
+- `?account=<email-or-prefix>` selects one account
+- `?all_accounts=true` returns one entry per account (folds to the
+  single-account shape when only one exists)
+- `?raw=true` includes the raw upstream payload
 
-## Returned Shape
+## Auth
 
-The normalized response includes:
-
-- account identity fields when the upstream exposes them
-- the default rate-limit window set
-- optional additional named rate-limit windows
-- credits summary
-- spend-control summary
-- optional raw upstream payload via `?raw=true`
-
-Typical fields:
-
-- `object`
-- `account`
-- `rate_limits.default.primary_window`
-- `rate_limits.default.secondary_window`
-- `rate_limits.additional`
-- `credits`
-- `spend_control`
-
-AIRelays also labels known windows with human-friendly names such as `5h` and `weekly` when the upstream durations match those intervals.
+Default protected mode requires the relay bearer token, as shown above.
+Open local relay mode (`--no-auth`) accepts the same requests without the
+`Authorization` header.

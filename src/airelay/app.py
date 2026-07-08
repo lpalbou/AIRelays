@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import tempfile
 import time
 import uuid
@@ -14,10 +13,12 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from airelay import __version__
+from airelay.accounts import build_pool
 from airelay.auth import AuthManager, AuthenticationError
-from airelay.backend import BackendError, ChatGptCodexBackend, SSEEvent, encode_sse
+from airelay.backend import BackendError, encode_sse
 from airelay.config import APP_NAME, Settings
 from airelay.html import render_home
+from airelay.providers import ProviderError, ProviderRegistry
 from airelay.security import EndpointProtector
 from airelay.store import AppStore
 from airelay.traffic import TrafficLogger, snapshot_body
@@ -28,11 +29,23 @@ from airelay.transforms import (
     TranslationError,
     chat_completion_chunk,
     chat_completions_to_responses,
-    normalize_models_payload,
     normalize_subscription_status_payload,
     prepare_response_request,
     responses_to_completion,
     responses_to_chat_completion,
+)
+
+
+# Endpoints the desktop app and health checks poll continuously. Logging
+# them to the JSONL traffic log floods it and evicts real requests from the
+# recent-window the Traffic view reads, so they are never logged as traffic.
+MONITORING_PATHS = frozenset(
+    {
+        "/healthz",
+        "/v1/relay/status",
+        "/v1/subscription/status",
+        "/v1/account/rate_limits",
+    }
 )
 
 
@@ -57,6 +70,8 @@ def _http_error(exc: Exception) -> HTTPException:
                 code="upstream_auth_rejected",
             )
         return HTTPException(status_code=exc.status_code, detail=exc.detail)
+    if isinstance(exc, ProviderError):
+        return HTTPException(status_code=exc.status_code, detail=exc.detail)
     if isinstance(exc, AuthenticationError):
         return exc
     if isinstance(exc, TranslationError):
@@ -72,19 +87,30 @@ def create_app(settings: Settings) -> FastAPI:
     settings.ensure_directories()
     traffic = TrafficLogger(settings.logs_dir)
     store = AppStore(settings.data_dir)
-    auth = AuthManager(
+    # One user may have several of their own subscriptions enrolled; the
+    # pool balances across them and degenerates to plain single-account
+    # behavior when only the legacy login exists.
+    backend = build_pool(settings, traffic)
+    auth = backend.manager_for_primary() if backend.size > 0 else AuthManager(
         settings.data_dir,
         settings.auth_storage_mode,
         settings.issuer_base_url,
         client_id=settings.client_id,
     )
-    backend = ChatGptCodexBackend(settings, auth, traffic)
+    providers = ProviderRegistry(
+        settings,
+        openai_auth=auth,
+        openai_backend=backend,
+        traffic=traffic,
+        account_pool=backend,
+    )
     protector = EndpointProtector(settings, traffic)
     supported_routes = [
         "/v1/models",
         "/v1/subscription/status",
         "/v1/account/rate_limits",
         "/v1/relay/status",
+        "/v1/relay/accounts/refresh",
         "/v1/completions",
         "/v1/responses",
         "/v1/chat/completions",
@@ -105,6 +131,7 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.store = store
         app.state.auth = auth
         app.state.backend = backend
+        app.state.providers = providers
         app.state.protector = protector
         traffic.write(
             {
@@ -170,7 +197,14 @@ def create_app(settings: Settings) -> FastAPI:
         finally:
             protector.release(lease)
 
+    # Count of real (non-monitoring) requests served by this process. The
+    # desktop reads it from /v1/relay/status to blink the tray on activity.
+    request_counter = {"total": 0}
+
     async def log_inbound(request_id: str, request: Request, body: bytes) -> None:
+        if request.url.path in MONITORING_PATHS:
+            return
+        request_counter["total"] += 1
         traffic.write(
             {
                 "request_id": request_id,
@@ -220,16 +254,21 @@ def create_app(settings: Settings) -> FastAPI:
         payload: Any,
         status_code: int = 200,
         headers: dict[str, str] | None = None,
+        loggable: bool = True,
     ) -> JSONResponse:
-        encoded = json.dumps(payload, ensure_ascii=True).encode("utf-8")
-        entry = {
-            "request_id": request_id,
-            "phase": "outbound_response",
-            "status_code": status_code,
-            "body": snapshot_body("application/json", encoded),
-        }
-        entry.update(_response_meta(payload))
-        traffic.write(entry)
+        # Monitoring endpoints pass loggable=False so their inbound skip
+        # (see MONITORING_PATHS) isn't undone by an orphan outbound record
+        # that would surface as a junk "/" row in the Traffic view.
+        if loggable:
+            encoded = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+            entry = {
+                "request_id": request_id,
+                "phase": "outbound_response",
+                "status_code": status_code,
+                "body": snapshot_body("application/json", encoded),
+            }
+            entry.update(_response_meta(payload))
+            traffic.write(entry)
         return JSONResponse(payload, status_code=status_code, headers=headers)
 
     def logged_body(
@@ -260,13 +299,19 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(status_code=400, detail="Request body must be a JSON object.")
         return parsed
 
+    def require_openai_runtime() -> None:
+        if not settings.enable_openai_provider:
+            raise HTTPException(
+                status_code=501,
+                detail="This route is currently available only when the OpenAI runtime is enabled.",
+            )
+
     @app.get("/", response_class=HTMLResponse)
     async def home(request: Request) -> Response:
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
-        auth_status = auth.status()
+        provider_statuses = providers.provider_statuses()
         body = render_home(
-            upstream_ready=bool(auth_status.get("ready_for_requests")),
             relay_token_ready=bool(settings.resolve_bearer_token()),
             require_bearer_auth=settings.require_bearer_auth,
             host=settings.host,
@@ -274,6 +319,7 @@ def create_app(settings: Settings) -> FastAPI:
             client_base_url=settings.client_base_url(),
             bearer_token_file=str(settings.bearer_token_file),
             security=protector.summary(),
+            providers=provider_statuses,
         ).encode("utf-8")
         return logged_body(request_id, body, "text/html; charset=utf-8")
 
@@ -282,7 +328,7 @@ def create_app(settings: Settings) -> FastAPI:
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
         payload = {"ok": True, "app_name": APP_NAME, "version": __version__}
-        return logged_json(request_id, payload)
+        return logged_json(request_id, payload, loggable=False)
 
     @app.get("/v1/models")
     @app.get("/no-tools/v1/models")
@@ -290,39 +336,113 @@ def create_app(settings: Settings) -> FastAPI:
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
         try:
-            payload = normalize_models_payload(await backend.list_models(request_id))
+            payload = await providers.list_models(request_id)
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
         return logged_json(request_id, payload)
 
     @app.get("/v1/subscription/status")
     @app.get("/v1/account/rate_limits")
-    async def subscription_status(request: Request, raw: bool = False) -> JSONResponse:
+    async def subscription_status(
+        request: Request,
+        raw: bool = False,
+        provider: str = "openai",
+        account: str | None = None,
+        all_accounts: bool = False,
+    ) -> JSONResponse:
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
-        try:
-            payload = normalize_subscription_status_payload(
-                await backend.get_subscription_status(request_id),
-                include_raw=raw,
+        if provider != "openai":
+            raise HTTPException(
+                status_code=501,
+                detail="Subscription status is currently verified only for the OpenAI subscription runtime.",
             )
+        if not settings.enable_openai_provider:
+            raise HTTPException(
+                status_code=501,
+                detail="The OpenAI subscription runtime is disabled for this AIRelays process.",
+            )
+        try:
+            backend.refresh_if_changed()
+            if all_accounts and backend.size > 1:
+                entries = await backend.subscription_statuses(request_id)
+                payload = {
+                    "object": "subscription_status_list",
+                    "accounts": [
+                        {
+                            "slug": entry["slug"],
+                            "email": entry.get("email"),
+                            **(
+                                {
+                                    "status": normalize_subscription_status_payload(
+                                        entry["payload"], include_raw=raw
+                                    )
+                                }
+                                if "payload" in entry
+                                else {"error": entry.get("error")}
+                            ),
+                        }
+                        for entry in entries
+                    ],
+                }
+            else:
+                upstream_payload = (
+                    await backend.get_subscription_status(request_id, slug=account)
+                    if account is not None
+                    else await backend.get_subscription_status(request_id)
+                )
+                payload = normalize_subscription_status_payload(
+                    upstream_payload,
+                    include_raw=raw,
+                )
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
-        return logged_json(request_id, payload)
+        return logged_json(request_id, payload, loggable=False)
+
+    @app.post("/v1/relay/accounts/refresh")
+    async def refresh_accounts(request: Request) -> JSONResponse:
+        request_id = _request_id(request)
+        # Clears usage-limit benches and re-probes so recovered accounts
+        # return to rotation immediately, without waiting out an estimated
+        # reset or restarting the relay.
+        try:
+            accounts = await backend.hard_refresh(request_id)
+        except Exception as exc:  # noqa: BLE001
+            raise _http_error(exc) from exc
+        return logged_json(
+            request_id, {"object": "accounts.refresh", "accounts": accounts}, loggable=False
+        )
 
     @app.get("/v1/relay/status")
     async def relay_status(request: Request) -> JSONResponse:
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
-        auth_status = auth.status()
+        provider_statuses = providers.provider_statuses()
+        openai_status = provider_statuses.get("openai", {})
+        auth_status = dict(openai_status)
+        auth_status.pop("models_cache", None)
+        enabled_provider_statuses = [
+            status for status in provider_statuses.values() if isinstance(status, dict) and status.get("enabled")
+        ]
+        any_provider_ready = any(bool(status.get("ready_for_requests")) for status in enabled_provider_statuses)
         payload = {
             "object": "relay.status",
             "app_name": APP_NAME,
             "version": __version__,
+            "requests_total": request_counter["total"],
             "ready": {
-                "upstream_auth": bool(auth_status.get("ready_for_requests")),
+                "upstream_auth": any_provider_ready,
+                "openai_upstream_auth": bool(openai_status.get("ready_for_requests")),
                 "relay_token": (not settings.require_bearer_auth) or bool(settings.resolve_bearer_token()),
+                "any_provider": any_provider_ready,
+                "providers": {
+                    name: bool(status.get("ready_for_requests"))
+                    for name, status in provider_statuses.items()
+                    if status.get("enabled")
+                },
             },
             "auth": auth_status,
+            "providers": provider_statuses,
             "relay": settings.summary(),
             "security": protector.diagnostics(getattr(request.state, "client_ip", None)),
             "storage": {
@@ -331,10 +451,11 @@ def create_app(settings: Settings) -> FastAPI:
             },
             "supported_routes": supported_routes,
         }
-        return logged_json(request_id, payload)
+        return logged_json(request_id, payload, loggable=False)
 
     @app.post("/v1/files")
     async def upload_file(request: Request, file: UploadFile = File(...), purpose: str = "assistants") -> JSONResponse:
+        require_openai_runtime()
         request_id = _request_id(request)
         content_type = file.content_type or "application/octet-stream"
         filename = file.filename or "upload.bin"
@@ -409,6 +530,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/v1/files")
     async def list_files(request: Request) -> JSONResponse:
+        require_openai_runtime()
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
         payload = {"object": "list", "data": store.list_files()}
@@ -416,6 +538,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/v1/files/{file_id}")
     async def get_file(file_id: str, request: Request) -> JSONResponse:
+        require_openai_runtime()
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
         try:
@@ -426,6 +549,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/v1/files/{file_id}/content")
     async def get_file_content(file_id: str, request: Request) -> Response:
+        require_openai_runtime()
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
         try:
@@ -436,6 +560,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.delete("/v1/files/{file_id}")
     async def delete_file(file_id: str, request: Request) -> JSONResponse:
+        require_openai_runtime()
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
         deleted = store.delete_file(file_id)
@@ -445,6 +570,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/v1/conversations")
     async def create_conversation(request: Request) -> JSONResponse:
+        require_openai_runtime()
         request_id = _request_id(request)
         body = await request.body()
         await log_inbound(request_id, request, body)
@@ -456,6 +582,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/v1/conversations/{conversation_id}")
     async def get_conversation(conversation_id: str, request: Request) -> JSONResponse:
+        require_openai_runtime()
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
         try:
@@ -466,6 +593,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/v1/conversations/{conversation_id}")
     async def update_conversation(conversation_id: str, request: Request) -> JSONResponse:
+        require_openai_runtime()
         request_id = _request_id(request)
         body = await request.body()
         await log_inbound(request_id, request, body)
@@ -478,6 +606,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.delete("/v1/conversations/{conversation_id}")
     async def delete_conversation(conversation_id: str, request: Request) -> JSONResponse:
+        require_openai_runtime()
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
         deleted = store.delete_conversation(conversation_id)
@@ -493,6 +622,17 @@ def create_app(settings: Settings) -> FastAPI:
         await log_inbound(request_id, request, body_bytes)
         try:
             body = load_json(body_bytes)
+            model = body.get("model")
+            if isinstance(model, str):
+                resolved = providers.resolve_model(model)
+                traffic.write(
+                    {
+                        "request_id": request_id,
+                        "phase": "provider_resolution",
+                        "provider": resolved.provider,
+                        "model": resolved.public_id,
+                    }
+                )
             payload, wants_stream, conversation_id = prepare_response_request(body, store, allow_tools)
             ignored_parameters = strip_unsupported_response_parameters(payload)
             log_adaptation(request_id, ignored_parameters)
@@ -566,6 +706,17 @@ def create_app(settings: Settings) -> FastAPI:
         await log_inbound(request_id, request, body_bytes)
         try:
             body = load_json(body_bytes)
+            model = body.get("model")
+            if isinstance(model, str):
+                resolved = providers.resolve_model(model)
+                traffic.write(
+                    {
+                        "request_id": request_id,
+                        "phase": "provider_resolution",
+                        "provider": resolved.provider,
+                        "model": resolved.public_id,
+                    }
+                )
             payload, wants_stream, conversation_id = chat_completions_to_responses(body, store, allow_tools)
             ignored_parameters = strip_unsupported_response_parameters(payload)
             log_adaptation(request_id, ignored_parameters)
@@ -695,6 +846,17 @@ def create_app(settings: Settings) -> FastAPI:
         await log_inbound(request_id, request, body_bytes)
         try:
             body = load_json(body_bytes)
+            model = body.get("model")
+            if isinstance(model, str):
+                resolved = providers.resolve_model(model)
+                traffic.write(
+                    {
+                        "request_id": request_id,
+                        "phase": "provider_resolution",
+                        "provider": resolved.provider,
+                        "model": resolved.public_id,
+                    }
+                )
             payload, wants_stream, conversation_id = completions_to_responses(body)
             ignored_parameters = strip_unsupported_response_parameters(payload)
             log_adaptation(request_id, ignored_parameters)

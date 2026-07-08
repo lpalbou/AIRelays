@@ -1,202 +1,112 @@
 # AIRelays
 
-AIRelays is a local OpenAI-compatible HTTP server backed by a ChatGPT subscription login that AIRelays stores independently. It does not require a user-supplied OpenAI platform API key for upstream inference. Instead, it uses the same upstream login protocol that Codex uses while keeping AIRelays auth storage separate from Codex storage. `/v1/responses` preserves the general OpenAI Responses envelope, with explicit parameter adaptations and limits where the subscription backend differs.
+> AIRelays is a local OpenAI-compatible HTTP server backed by your own subscription logins: an OpenAI runtime with multi-account balancing. It ships as a CLI/server package and as a cross-platform desktop tray app.
 
-Clients that call AIRelays should use the relay bearer token as the local client credential they present to AIRelays in the default protected mode. AIRelays can also run in open local relay mode with bearer auth disabled for the server process.
+## Document Index
 
-AIRelays is an independent third-party project. It is not affiliated with, endorsed by, or sponsored by OpenAI. Provider and product names are used only to describe compatibility targets and upstream behavior. AIRelays is designed for a single user operating a local relay for personal convenience, not as a shared or resale service.
+- README.md: overview, install (CLI and desktop), quick start, compatibility layer
+- docs/getting-started.md: setup, sign-in flows, verification
+- docs/configuration.md: config file shape and environment overrides
+- docs/security.md: relay auth and open local relay mode
+- docs/api.md: routes, compatibility adaptations, limits
+- docs/architecture.md: request flow and module boundaries
+- docs/subscription-status.md: usage reporting for the OpenAI runtime
+- docs/faq.md: common questions and limits
+- docs/troubleshooting.md: symptoms, causes, fixes
+- desktop/README.md: desktop app layout, build, supervision behavior
 
-## Project Summary
+---
 
-- local OpenAI-compatible endpoint
-- ChatGPT subscription-backed upstream access
-- separate local relay bearer token
-- optional open local relay mode with no client bearer token
-- route-level protection for `/v1/*` and `/no-tools/v1/*`
-- JSONL traffic logging with redaction
-- explicit compatibility limits instead of silent fallback
+## Overview (from README.md)
 
-## First-Run Workflow
+AIRelays is a local OpenAI-compatible HTTP server.
 
-Install from a source checkout:
+- The runtime uses an AIRelays-owned ChatGPT subscription login.
+- AIRelays protects the relay with its own bearer token by default; open local relay mode (`--no-auth`) disables only the client-token gate.
+- Every transit is logged to hourly JSONL files.
+- AIRelays is an independent third-party project designed for a single user running a local relay for personal convenience. It is not a shared, pooled, multi-user, or resale service (see DISCLAIMER.md).
 
-```bash
-python -m pip install .
-```
+## Install
 
-Install from a published package:
+CLI / server (PyPI):
 
 ```bash
 python -m pip install airelays
 ```
 
-Earlier AIRelay local state under singular paths such as `~/.config/airelay` and `~/.airelay` remains compatible.
+Desktop app (macOS, Windows, Linux): a Tauri tray app under `desktop/` with a dashboard for relay start/stop, auth and network modes, OpenAI sign-in/sign-out, per-account usage bars, a model list with copy-ready ids, live traffic, and diagnostics. The tray icon shows connection state and blinks on request activity; the app can start at login, starts the relay when it opens, and restarts a crashed relay automatically. Both installs share the same config (`~/.config/airelays`) and data (`~/.airelays`).
 
-1. `airelays init`
-   - writes `~/.config/airelays/config.toml` if needed
-   - creates `~/.airelays/relay-token` if needed
-   - reveals the token only when it was newly created
-2. `airelays init --no-auth`
-   - writes config with bearer auth disabled
-   - skips relay-token creation
-3. `airelays login`
-   - creates an AIRelays-owned ChatGPT subscription session
-4. `airelays doctor`
-   - checks local config, relay-token setup, upstream OpenAI subscription auth, live `/models`, and a tiny `/responses` request
-   - supports `--json` for automation and `--skip-response` to avoid the response smoke request
-5. `airelays serve --port 8080`
-   - starts the protected local server
-   - fails fast if bearer auth is enabled but no relay token is configured
-   - prints the client base URL, token file path, and required `Authorization` header shape
-6. `airelays serve --no-auth --port 8080`
-   - starts an open local server with no relay-token check
+## First Run (CLI)
 
-Inspect current state with:
+OpenAI runtime:
 
 ```bash
-airelays status
+airelays init
+airelays login          # repeat with another account to enroll it too
 airelays doctor
+airelays serve --port 8080
 ```
 
-The CLI defaults to readable terminal output. Use `--json` on `airelays init`, `airelays status`, `airelays doctor`, `airelays logout`, `airelays token show`, or `airelays token rotate` when you need machine-readable output. Use `airelays doctor --skip-response` when you want setup and model checks without sending the tiny `/responses` smoke request.
-
-Show the current relay token with:
-
-```bash
-airelays token show
-```
-
-Rotate the relay token with:
-
-```bash
-airelays token rotate
-```
-
-Smoke tests:
-
-```bash
-curl http://127.0.0.1:8080/healthz
-curl http://127.0.0.1:8080/v1/relay/status \
-  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
-```
-
-In open local relay mode, the same `/v1/relay/status` request works without the `Authorization` header.
-
-Protected model listing and simple query:
-
-```bash
-curl http://127.0.0.1:8080/v1/models \
-  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
-
-curl http://127.0.0.1:8080/v1/chat/completions \
-  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
-  -H 'content-type: application/json' \
-  -d '{
-    "model": "gpt-5.5",
-    "messages": [{"role": "user", "content": "Reply with exactly: AIRelays OK"}]
-  }'
-```
-
-Open local relay equivalents:
-
-```bash
-curl http://127.0.0.1:8080/v1/models
-
-curl http://127.0.0.1:8080/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -d '{
-    "model": "gpt-5.5",
-    "messages": [{"role": "user", "content": "Reply with exactly: AIRelays OK"}]
-  }'
-```
+Headless / server (SSH, no browser): `airelays login --device` — approve from a browser on any device. Auto-selected on SSH sessions and displayless Linux.
 
 ## Client Configuration
 
-- base URL: `http://127.0.0.1:8080/v1`
-- client credential: the AIRelays relay token
+- Base URL: `http://127.0.0.1:8080/v1` (desktop app default port: 8317)
+- API key: the relay token (`airelays token show`); any placeholder in open mode
+- List accepted model ids: `airelays models` or `GET /v1/models`
 
-Standard OpenAI SDKs work because they send `Authorization: Bearer <api-key>`.
+## Multiple OpenAI Accounts
 
-In open local relay mode, the relay does not require `Authorization`. If an SDK still insists on an `api_key` field, any non-empty placeholder string is acceptable.
+One person can enroll several of their own OpenAI subscriptions; `airelays login` is additive. By default the relay uses the first account until it reaches its usage limit, then continues with the next, returning when the limit resets (`balance = "round_robin"` spreads requests evenly instead). Accounts whose usage report already shows a reached limit are skipped proactively. Manage with `airelays accounts` (list, order, refresh), sign out one with `airelays logout <email>`. Conversations stick to the account that served their first turn.
 
-## Verified Compatibility Boundary
+## Routes
 
-- inference upstream: `https://chatgpt.com/backend-api/codex`
-- subscription-status upstream: `https://chatgpt.com/backend-api/wham/usage`
-- non-stream responses are reconstructed from streamed upstream events
-- `store=true` is rejected
-- `max_output_tokens` on `/v1/responses`, `max_completion_tokens` on `/v1/chat/completions`, and `max_tokens` on `/v1/completions` are rejected explicitly
-- empty instructions are adapted to `"."`
-- `/v1/responses` accepts verified `input_file` shapes including external `file_url`, inline data URLs, raw Base64 plus `filename`, and AIRelays local `file_id` values from `POST /v1/files`
-- local text and JSON-like files up to 1 MB can be inlined
-- local image files can be expanded into `input_image`
-- local uploads are capped at 32 MiB per file and 256 MiB total by default
-- embeddings, image generation, audio, and realtime routes currently return explicit `501 unsupported_error`
+- `GET /v1/models` — models from the OpenAI runtime, with an `airelays` extension block per record
+- `POST /v1/responses`, `POST /v1/chat/completions`, `POST /v1/completions` — text generation
+- `GET /v1/subscription/status` (alias `GET /v1/account/rate_limits`) — normalized usage; `?account=`, `?all_accounts=true`, `?raw=true`
+- `POST /v1/relay/accounts/refresh` — clear usage-limit holds and re-check capacity
+- `GET /v1/relay/status` — diagnostics, provider readiness, `requests_total`
+- `POST/GET/DELETE /v1/files...`, `POST/GET/DELETE /v1/conversations...` — local files and conversations
+- `/no-tools/v1/*` — tool-disabled variants
+- `GET /healthz` — minimal public health check
 
-## Relay Security
+## Compatibility Layer
 
-- default listener: `127.0.0.1:8080`
-- protected routes: `/v1/*` and `/no-tools/v1/*`
-- public liveness: `GET /healthz`
-- protected diagnostics: `GET /v1/relay/status`
-- relay token file: `~/.airelays/relay-token`
-- open local relay override: `AIRELAYS_REQUIRE_BEARER_AUTH=false` or `airelays serve --no-auth`
-- default request rate limit: `120` requests/minute per IP
-- default burst: `40`
-- default concurrent-request cap: `8` per IP
-- default repeated-auth-failure block: `8` bad attempts in `300` seconds -> `900` second block
+The verified upstream is the ChatGPT subscription backend, not the public platform API:
 
-Security-relevant events are written to the normal hourly log files. Raw bearer tokens are not written to logs.
+- `temperature`, `top_p`, `presence_penalty`, `frequency_penalty` are rejected by the upstream; the relay strips them and discloses it via the `x-airelays-ignored-parameters` response header and a `compatibility_adaptation` traffic record. Generation uses the upstream's own sampling defaults.
+- `reasoning_effort` (chat) and `reasoning.effort` (responses) pass through verbatim. Omitting them means the upstream's low default; set them explicitly for output quality comparable to the official apps.
+- `store=true`, output-token limit fields, `n>1`, and `best_of`/`echo`/`logprobs`/`suffix` are rejected loudly instead of silently adapted.
 
-## Important Paths
+## Subscription Usage
+
+`GET /v1/subscription/status` returns per-window `used_percent`, `window_label` ("5h", "weekly"), and reset times in one normalized shape. OpenAI reads the subscription usage surface; multi-account installs can query one account (`?account=`) or all (`?all_accounts=true`).
+
+## Security Defaults
+
+- default listener `127.0.0.1:8080` (CLI) / `0.0.0.0:8317` (desktop, with a one-click loopback switch)
+- protected routes `/v1/*` and `/no-tools/v1/*`; public: `/` and `GET /healthz`
+- rate limit 120 requests/minute (burst 40), 8 concurrent requests per IP, temporary IP block after repeated bad tokens
+
+## Configuration
+
+Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/config.toml` → defaults. Notable keys: `[server] host/port`, `[security] require_bearer_auth`, `[logging] stream_lines` (opt-in per-line stream logging; summary records are always kept), `[providers.openai] enabled/balance/account_cooldown_seconds`. See docs/configuration.md for the full file shape and variable list.
+
+## Diagnostics
+
+- `airelays status` — local config, token, and provider readiness
+- `airelays doctor` — setup checks plus live upstream `/models` and a tiny `/responses` smoke request (`--skip-response` to skip)
+- `airelays models` — model ids the running relay accepts
+- Traffic logs: hourly JSONL under `~/.airelays/logs`, with per-request records (tokens, status, serving account, adaptations)
+
+## Paths
 
 - config: `~/.config/airelays/config.toml`
-- data dir: `~/.airelays`
-- logs: `~/.airelays/logs`
-- upstream auth fallback file: `~/.airelays/auth.json`
-- server token override: `AIRELAYS_BEARER_TOKEN` or `--bearer-token-file`
-- legacy config path: `~/.config/airelay/config.toml`
-- legacy data dir: `~/.airelay`
-- legacy keychain service name: `AIRelay Auth`
+- data: `~/.airelays` (logs, relay token, per-account auth slots)
 
-## Documentation Map
+## Troubleshooting Pointers
 
-- `README.md`
-  - overview, quick start, supported routes, security defaults, and publication surface
-- `docs/getting-started.md`
-  - first-run setup, basic commands, and protected/open verification examples
-- `docs/configuration.md`
-  - config file layout, env overrides, important paths, and legacy compatibility
-- `docs/security.md`
-  - route protection, rate limits, token rotation, and logging
-- `DISCLAIMER.md`
-  - independence, non-endorsement, and intended single-user local use
-- `docs/api.md`
-  - supported routes and explicit unsupported routes
-- `docs/architecture.md`
-  - package boundaries and request flow
-- `docs/subscription-status.md`
-  - normalized subscription-status payload
-- `docs/faq.md`
-  - common usage and policy questions
-- `docs/troubleshooting.md`
-  - auth, token, and rate-limit recovery
-- `docs/adr/README.md`
-  - ADR index
-
-## Python Package Surface
-
-- `airelays.config`
-  - config resolution, local paths, token bootstrap
-- `airelays.security`
-  - bearer-token enforcement and in-memory abuse controls
-- `airelays.auth`
-  - AIRelays-owned upstream ChatGPT subscription auth and refresh
-- `airelays.backend`
-  - upstream inference and usage calls
-- `airelays.transforms`
-  - OpenAI-shape request/response translation
-- `airelays.store`
-  - local files and local conversation state
-- `airelays.traffic`
-  - redacted JSONL traffic logging
+- 401 then 429: wrong/missing relay token; repeated failures trigger a temporary IP block
+- 422 on token-limit fields: the subscription backend does not accept them; remove the fields
+- browser login URL only works on the relay's own machine; use `airelays login --device` on servers
+- see docs/troubleshooting.md for full workflows

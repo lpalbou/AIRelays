@@ -281,7 +281,7 @@ def test_cli_status_defaults_to_human_output_and_supports_json(
     human = capsys.readouterr().out
 
     assert "AIRelays Status" in human
-    assert "Upstream Session" in human
+    assert "OpenAI Session" in human
     assert "Client Setup" in human
     assert "airelays login" in human
 
@@ -336,9 +336,8 @@ def test_cli_doctor_runs_upstream_model_and_response_smoke_checks(
     config_path = tmp_path / "config.toml"
     config_path.write_text("", encoding="utf-8")
     data_dir = tmp_path / "state"
-    token_path = data_dir / "relay-token"
-    token_path.parent.mkdir(parents=True, exist_ok=True)
-    token_path.write_text("token\n", encoding="utf-8")
+    (data_dir / "relay-token").parent.mkdir(parents=True, exist_ok=True)
+    (data_dir / "relay-token").write_text("relay-token\n", encoding="utf-8")
     _write_auth_payload(
         data_dir,
         {
@@ -406,6 +405,44 @@ def test_cli_doctor_runs_upstream_model_and_response_smoke_checks(
     assert checks["openai_models"]["data"]["selected_model"] == "gpt-doctor"
     assert checks["openai_response"]["status"] == "pass"
     assert calls == ["models:doctor_models", "response:doctor_response", "close"]
+
+
+def test_cli_status_prefers_serve_when_provider_is_ready(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    _clear_airelay_env(monkeypatch)
+    parser = build_parser()
+    config_path = tmp_path / "config.toml"
+    data_dir = tmp_path / "state"
+    (data_dir / "relay-token").parent.mkdir(parents=True, exist_ok=True)
+    (data_dir / "relay-token").write_text("token\n", encoding="utf-8")
+    config_path.write_text(
+        """
+[providers.openai]
+enabled = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    class _FakeRegistry:
+        @staticmethod
+        def provider_statuses() -> dict[str, object]:
+            return {
+                "openai": {
+                    "enabled": True,
+                    "ready_for_requests": True,
+                },
+            }
+
+    monkeypatch.setattr("airelay.cli._provider_registry", lambda settings, manager: _FakeRegistry())
+
+    args = parser.parse_args(
+        ["status", "--json", "--config", str(config_path), "--data-dir", str(data_dir)]
+    )
+    args.func(args)
+    machine = json.loads(capsys.readouterr().out)
+
+    assert machine["next_steps"] == ["airelays serve --host 127.0.0.1 --port 8080"]
 
 
 def test_cli_token_show_displays_existing_token_and_supports_json(

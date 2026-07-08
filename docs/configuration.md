@@ -1,22 +1,22 @@
 # Configuration
 
-AIRelays resolves settings from these sources, highest precedence first:
+AIRelays resolves settings in this order:
 
-1. explicit CLI flags such as `--config`, `--port`, `--auth-storage`
+1. CLI flags
 2. `AIRELAYS_*` environment variables
-3. legacy `OPENAI_ENDPOINT_*` environment variables where supported as a migration fallback
+3. legacy `OPENAI_ENDPOINT_*` migration variables where supported
 4. `~/.config/airelays/config.toml`
 5. built-in defaults
-
-If an earlier AIRelay config already exists at `~/.config/airelay/config.toml`, AIRelays can continue using that path for compatibility.
 
 ## Default Paths
 
 - config: `~/.config/airelays/config.toml`
 - data dir: `~/.airelays`
-- upstream auth fallback file: `~/.airelays/auth.json`
 - logs dir: `~/.airelays/logs`
+- auth fallback file: `~/.airelays/auth.json`
 - relay token file: `~/.airelays/relay-token`
+
+Earlier singular AIRelay paths remain compatible for local upgrades.
 
 ## Sample Config
 
@@ -56,59 +56,16 @@ trust_x_forwarded_for = false
 [uploads]
 max_upload_bytes = 33554432
 max_total_upload_bytes = 268435456
-```
 
-## CLI Overrides
+[logging]
+# Opt-in: log every raw upstream SSE line. Hundreds of records per
+# streamed response (~50x log growth under load); summary records
+# (request, usage, response, errors) are always logged regardless.
+stream_lines = false
 
-These flags override config-file values:
-
-- `--config`
-- `--data-dir`
-- `--logs-dir`
-- `--auth-storage`
-- `--bearer-token-file`
-- `serve --host`
-- `serve --port`
-- `serve --no-auth`
-- `init --no-auth`
-
-## Relay Token Inputs
-
-AIRelays resolves the relay token for server startup in this order:
-
-1. `AIRELAYS_BEARER_TOKEN`
-2. the configured `bearer_token_file`
-
-Default token file:
-
-```text
-~/.airelays/relay-token
-```
-
-Examples:
-
-```bash
-AIRELAYS_BEARER_TOKEN='YOUR_AIRELAYS_TOKEN' airelays serve --port 8080
-```
-
-```bash
-airelays serve --bearer-token-file /path/to/relay-token --port 8080
-```
-
-To disable relay auth for the current process:
-
-```bash
-airelays serve --no-auth --port 8080
-```
-
-To persist that mode through config or environment:
-
-```bash
-airelays init --no-auth
-```
-
-```bash
-AIRELAYS_REQUIRE_BEARER_AUTH=false airelays serve --port 8080
+[providers.openai]
+enabled = true
+models_cache_ttl_seconds = 300.0
 ```
 
 ## Important Environment Variables
@@ -129,33 +86,40 @@ AIRELAYS_REQUIRE_BEARER_AUTH=false airelays serve --port 8080
 - `AIRELAYS_REQUIRE_BEARER_AUTH`
 - `AIRELAYS_BEARER_TOKEN`
 - `AIRELAYS_BEARER_TOKEN_FILE`
-- `AIRELAYS_AUTO_GENERATE_BEARER_TOKEN`
-- `AIRELAYS_RATE_LIMIT_PER_MINUTE`
-- `AIRELAYS_RATE_LIMIT_BURST`
-- `AIRELAYS_CONCURRENT_REQUESTS_PER_IP`
-- `AIRELAYS_FAILED_AUTH_WINDOW_SECONDS`
-- `AIRELAYS_FAILED_AUTH_MAX_ATTEMPTS`
-- `AIRELAYS_FAILED_AUTH_BLOCK_SECONDS`
-- `AIRELAYS_TRUST_X_FORWARDED_FOR`
-- `AIRELAYS_MAX_UPLOAD_BYTES`
-- `AIRELAYS_MAX_TOTAL_UPLOAD_BYTES`
+- `AIRELAYS_LOG_STREAM_LINES`
+- `AIRELAYS_ENABLE_OPENAI`
+- `AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`
 
-## Notes
+## Relay Token Inputs
 
-- `airelays init` is the normal way to create the relay token. `airelays serve` only auto-generates a token when you explicitly enable `auto_generate_bearer_token`.
-- `airelays init --no-auth` writes config with bearer auth disabled and skips relay-token creation.
-- `AIRELAYS_BEARER_TOKEN` overrides the token file for the current process.
-- `auth.storage = "auto"` prefers the AIRelays keyring namespace and falls back to `~/.airelays/auth.json` when keyring access is unavailable.
-- `auth.storage = "auto"` also recognizes earlier `AIRelay Auth` keychain entries and migrates them into the AIRelays-owned namespace when they are encountered.
-- `AIRELAYS_TRUST_X_FORWARDED_FOR` should stay `false` unless you intentionally run behind a trusted proxy.
-- The listener remains loopback-only by default. Change `host` explicitly if you need broader access.
+AIRelays resolves the relay token in this order:
 
-## Legacy Compatibility
+1. `AIRELAYS_BEARER_TOKEN`
+2. the configured `bearer_token_file`
 
-AIRelays keeps compatibility with earlier singular AIRelay naming where it matters for local upgrades:
+Override examples:
 
-- legacy config path: `~/.config/airelay/config.toml`
-- legacy data dir: `~/.airelay`
-- legacy keychain service name: `AIRelay Auth`
+```bash
+AIRELAYS_BEARER_TOKEN='YOUR_AIRELAYS_TOKEN' airelays serve --port 8080
+```
 
-If those paths or entries already exist, AIRelays can continue using or importing them instead of forcing a fresh login or a manual migration.
+```bash
+airelays serve --bearer-token-file /path/to/relay-token --port 8080
+```
+
+## Provider Notes
+
+OpenAI runtime:
+
+- enabled by default
+- uses AIRelays-owned auth storage
+- `airelays login` manages its subscription session
+- caches successful upstream model-list responses for `models_cache_ttl_seconds` seconds
+  by default
+- the model-list cache is process-local, in-memory, and disabled when
+  `models_cache_ttl_seconds = 0`
+- cache state is visible under `providers.openai.models_cache` in
+  `GET /v1/relay/status`
+
+`AIRELAYS_MODELS_CACHE_TTL_SECONDS` remains accepted as a shorter alias for
+`AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`.
