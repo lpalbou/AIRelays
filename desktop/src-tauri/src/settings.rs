@@ -84,7 +84,7 @@ impl Default for AppSettings {
             request_timeout_seconds: 120.0,
             rate_limit_per_minute: 120,
             rate_limit_burst: 40,
-            concurrent_requests_per_ip: 8,
+            concurrent_requests_per_ip: 50,
             failed_auth_window_seconds: 300,
             failed_auth_max_attempts: 8,
             failed_auth_block_seconds: 900,

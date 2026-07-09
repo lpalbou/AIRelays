@@ -20,7 +20,7 @@ const settings = {
   requestTimeoutSeconds: 120,
   rateLimitPerMinute: 120,
   rateLimitBurst: 40,
-  concurrentRequestsPerIp: 8,
+  concurrentRequestsPerIp: 50,
   failedAuthWindowSeconds: 300,
   failedAuthMaxAttempts: 8,
   failedAuthBlockSeconds: 900,
