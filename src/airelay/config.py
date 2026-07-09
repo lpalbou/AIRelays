@@ -108,7 +108,7 @@ class Settings:
     auto_generate_bearer_token: bool = False
     rate_limit_per_minute: int = 120
     rate_limit_burst: int = 40
-    concurrent_requests_per_ip: int = 8
+    concurrent_requests_per_ip: int = 50
     failed_auth_window_seconds: int = 300
     failed_auth_max_attempts: int = 8
     failed_auth_block_seconds: int = 900
@@ -264,7 +264,7 @@ class Settings:
             concurrent_requests_per_ip=_int(
                 _env("AIRELAYS_CONCURRENT_REQUESTS_PER_IP", "AIRELAY_CONCURRENT_REQUESTS_PER_IP")
                 or _cfg(payload, "security", "concurrent_requests_per_ip"),
-                8,
+                50,
             ),
             failed_auth_window_seconds=_int(
                 _env("AIRELAYS_FAILED_AUTH_WINDOW_SECONDS", "AIRELAY_FAILED_AUTH_WINDOW_SECONDS")
