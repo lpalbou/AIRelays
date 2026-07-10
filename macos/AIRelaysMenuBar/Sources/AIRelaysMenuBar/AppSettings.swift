@@ -341,7 +341,7 @@ struct RelayAppSettings: Codable {
         "http://\(clientHost):\(port)/v1"
     }
 
-    /// The relay enforces guardrails for the experimental Claude runtime
+    /// The relay enforces guardrails for the Claude runtime
     /// (loopback-only listener, no X-Forwarded-For trust); the rendered
     /// config must respect both or serve refuses to start.
     var claudeEffectivelyEnabled: Bool {

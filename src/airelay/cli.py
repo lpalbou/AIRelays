@@ -144,7 +144,7 @@ def _status_payload(settings: Settings, manager: AuthManager) -> dict[str, objec
     if not any_provider_ready:
         if settings.enable_openai_provider and not auth_status.get("ready_for_requests"):
             next_steps.append(_login_hint())
-        if settings.enable_claude_experimental and not claude_status.get("ready_for_requests"):
+        if settings.enable_claude and not claude_status.get("ready_for_requests"):
             next_steps.append("claude auth login --claudeai")
             next_steps.append("airelays claude set-token")
     if any_provider_ready and token_ready:
@@ -186,7 +186,7 @@ def _init_payload(
     next_steps: list[str] = []
     if settings.enable_openai_provider:
         next_steps.append(_login_hint())
-    if settings.enable_claude_experimental:
+    if settings.enable_claude:
         next_steps.append("claude auth login --claudeai")
         next_steps.append("airelays claude set-token")
     next_steps.append(_serve_command(settings))
@@ -516,14 +516,14 @@ async def _doctor_payload(settings: Settings, *, skip_response: bool = False) ->
         await backend.close()
 
     claude_status = dict(provider_statuses.get("claude", {}))
-    if not settings.enable_claude_experimental:
-        checks.append(_check("claude", "skip", "Claude experimental runtime is disabled."))
+    if not settings.enable_claude:
+        checks.append(_check("claude", "skip", "The Claude runtime is disabled."))
     elif claude_status.get("ready_for_requests"):
         checks.append(
             _check(
                 "claude",
                 "pass",
-                "Claude experimental runtime is ready.",
+                "The Claude runtime is ready.",
                 data={
                     "cli_version": claude_status.get("cli_version") or "",
                     "auth_method": claude_status.get("auth_method") or "",
@@ -535,7 +535,7 @@ async def _doctor_payload(settings: Settings, *, skip_response: bool = False) ->
         check = _check(
             "claude",
             "fail",
-            "Claude experimental runtime is enabled but not ready.",
+            "The Claude runtime is enabled but not ready.",
             next_steps=["claude auth login --claudeai", "airelays claude set-token"],
             data={
                 "cli_version": claude_status.get("cli_version") or "",
@@ -823,7 +823,6 @@ def _print_status_summary(payload: dict[str, object]) -> None:
             "yes" if claude_provider.get("ready_for_requests") else "no",
             kind="good" if claude_provider.get("ready_for_requests") else "warn",
         )
-        _print_field("Claude experimental", "yes", kind="warn")
         _print_field("Claude CLI", claude_provider.get("cli_version"))
         _print_field("Claude email", claude_provider.get("email"))
         _print_field("Claude auth", claude_provider.get("auth_method"))
@@ -946,7 +945,7 @@ def _print_serve_banner(settings: Settings, provider_statuses: dict[str, object]
     claude_provider = dict(provider_statuses.get("claude", {}))
     _print_field("Claude", "enabled" if claude_provider.get("enabled") else "disabled")
     if claude_provider.get("enabled"):
-        _print_field("Claude mode", "experimental local adapter", kind="warn")
+        _print_field("Claude mode", "local CLI adapter")
         _print_field(
             "Claude ready",
             "yes" if claude_provider.get("ready_for_requests") else "no",
@@ -1380,9 +1379,7 @@ def _run_models(args: argparse.Namespace) -> None:
     for provider, entries in by_provider.items():
         _print_section(display_names.get(provider, provider))
         for model in entries:
-            experimental = (model.get("airelays") or {}).get("experimental")
-            suffix = "  (experimental)" if experimental else ""
-            print(f"  {model.get('id')}{suffix}")
+            print(f"  {model.get('id')}")
     print()
     print("  Use these ids as `model` in requests to the endpoint above.")
     print()
@@ -1458,8 +1455,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-auth",
         action="store_true",
         help=(
-            "Disable AIRelays local bearer auth for this server process; upstream provider login "
-            "is still required and Claude experimental mode rejects this option"
+            "Disable AIRelays local bearer auth for this server process; upstream provider "
+            "login is still required"
         ),
     )
     serve.set_defaults(func=_run_serve)
@@ -1476,7 +1473,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Write config with local bearer auth disabled and skip relay-token creation; "
-            "upstream provider login is still required and Claude experimental mode rejects this option"
+            "upstream provider login is still required"
         ),
     )
     init.add_argument(

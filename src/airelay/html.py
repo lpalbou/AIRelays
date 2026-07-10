@@ -27,9 +27,9 @@ def render_home(
     provider_state = "OpenAI runtime enabled"
     if claude_enabled:
         provider_state = (
-            "OpenAI + Claude experimental runtime enabled"
+            "OpenAI + Claude runtimes enabled"
             if openai_enabled
-            else "Claude experimental runtime enabled"
+            else "Claude runtime enabled"
         )
     if require_bearer_auth:
         token_state = "Relay client token ready" if relay_token_ready else "Relay client token missing"
@@ -78,8 +78,8 @@ def render_home(
         )
         if claude_provider.get("enabled"):
             protected_surface_copy += (
-                "<li>Claude experimental models are local-only, loopback-only, and stateless</li>"
-                "<li>Claude experimental models support text chat and text completions only</li>"
+                "<li>Claude models are local-only, loopback-only, and stateless</li>"
+                "<li>Claude models support text chat and text completions only</li>"
             )
         diagnostics_copy = (
             "<li><code>GET /healthz</code> is intentionally minimal and public</li>"

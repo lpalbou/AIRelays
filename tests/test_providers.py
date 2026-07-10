@@ -13,7 +13,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
         data_dir=tmp_path / "data",
         logs_dir=tmp_path / "logs",
         bearer_token_file=tmp_path / "data" / "relay-token",
-        enable_claude_experimental=True,
+        enable_claude=True,
         claude_models=("claude:sonnet",),
     )
     for key, value in overrides.items():
@@ -165,7 +165,7 @@ def test_provider_registry_marks_disabled_openai_runtime_not_ready(tmp_path) -> 
 async def test_provider_registry_collapses_concurrent_openai_model_cache_misses(tmp_path) -> None:
     settings = make_settings(
         tmp_path,
-        enable_claude_experimental=False,
+        enable_claude=False,
         models_cache_ttl_seconds=300.0,
     )
     backend = _FakeOpenAIBackend()

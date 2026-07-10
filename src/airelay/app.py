@@ -41,7 +41,7 @@ from airelay.transforms import (
 # standard OpenAI SDKs send by default get the same documented treatment as
 # on the OpenAI runtime: stripped and disclosed, never a hard failure.
 CLAUDE_ADAPTATION_REASON = (
-    "The Claude experimental runtime's local CLI has no sampling controls, "
+    "The Claude runtime's local CLI has no sampling controls, "
     "so the compatibility layer omitted these parameters."
 )
 
@@ -371,7 +371,7 @@ def create_app(settings: Settings) -> FastAPI:
             if runtime is None:
                 raise HTTPException(
                     status_code=501,
-                    detail="The Claude experimental runtime is disabled for this AIRelays process.",
+                    detail="The Claude runtime is disabled for this AIRelays process.",
                 )
             try:
                 payload = await runtime.get_subscription_status(request_id)
@@ -662,7 +662,7 @@ def create_app(settings: Settings) -> FastAPI:
                 if resolved.provider != "openai":
                     raise ProviderError(
                         422,
-                        "Claude experimental mode currently supports `/v1/chat/completions` and `/v1/completions` only.",
+                        "The Claude runtime supports `/v1/chat/completions` and `/v1/completions` only.",
                         code="unsupported_for_provider",
                     )
             payload, wants_stream, conversation_id = prepare_response_request(body, store, allow_tools)
@@ -754,7 +754,7 @@ def create_app(settings: Settings) -> FastAPI:
                     if claude_runtime is None:
                         raise ProviderError(
                             503,
-                            "Claude experimental mode is not available in this AIRelays process.",
+                            "The Claude runtime is not available in this AIRelays process.",
                             code="provider_unavailable",
                         )
                     ignored_parameters = strip_unsupported_response_parameters(body)
@@ -937,7 +937,7 @@ def create_app(settings: Settings) -> FastAPI:
                     if claude_runtime is None:
                         raise ProviderError(
                             503,
-                            "Claude experimental mode is not available in this AIRelays process.",
+                            "The Claude runtime is not available in this AIRelays process.",
                             code="provider_unavailable",
                         )
                     ignored_parameters = strip_unsupported_response_parameters(body)

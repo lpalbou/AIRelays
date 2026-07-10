@@ -93,9 +93,9 @@ airelays login
 airelays serve --no-auth --host 127.0.0.1 --port 8080
 ```
 
-In this mode AIRelays does not require `Authorization` on `/v1/*`. Open local relay mode applies to all enabled providers, including Claude experimental mode.
+In this mode AIRelays does not require `Authorization` on `/v1/*`. Open local relay mode applies to all enabled providers, including the Claude runtime.
 
-## Claude Experimental Runtime
+## Claude Runtime
 
 Browser-based local Claude login:
 
@@ -168,7 +168,7 @@ airelays doctor
 
 `airelays doctor` checks config, relay-token state, OpenAI login readiness,
 upstream `/models`, a tiny `/responses` smoke request, and Claude readiness
-when the experimental runtime is enabled. Use `airelays doctor --skip-response`
+when the Claude runtime is enabled. Use `airelays doctor --skip-response`
 to skip the response smoke request.
 
 List every model id the running relay accepts, grouped by provider:
@@ -194,7 +194,7 @@ airelays models --json
 
 ## Provider Routing
 
-- models starting with `claude:` use the Claude experimental runtime when it is enabled
+- models starting with `claude:` use the Claude runtime when it is enabled
 - other model ids use the OpenAI runtime when it is enabled
 - AIRelays rejects requests when the selected runtime is disabled or the route is outside that runtime's published subset
 

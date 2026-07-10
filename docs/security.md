@@ -43,7 +43,7 @@ airelays token rotate
 
 ## Open Local Relay Mode
 
-Open local relay mode applies to all enabled providers, including Claude experimental mode.
+Open local relay mode applies to all enabled providers, including the Claude runtime.
 
 ```bash
 airelays init --no-auth
@@ -56,7 +56,7 @@ Equivalent environment override:
 AIRELAYS_REQUIRE_BEARER_AUTH=false airelays serve --port 8080
 ```
 
-## Claude Experimental Guardrails
+## Claude Guardrails
 
 When the Claude runtime is enabled:
 

@@ -14,7 +14,7 @@ def test_config_file_round_trip(tmp_path) -> None:
         data_dir=tmp_path / "data",
         logs_dir=tmp_path / "logs",
         bearer_token_file=tmp_path / "data" / "relay-token",
-        enable_claude_experimental=True,
+        enable_claude=True,
         models_cache_ttl_seconds=42.0,
         claude_models=("claude:sonnet",),
     )
@@ -29,7 +29,7 @@ def test_config_file_round_trip(tmp_path) -> None:
     assert loaded.auth_file() == tmp_path / "data" / "auth.json"
     assert loaded.logs_dir == tmp_path / "logs"
     assert loaded.bearer_token_file == tmp_path / "data" / "relay-token"
-    assert loaded.enable_claude_experimental is True
+    assert loaded.enable_claude is True
     assert loaded.models_cache_ttl_seconds == 42.0
     assert loaded.claude_models == ("claude:sonnet",)
 
@@ -54,14 +54,27 @@ def test_env_overrides_config_file(tmp_path, monkeypatch) -> None:
     assert loaded.models_cache_ttl_seconds == 17.5
 
 
-def test_experimental_branch_enables_claude_by_default(tmp_path, monkeypatch) -> None:
+def test_claude_is_enabled_by_default(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "missing.toml"
+    monkeypatch.delenv("AIRELAYS_ENABLE_CLAUDE", raising=False)
     monkeypatch.delenv("AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL", raising=False)
     monkeypatch.delenv("AIRELAY_ENABLE_CLAUDE_EXPERIMENTAL", raising=False)
 
     loaded = Settings.from_sources(config_path)
 
-    assert loaded.enable_claude_experimental is True
+    assert loaded.enable_claude is True
+
+
+def test_legacy_claude_experimental_env_still_disables_claude(tmp_path, monkeypatch) -> None:
+    """Environments configured while the runtime carried the "experimental"
+    label must keep working after the rename."""
+    config_path = tmp_path / "missing.toml"
+    monkeypatch.delenv("AIRELAYS_ENABLE_CLAUDE", raising=False)
+    monkeypatch.setenv("AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL", "false")
+
+    loaded = Settings.from_sources(config_path)
+
+    assert loaded.enable_claude is False
 
 
 def test_explicit_bearer_token_overrides_existing_token_file(tmp_path) -> None:
@@ -105,7 +118,7 @@ def test_claude_guardrails_allow_open_mode_but_require_loopback(tmp_path) -> Non
         logs_dir=tmp_path / "logs",
         bearer_token_file=tmp_path / "data" / "relay-token",
         require_bearer_auth=False,
-        enable_claude_experimental=True,
+        enable_claude=True,
     )
 
     settings.validate_provider_guardrails()

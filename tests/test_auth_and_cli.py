@@ -268,7 +268,7 @@ def test_cli_status_defaults_to_human_output_and_supports_json(
     tmp_path, capsys, monkeypatch
 ) -> None:
     _clear_airelay_env(monkeypatch)
-    monkeypatch.setenv("AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL", "false")
+    monkeypatch.setenv("AIRELAYS_ENABLE_CLAUDE", "false")
     # The login hint depends on the machine (desktop → browser flow,
     # headless → device flow); pin it so the assertion is deterministic
     # on displayless CI runners.
@@ -445,7 +445,6 @@ enabled = true
                 "claude": {
                     "enabled": True,
                     "ready_for_requests": True,
-                    "experimental": True,
                 },
             }
 
@@ -479,7 +478,7 @@ def test_cli_init_claude_only_skips_openai_login_hint(
         ]
     )
     monkeypatch.setenv("AIRELAYS_ENABLE_OPENAI", "false")
-    monkeypatch.setenv("AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL", "true")
+    monkeypatch.setenv("AIRELAYS_ENABLE_CLAUDE", "true")
     args.func(args)
     payload = json.loads(capsys.readouterr().out)
 
@@ -602,7 +601,7 @@ def test_cli_serve_no_auth_starts_open_mode_without_token(tmp_path, monkeypatch,
     assert captured["port"] == 8090
 
 
-def test_cli_serve_allows_no_auth_when_claude_experimental_is_enabled(
+def test_cli_serve_allows_no_auth_when_claude_is_enabled(
     tmp_path, monkeypatch
 ) -> None:
     _clear_airelay_env(monkeypatch)
@@ -633,7 +632,7 @@ enabled = true
         def provider_statuses() -> dict[str, object]:
             return {
                 "openai": {"enabled": False, "ready_for_requests": False},
-                "claude": {"enabled": True, "ready_for_requests": True, "experimental": True},
+                "claude": {"enabled": True, "ready_for_requests": True},
             }
 
     def fake_run(app, host, port, log_level):  # type: ignore[no-untyped-def]
@@ -651,7 +650,7 @@ enabled = true
     assert captured["port"] == 8080
 
 
-def test_cli_init_allows_no_auth_when_claude_experimental_is_enabled(
+def test_cli_init_allows_no_auth_when_claude_is_enabled(
     tmp_path, monkeypatch
 ) -> None:
     _clear_airelay_env(monkeypatch)

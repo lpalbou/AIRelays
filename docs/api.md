@@ -14,7 +14,7 @@ letting them fail, and always discloses what it changed:
   parameters are returned in the `x-airelays-ignored-parameters` response
   header and logged as a `compatibility_adaptation` traffic record with the
   reason. Generation runs with the upstream's own sampling defaults. The
-  same adaptation applies on the Claude experimental routes: the local
+  same adaptation applies on the Claude routes: the local
   `claude` CLI exposes no sampling controls, so these parameters are
   stripped and disclosed there too instead of failing the request.
 - **Reasoning effort:** `reasoning_effort` (chat completions) and
@@ -37,8 +37,8 @@ letting them fail, and always discloses what it changed:
 Returns an OpenAI-style models list built from the enabled provider runtimes.
 
 - OpenAI models come from the verified ChatGPT subscription backend when that runtime is ready.
-- Claude experimental models are explicit `claude:*` ids.
-- models starting with `claude:` route to the Claude experimental runtime when it is enabled
+- Claude models are explicit `claude:*` ids.
+- models starting with `claude:` route to the Claude runtime when it is enabled
 - other model ids route to the OpenAI runtime when it is enabled
 - Each model record includes an `airelays` extension block with provider identity and route capabilities.
 - Successful OpenAI upstream model-list responses are cached in memory for
@@ -99,7 +99,7 @@ Current OpenAI limits:
 - `store=true` rejected
 - output-token limit fields rejected explicitly
 
-Claude experimental runtime:
+Claude runtime:
 
 - rejected explicitly on this route
 
@@ -109,7 +109,7 @@ OpenAI runtime:
 
 - current AIRelays OpenAI compatibility path
 
-Claude experimental runtime:
+Claude runtime:
 
 - explicit `claude:*` models only
 - text-only `system`, `developer`, `user`, and `assistant` messages
@@ -127,7 +127,7 @@ OpenAI runtime:
 
 - current AIRelays OpenAI compatibility path
 
-Claude experimental runtime:
+Claude runtime:
 
 - explicit `claude:*` models only
 - text-only prompt-in, text-out
@@ -145,7 +145,7 @@ Local AIRelays file storage for the OpenAI runtime compatibility path.
 
 Local AIRelays conversation storage for the OpenAI runtime compatibility path.
 
-The Claude experimental runtime is stateless and does not use local conversations.
+The Claude runtime is stateless and does not use local conversations.
 
 ## Unsupported Routes
 
@@ -156,4 +156,4 @@ These currently return `501 unsupported_error`:
 - audio
 - realtime sessions
 
-Claude experimental models are also rejected on any route that is not part of their published subset.
+Claude models are also rejected on any route that is not part of their published subset.

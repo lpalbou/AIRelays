@@ -49,7 +49,10 @@ pub struct AppSettings {
     pub max_total_upload_bytes: u64,
     pub enable_openai_provider: bool,
     pub models_cache_ttl_seconds: f64,
-    pub enable_claude_experimental: bool,
+    // The serde alias keeps settings files written while the Claude runtime
+    // carried the "experimental" label loading unchanged.
+    #[serde(alias = "enableClaudeExperimental")]
+    pub enable_claude: bool,
     pub claude_bin: String,
     pub claude_timeout_seconds: f64,
     pub claude_max_concurrent_requests: u32,
@@ -93,7 +96,7 @@ impl Default for AppSettings {
             max_total_upload_bytes: 256 * 1024 * 1024,
             enable_openai_provider: true,
             models_cache_ttl_seconds: 300.0,
-            enable_claude_experimental: true,
+            enable_claude: true,
             claude_bin: "claude".into(),
             claude_timeout_seconds: 600.0,
             claude_max_concurrent_requests: 2,
@@ -121,11 +124,11 @@ impl AppSettings {
         format!("http://{}:{}/v1", self.client_host(), self.port)
     }
 
-    /// The relay enforces guardrails for the experimental Claude runtime
-    /// (loopback-only listener, no X-Forwarded-For trust); the rendered
-    /// config must respect them or serve refuses to start.
+    /// The relay enforces guardrails for the Claude runtime (loopback-only
+    /// listener, no X-Forwarded-For trust); the rendered config must
+    /// respect them or serve refuses to start.
     pub fn claude_effectively_enabled(&self) -> bool {
-        self.enable_claude_experimental && self.is_loopback_host() && !self.trust_x_forwarded_for
+        self.enable_claude && self.is_loopback_host() && !self.trust_x_forwarded_for
     }
 
     /// Rejects values that would render an invalid or dangerous config.

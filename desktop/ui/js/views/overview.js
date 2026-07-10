@@ -213,7 +213,7 @@ function template() {
       </div>
       <div class="hint" id="ov-claude-note" hidden>
         <span>ⓘ</span>
-        <span>The experimental Claude provider only works in "This machine only" mode; it stays off while network access is on.</span>
+        <span>The Claude provider only works in "This machine only" mode; it stays off while network access is on.</span>
       </div>
     </section>
 
@@ -256,7 +256,7 @@ function template() {
     <dialog id="ov-claude-mode-dialog">
       <h3>Claude needs "This machine only" mode</h3>
       <p class="dialog-text">
-        For security, the experimental Claude provider only runs while the
+        For security, the Claude provider only runs while the
         relay is not exposed to your network. Switching now restarts the
         relay on this machine only — <strong>devices on your network lose
         access</strong> until you switch back.
@@ -781,7 +781,7 @@ function render(state) {
 
   el("ov-open-lan-warning").hidden = requireAuth || loopback;
   el("ov-open-warning").hidden = requireAuth || !loopback;
-  el("ov-claude-note").hidden = loopback || !state.settings.enableClaudeExperimental;
+  el("ov-claude-note").hidden = loopback || !state.settings.enableClaude;
 
   // Key row: masked value only meaningful in protected mode.
   el("ov-key-row").hidden = !requireAuth;
@@ -792,7 +792,7 @@ function render(state) {
   // provider is off because network access is on. Clicking sign-in while
   // off opens the mode-switch dialog instead of a sign-in that would do
   // nothing.
-  el("ov-claude-section").hidden = !state.settings.enableClaudeExperimental;
+  el("ov-claude-section").hidden = !state.settings.enableClaude;
   el("ov-claude-off-badge").hidden = state.claude_effective;
 
   // Sign-in stays enabled while signed in: the claude CLI treats a repeat
@@ -1011,7 +1011,7 @@ function renderAccounts(state) {
   // vanishes after a network-mode switch.
   const claude = providers.claude;
   const claudePaused = Boolean(
-    lastState?.settings?.enableClaudeExperimental && !lastState?.claude_effective
+    lastState?.settings?.enableClaude && !lastState?.claude_effective
   );
   const claudeContainer = el("ov-claude-account");
   claudeContainer.innerHTML = "";

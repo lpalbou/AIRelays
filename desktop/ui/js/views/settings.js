@@ -61,11 +61,11 @@ const FIELDS = [
   },
   {
     title: "Providers",
-    caption: "The experimental Claude provider requires 'This machine only' network mode.",
+    caption: "The Claude provider requires 'This machine only' network mode.",
     items: [
       { key: "enableOpenaiProvider", label: "Enable OpenAI provider", kind: "bool" },
       { key: "modelsCacheTtlSeconds", label: "OpenAI models cache TTL (seconds)", kind: "number", min: 0, max: 86400 },
-      { key: "enableClaudeExperimental", label: "Enable Claude experimental", kind: "bool" },
+      { key: "enableClaude", label: "Enable Claude", kind: "bool" },
       { key: "claudeBin", label: "Claude CLI binary", kind: "text" },
       { key: "claudeTimeoutSeconds", label: "Claude timeout (seconds)", kind: "number", min: 1, max: 7200 },
       { key: "claudeMaxConcurrentRequests", label: "Claude max concurrent requests", kind: "number", min: 1, max: 64 },

@@ -29,7 +29,7 @@ const settings = {
   maxTotalUploadBytes: 268435456,
   enableOpenaiProvider: true,
   modelsCacheTtlSeconds: 300,
-  enableClaudeExperimental: true,
+  enableClaude: true,
   claudeBin: "claude",
   claudeTimeoutSeconds: 600,
   claudeMaxConcurrentRequests: 2,
@@ -52,7 +52,7 @@ const state = () => ({
   login_accepts_code: false,
   login_running: false,
   claude_effective:
-    settings.enableClaudeExperimental &&
+    settings.enableClaude &&
     ["127.0.0.1", "localhost", "::1"].includes(settings.host) &&
     !settings.trustXForwardedFor,
   claude_token_present: false,
@@ -259,11 +259,11 @@ export async function mockInvoke(command, args = {}) {
       return {
         object: "list",
         data: [
-          { id: "gpt-5.5", object: "model", airelays: { provider: "openai", experimental: false } },
-          { id: "gpt-5.4", object: "model", airelays: { provider: "openai", experimental: false } },
-          { id: "gpt-5.4-mini", object: "model", airelays: { provider: "openai", experimental: false } },
-          { id: "claude:sonnet", object: "model", airelays: { provider: "claude", experimental: true } },
-          { id: "claude:opus", object: "model", airelays: { provider: "claude", experimental: true } },
+          { id: "gpt-5.5", object: "model", airelays: { provider: "openai" } },
+          { id: "gpt-5.4", object: "model", airelays: { provider: "openai" } },
+          { id: "gpt-5.4-mini", object: "model", airelays: { provider: "openai" } },
+          { id: "claude:sonnet", object: "model", airelays: { provider: "claude" } },
+          { id: "claude:opus", object: "model", airelays: { provider: "claude" } },
         ],
       };
     case "set_custom_token":

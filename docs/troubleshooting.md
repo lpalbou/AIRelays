@@ -71,7 +71,7 @@ usually heavy system load or a long request burst.
 - if it persists, open the Console tab for relay output, or use Restart
 - Stop/Restart keep working: the app still manages the process
 
-## `422` on Claude experimental routes
+## `422` on Claude routes
 
 The current Claude runtime supports only explicit `claude:*` models on text `chat.completions` and text `completions`.
 
@@ -83,7 +83,7 @@ Checks:
 
 ## Claude startup refusal
 
-When Claude experimental mode is enabled:
+When the Claude runtime is enabled:
 
 - keep the listener on `127.0.0.1`, `localhost`, or `::1`
 - keep relay bearer auth enabled

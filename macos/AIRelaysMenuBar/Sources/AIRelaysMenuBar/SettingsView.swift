@@ -82,7 +82,7 @@ struct SettingsRootView: View {
                 settingsGrid {
                     booleanField("Enable OpenAI", keyPath: \.enableOpenAIProvider)
                     doubleField("OpenAI Models Cache TTL", keyPath: \.modelsCacheTTLSeconds)
-                    booleanField("Enable Claude Experimental", keyPath: \.enableClaudeExperimental)
+                    booleanField("Enable Claude", keyPath: \.enableClaudeExperimental)
                     textField("Claude Bin", keyPath: \.claudeBin)
                     doubleField("Claude Timeout Seconds", keyPath: \.claudeTimeoutSeconds)
                     integerField("Claude Max Concurrent", keyPath: \.claudeMaxConcurrentRequests)

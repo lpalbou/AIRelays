@@ -182,7 +182,7 @@ final class RelayController: ObservableObject {
             ? "Listener: all interfaces (private network can connect)."
             : "Listener: loopback only (this Mac)."
         if exposed && settings.enableClaudeExperimental {
-            note += " Claude experimental is loopback-only and stays disabled while exposed."
+            note += " Claude is loopback-only and stays disabled while exposed."
         }
         appendConsole(source: "config", text: note, isError: false)
         saveAndRestartIfNeeded()

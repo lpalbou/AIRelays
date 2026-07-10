@@ -3,7 +3,7 @@
 AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes.
 
 - OpenAI runtime: first-class ChatGPT subscription path
-- Claude runtime: optional experimental local text adapter through the `claude` CLI
+- Claude runtime: optional local text adapter through the `claude` CLI
 
 Start with:
 

@@ -155,12 +155,6 @@ function modelRow(model) {
   id.className = "model-id";
   id.textContent = model.id;
   row.appendChild(id);
-  if (model.airelays?.experimental) {
-    const badge = document.createElement("span");
-    badge.className = "badge badge-neutral";
-    badge.textContent = "Experimental";
-    row.appendChild(badge);
-  }
   const spacer = document.createElement("span");
   spacer.className = "spacer";
   row.appendChild(spacer);

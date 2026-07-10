@@ -8,7 +8,7 @@ AIRelays is designed for a single user operating a local relay for personal conv
 
 Support for multiple accounts exists so one person can use their own subscriptions from one relay. It is not a mechanism for sharing, pooling, or reselling access among multiple users, and upstream terms and usage limits continue to apply to each account individually.
 
-The experimental Claude runtime is local-only, bearer-auth-required, loopback-only, and driven by the local Claude CLI. AIRelays does not present it as a sanctioned provider integration path or a shared gateway feature.
+The Claude runtime is local-only, bearer-auth-required, loopback-only, and driven by the local Claude CLI. AIRelays does not present it as a sanctioned provider integration path or a shared gateway feature.
 
 You are responsible for reviewing and complying with the terms, policies, and usage limits that apply to any upstream account or subscription you use with AIRelays.
 

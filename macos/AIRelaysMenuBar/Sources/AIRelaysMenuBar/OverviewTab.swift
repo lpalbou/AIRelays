@@ -129,7 +129,7 @@ struct OverviewTab: View {
                         .foregroundStyle(.orange)
                 }
                 if !controller.settings.isLoopbackHost && controller.settings.enableClaudeExperimental {
-                    Label("Claude experimental is loopback-only; it stays disabled while exposed to the LAN.", systemImage: "info.circle")
+                    Label("Claude is loopback-only; it stays disabled while exposed to the LAN.", systemImage: "info.circle")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

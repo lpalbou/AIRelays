@@ -3,7 +3,7 @@
 `AIRelays` is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 - The default runtime uses an AIRelays-owned ChatGPT subscription login.
-- An optional experimental Claude runtime uses the local `claude` CLI and its existing subscription auth state.
+- An optional Claude runtime uses the local `claude` CLI and its existing subscription auth state.
 - AIRelays protects the relay with its own bearer token by default.
 - Every transit is logged to hourly JSONL files.
 
@@ -13,7 +13,7 @@
 - Provider and product names are used only to describe compatibility targets and upstream behavior.
 - AIRelays is designed for a single user running a local relay for personal convenience.
 - AIRelays is not presented as a shared, pooled, multi-user, or resale service.
-- The Claude runtime is experimental, local-only, and not presented as a sanctioned provider integration path.
+- The Claude runtime is local-only and not presented as a sanctioned provider integration path.
 - You are responsible for complying with each provider's terms. Both providers currently frame subscription access around ordinary, individual use by the account holder; the moment anyone else's requests flow through your relay, you are outside that.
 
 See [DISCLAIMER.md](DISCLAIMER.md) — it links the official Anthropic and OpenAI terms and policy pages to review.
@@ -100,7 +100,7 @@ airelays serve --no-auth --port 8080
 
 This disables only the AIRelays client-token gate. It does not bypass the upstream ChatGPT login.
 
-Claude experimental runtime:
+Claude runtime:
 
 ```bash
 airelays init
@@ -108,7 +108,7 @@ claude auth login --claudeai
 airelays serve --port 8080
 ```
 
-Claude experimental runtime in headless environments:
+Claude runtime in headless environments:
 
 ```bash
 # on any machine WITH a browser:
@@ -128,7 +128,7 @@ logout` signs Claude out completely: it removes the stored token and runs
 `claude auth logout` (which signs out every tool using the `claude` CLI on
 that machine).
 
-When Claude experimental mode is enabled, AIRelays keeps the same auth behavior as the rest of the relay. The default protected mode requires the AIRelays bearer token; `--no-auth` starts an open local relay. Claude remains restricted to loopback binding.
+When the Claude runtime is enabled, AIRelays keeps the same auth behavior as the rest of the relay. The default protected mode requires the AIRelays bearer token; `--no-auth` starts an open local relay. Claude remains restricted to loopback binding.
 
 ## Basic Verification
 
@@ -178,7 +178,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
   }'
 ```
 
-Claude experimental text request:
+Claude text request:
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
@@ -238,7 +238,7 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 
 ## Provider Routing
 
-- models starting with `claude:` use the Claude experimental runtime when it is enabled
+- models starting with `claude:` use the Claude runtime when it is enabled
 - other model ids use the OpenAI runtime when it is enabled
 - AIRelays rejects requests when the selected runtime is disabled or the route is outside that runtime's published subset
 
@@ -278,8 +278,8 @@ response header.
 `top_p`, `presence_penalty`, and `frequency_penalty` outright
 (`"Unsupported parameter: temperature"`). AIRelays strips them so standard
 SDK calls keep working; generation then runs with the upstream's own
-sampling defaults, which cannot be overridden. The Claude experimental
-routes apply the same adaptation — the local `claude` CLI has no sampling
+sampling defaults, which cannot be overridden. The Claude routes
+apply the same adaptation — the local `claude` CLI has no sampling
 controls — so the same SDK calls work against `claude:*` models too.
 
 **Reasoning effort is forwarded, not invented.** `reasoning_effort` (chat
@@ -315,7 +315,7 @@ OpenAI runtime:
 - `store=true` is rejected
 - output-token limit fields are rejected explicitly on the OpenAI-shaped text-generation routes
 
-Claude experimental runtime:
+Claude runtime:
 
 - explicit `claude:*` model ids only
 - supported routes: text `/v1/chat/completions` and text `/v1/completions`
@@ -334,7 +334,7 @@ Claude experimental runtime:
 - default rate limit: `120` requests/minute with burst `40`
 - default concurrent request cap: `8` per IP
 - repeated bad tokens trigger a temporary IP block
-- Claude experimental mode is loopback-only and follows the relay's protected or open local auth mode
+- the Claude runtime is loopback-only and follows the relay's protected or open local auth mode
 
 ## Configuration
 
@@ -353,7 +353,7 @@ Important toggles:
 - `AIRELAYS_BEARER_TOKEN_FILE`
 - `AIRELAYS_ENABLE_OPENAI`
 - `AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`
-- `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL`
+- `AIRELAYS_ENABLE_CLAUDE`
 - `AIRELAYS_CLAUDE_BIN`
 - `AIRELAYS_CLAUDE_MODELS`
 

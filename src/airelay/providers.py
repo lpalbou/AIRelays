@@ -45,7 +45,6 @@ class ProviderModel:
     provider: str
     owned_by: str
     upstream_id: str
-    experimental: bool
     routes: dict[str, bool]
     stateful_conversations: bool
 
@@ -58,7 +57,6 @@ class ProviderModel:
             "airelays": {
                 "provider": self.provider,
                 "upstream_model": self.upstream_id,
-                "experimental": self.experimental,
                 "capabilities": {
                     "routes": self.routes,
                     "stateful_conversations": self.stateful_conversations,
@@ -82,7 +80,6 @@ def _openai_model_record(model_id: str) -> ProviderModel:
         provider="openai",
         owned_by="airelays-openai-subscription",
         upstream_id=model_id,
-        experimental=False,
         routes={
             "responses": True,
             "chat_completions": True,
@@ -112,7 +109,7 @@ def _content_text(content: Any) -> str:
     if not isinstance(content, list):
         raise ProviderError(
             422,
-            "Claude experimental mode supports only string or text-part message content.",
+            "The Claude runtime supports only string or text-part message content.",
             code="unsupported_for_provider",
         )
     parts: list[str] = []
@@ -120,14 +117,14 @@ def _content_text(content: Any) -> str:
         if not isinstance(part, dict):
             raise ProviderError(
                 422,
-                "Claude experimental mode supports only text content parts.",
+                "The Claude runtime supports only text content parts.",
                 code="unsupported_for_provider",
             )
         kind = part.get("type")
         if kind not in {"text", "input_text", "output_text"}:
             raise ProviderError(
                 422,
-                f"Claude experimental mode does not support message content part `{kind}`.",
+                f"The Claude runtime does not support message content part `{kind}`.",
                 code="unsupported_for_provider",
             )
         text = part.get("text", "")
@@ -149,20 +146,20 @@ def _split_chat_messages(messages: list[dict[str, Any]]) -> tuple[list[str], lis
         if role not in {"user", "assistant"}:
             raise ProviderError(
                 422,
-                "Claude experimental mode supports only system, developer, user, and assistant messages.",
+                "The Claude runtime supports only system, developer, user, and assistant messages.",
                 code="unsupported_for_provider",
             )
         if message.get("tool_calls"):
             raise ProviderError(
                 422,
-                "Claude experimental mode does not support tool calls.",
+                "The Claude runtime does not support tool calls.",
                 code="unsupported_for_provider",
             )
         turns.append({"role": role, "text": _content_text(message.get("content"))})
     if not turns:
         raise ProviderError(
             422,
-            "Claude experimental mode requires at least one user or assistant turn.",
+            "The Claude runtime requires at least one user or assistant turn.",
             code="unsupported_for_provider",
         )
     return system_parts, turns
@@ -271,9 +268,8 @@ class ClaudeCliRuntime:
             record = ProviderModel(
                 id=model_id,
                 provider="claude",
-                owned_by="airelays-claude-experimental",
+                owned_by="airelays-claude-subscription",
                 upstream_id=upstream_id,
-                experimental=True,
                 routes=_claude_routes(),
                 stateful_conversations=False,
             )
@@ -298,7 +294,6 @@ class ClaudeCliRuntime:
         ready = bool(probe.get("installed") and probe.get("logged_in"))
         return {
             "enabled": True,
-            "experimental": True,
             "local_only": True,
             "requires_relay_bearer_auth": self._settings.require_bearer_auth,
             "stateless_only": True,
@@ -516,7 +511,7 @@ class ClaudeCliRuntime:
     def _prepare_chat_request(self, body: dict[str, Any]) -> ClaudeTextRequest:
         resolved = self._resolved_model_from_body(body)
         if body.get("n") not in {None, 1}:
-            raise ProviderError(422, "Claude experimental mode supports only `n=1`.", code="unsupported_for_provider")
+            raise ProviderError(422, "The Claude runtime supports only `n=1`.", code="unsupported_for_provider")
         # Sampling parameters (`temperature`, `top_p`, `presence_penalty`,
         # `frequency_penalty`) are not listed here: the app layer strips and
         # discloses them (x-airelays-ignored-parameters), the same documented
@@ -540,7 +535,7 @@ class ClaudeCliRuntime:
             if _provided(body.get(field)):
                 raise ProviderError(
                     422,
-                    f"Claude experimental mode does not support `{field}` on `/v1/chat/completions`.",
+                    f"The Claude runtime does not support `{field}` on `/v1/chat/completions`.",
                     code="unsupported_for_provider",
                 )
         messages = body.get("messages")
@@ -560,7 +555,7 @@ class ClaudeCliRuntime:
     def _prepare_completion_request(self, body: dict[str, Any]) -> ClaudeTextRequest:
         resolved = self._resolved_model_from_body(body)
         if body.get("n") not in {None, 1}:
-            raise ProviderError(422, "Claude experimental mode supports only `n=1`.", code="unsupported_for_provider")
+            raise ProviderError(422, "The Claude runtime supports only `n=1`.", code="unsupported_for_provider")
         # Sampling parameters are stripped and disclosed by the app layer
         # instead of rejected here — see _prepare_chat_request for rationale.
         for field in (
@@ -576,7 +571,7 @@ class ClaudeCliRuntime:
             if _provided(body.get(field)):
                 raise ProviderError(
                     422,
-                    f"Claude experimental mode does not support `{field}` on `/v1/completions`.",
+                    f"The Claude runtime does not support `{field}` on `/v1/completions`.",
                     code="unsupported_for_provider",
                 )
         prompt = body.get("prompt", "")
@@ -584,7 +579,7 @@ class ClaudeCliRuntime:
             if len(prompt) != 1 or not isinstance(prompt[0], str):
                 raise ProviderError(
                     422,
-                    "Claude experimental mode supports only a single string prompt.",
+                    "The Claude runtime supports only a single string prompt.",
                     code="unsupported_for_provider",
                 )
             prompt = prompt[0]
@@ -1372,7 +1367,7 @@ class ProviderRegistry:
         self._openai_models_cache_lock = asyncio.Lock()
         self._claude = (
             ClaudeCliRuntime(settings, traffic)
-            if settings.enable_claude_experimental
+            if settings.enable_claude
             else None
         )
 
@@ -1394,7 +1389,7 @@ class ProviderRegistry:
         elif model_id.startswith("claude:") or model_id.startswith("claude-"):
             raise ProviderError(
                 422,
-                "Claude experimental mode is disabled for this AIRelays process.",
+                "The Claude runtime is disabled for this AIRelays process.",
                 code="unsupported_for_provider",
             )
         if self._settings.enable_openai_provider:
@@ -1568,7 +1563,6 @@ class ProviderRegistry:
         providers: dict[str, Any] = {}
         openai_status = {
             "enabled": self._settings.enable_openai_provider,
-            "experimental": False,
             "models_cache": self.openai_models_cache_status(),
             **self._openai_auth.status(),
         }
@@ -1588,10 +1582,9 @@ class ProviderRegistry:
         else:
             providers["claude"] = {
                 "enabled": False,
-                "experimental": True,
                 "ready_for_requests": False,
                 "notes": [
-                    "The local experimental Claude adapter is disabled for this AIRelays process. Set `[providers.claude].enabled = false` or `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL=false` only when you want to opt out."
+                    "The Claude runtime is disabled for this AIRelays process. Set `[providers.claude].enabled = true` or `AIRELAYS_ENABLE_CLAUDE=true` to enable it."
                 ],
             }
         return providers

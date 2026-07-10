@@ -5,7 +5,7 @@
 AIRelays is an OpenAI-shaped edge over provider-specific local runtimes.
 
 - The default runtime uses the ChatGPT Codex subscription backend.
-- The experimental Claude runtime uses isolated local `claude -p` subprocesses.
+- The Claude runtime uses isolated local `claude -p` subprocesses.
 
 ## Request Flow
 
@@ -46,7 +46,7 @@ AIRelays is an OpenAI-shaped edge over provider-specific local runtimes.
 - provider registry
 - provider model catalogs
 - provider readiness
-- experimental Claude runtime
+- Claude runtime
 
 ### `airelays.transforms`
 
@@ -68,7 +68,7 @@ OpenAI runtime:
 - supports AIRelays local conversations
 - supports local file reuse
 
-Claude experimental runtime:
+Claude runtime:
 
 - stateless only
 - no local conversation reuse

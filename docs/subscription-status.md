@@ -37,7 +37,7 @@ curl 'http://127.0.0.1:8080/v1/subscription/status?provider=claude' \
 Returns the 5-hour and weekly windows, plus per-model weekly caps
 (Sonnet/Opus) when the subscription reports them. Notes:
 
-- requires the Claude experimental runtime to be enabled
+- requires the Claude runtime to be enabled
 - credentials resolve from the stored token file
   (`airelays claude set-token`) first, then the `claude` CLI's own
   credential store

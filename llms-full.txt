@@ -1,6 +1,6 @@
 # AIRelays
 
-> AIRelays is a local OpenAI-compatible HTTP server backed by your own subscription logins: an OpenAI runtime (with multi-account balancing) and an experimental Claude runtime via the local `claude` CLI. It ships as a CLI/server package and as a cross-platform desktop tray app.
+> AIRelays is a local OpenAI-compatible HTTP server backed by your own subscription logins: an OpenAI runtime (with multi-account balancing) and an Claude runtime via the local `claude` CLI. It ships as a CLI/server package and as a cross-platform desktop tray app.
 
 ## Document Index
 
@@ -22,7 +22,7 @@
 AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 - The default runtime uses an AIRelays-owned ChatGPT subscription login.
-- An optional experimental Claude runtime uses the local `claude` CLI and its existing subscription auth state.
+- An optional Claude runtime uses the local `claude` CLI and its existing subscription auth state.
 - AIRelays protects the relay with its own bearer token by default; open local relay mode (`--no-auth`) disables only the client-token gate.
 - Every transit is logged to hourly JSONL files.
 - AIRelays is an independent third-party project designed for a single user running a local relay for personal convenience. It is not a shared, pooled, multi-user, or resale service (see DISCLAIMER.md).
@@ -50,7 +50,7 @@ airelays serve --port 8080
 
 Headless / server (SSH, no browser): `airelays login --device` — approve from a browser on any device. Auto-selected on SSH sessions and displayless Linux.
 
-Claude experimental runtime:
+Claude runtime:
 
 ```bash
 airelays init
@@ -99,7 +99,7 @@ The verified upstream is the ChatGPT subscription backend, not the public platfo
 - default listener `127.0.0.1:8080` (CLI) / `0.0.0.0:8317` (desktop, with a one-click loopback switch)
 - protected routes `/v1/*` and `/no-tools/v1/*`; public: `/` and `GET /healthz`
 - rate limit 120 requests/minute (burst 40), 8 concurrent requests per IP, temporary IP block after repeated bad tokens
-- Claude experimental mode is loopback-only and follows the relay's auth mode
+- the Claude runtime is loopback-only and follows the relay's auth mode
 
 ## Configuration
 

@@ -148,7 +148,7 @@ class Settings:
     # requests evenly across healthy accounts.
     openai_balance: str = "ordered"
     openai_account_cooldown_seconds: int = 300
-    enable_claude_experimental: bool = True
+    enable_claude: bool = True
     claude_bin: str = "claude"
     claude_timeout_seconds: float = 600.0
     claude_max_concurrent_requests: int = 2
@@ -359,8 +359,12 @@ class Settings:
                 or _cfg(payload, "providers", "openai", "account_cooldown_seconds"),
                 300,
             ),
-            enable_claude_experimental=_bool(
+            enable_claude=_bool(
                 _env(
+                    "AIRELAYS_ENABLE_CLAUDE",
+                    # Legacy names from when the Claude runtime carried the
+                    # "experimental" label; still honored so existing
+                    # environments keep working.
                     "AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL",
                     "AIRELAY_ENABLE_CLAUDE_EXPERIMENTAL",
                 )
@@ -488,16 +492,16 @@ class Settings:
         return self.host in {"127.0.0.1", "localhost", "::1"}
 
     def validate_provider_guardrails(self) -> None:
-        if not self.enable_claude_experimental:
+        if not self.enable_claude:
             return
         if not self.is_loopback_host():
             raise RuntimeError(
-                "Claude experimental mode is restricted to loopback listeners. "
+                "The Claude runtime is restricted to loopback listeners. "
                 "Use `127.0.0.1`, `localhost`, or `::1`."
             )
         if self.trust_x_forwarded_for:
             raise RuntimeError(
-                "Claude experimental mode does not allow `trust_x_forwarded_for`."
+                "The Claude runtime does not allow `trust_x_forwarded_for`."
             )
 
     def write_config_file(self, force: bool = False) -> bool:
@@ -558,7 +562,7 @@ balance = "{self.openai_balance}"
 account_cooldown_seconds = {self.openai_account_cooldown_seconds}
 
 [providers.claude]
-enabled = {str(self.enable_claude_experimental).lower()}
+enabled = {str(self.enable_claude).lower()}
 oauth_token_file = "{self.claude_oauth_token_file}"
 bin = "{self.claude_bin}"
 timeout_seconds = {self.claude_timeout_seconds}
@@ -606,7 +610,7 @@ models = [{", ".join(f'"{model}"' for model in self.claude_models)}]
                     "account_cooldown_seconds": self.openai_account_cooldown_seconds,
                 },
                 "claude": {
-                    "enabled": self.enable_claude_experimental,
+                    "enabled": self.enable_claude,
                     "bin": self.claude_bin,
                     "timeout_seconds": self.claude_timeout_seconds,
                     "max_concurrent_requests": self.claude_max_concurrent_requests,

@@ -80,7 +80,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
         logs_dir=tmp_path / "logs",
         bearer_token_file=tmp_path / "data" / "relay-token",
         require_bearer_auth=False,
-        enable_claude_experimental=False,
+        enable_claude=False,
     )
     for key, value in overrides.items():
         setattr(settings, key, value)
@@ -737,7 +737,7 @@ def test_relay_status_reports_any_provider_ready_when_claude_is_ready(tmp_path) 
         require_bearer_auth=True,
         bearer_token="secret-token",
         enable_openai_provider=False,
-        enable_claude_experimental=True,
+        enable_claude=True,
     )
     app = create_app(settings)
 
@@ -750,7 +750,6 @@ def test_relay_status_reports_any_provider_ready_when_claude_is_ready(tmp_path) 
             "claude": {
                 "enabled": True,
                 "ready_for_requests": True,
-                "experimental": True,
             },
         }
 
@@ -1028,7 +1027,7 @@ def test_models_route_returns_claude_models_when_openai_auth_is_missing(tmp_path
     settings = make_settings(
         tmp_path,
         require_bearer_auth=True,
-        enable_claude_experimental=True,
+        enable_claude=True,
         claude_models=("claude:sonnet",),
     )
     settings.write_bearer_token("relay-token")
@@ -1045,14 +1044,14 @@ def test_models_route_returns_claude_models_when_openai_auth_is_missing(tmp_path
     assert any(item["id"] == "claude:sonnet" for item in payload["data"])
     claude_model = next(item for item in payload["data"] if item["id"] == "claude:sonnet")
     assert claude_model["airelays"]["provider"] == "claude"
-    assert claude_model["airelays"]["experimental"] is True
+    assert "experimental" not in claude_model["airelays"]
 
 
 def test_responses_route_rejects_claude_models_locally(tmp_path) -> None:
     settings = make_settings(
         tmp_path,
         require_bearer_auth=True,
-        enable_claude_experimental=True,
+        enable_claude=True,
         claude_models=("claude:sonnet",),
     )
     settings.write_bearer_token("relay-token")
@@ -1077,7 +1076,7 @@ def test_chat_completions_route_dispatches_claude_model(tmp_path) -> None:
     settings = make_settings(
         tmp_path,
         require_bearer_auth=True,
-        enable_claude_experimental=True,
+        enable_claude=True,
         claude_models=("claude:sonnet",),
     )
     settings.write_bearer_token("relay-token")
@@ -1123,7 +1122,7 @@ def test_chat_completions_route_streams_claude_model(tmp_path) -> None:
     settings = make_settings(
         tmp_path,
         require_bearer_auth=True,
-        enable_claude_experimental=True,
+        enable_claude=True,
         claude_models=("claude:sonnet",),
     )
     settings.write_bearer_token("relay-token")
@@ -1154,7 +1153,7 @@ def test_completions_route_dispatches_claude_model(tmp_path) -> None:
     settings = make_settings(
         tmp_path,
         require_bearer_auth=True,
-        enable_claude_experimental=True,
+        enable_claude=True,
         claude_models=("claude:sonnet",),
     )
     settings.write_bearer_token("relay-token")
@@ -1204,7 +1203,7 @@ def test_chat_completions_route_strips_sampling_parameters_for_claude(tmp_path) 
     settings = make_settings(
         tmp_path,
         require_bearer_auth=True,
-        enable_claude_experimental=True,
+        enable_claude=True,
         claude_models=("claude:sonnet",),
     )
     settings.write_bearer_token("relay-token")
@@ -1254,7 +1253,7 @@ def test_chat_completions_route_strips_sampling_parameters_for_claude_stream(tmp
     settings = make_settings(
         tmp_path,
         require_bearer_auth=True,
-        enable_claude_experimental=True,
+        enable_claude=True,
         claude_models=("claude:sonnet",),
     )
     settings.write_bearer_token("relay-token")
@@ -1289,7 +1288,7 @@ def test_completions_route_strips_sampling_parameters_for_claude(tmp_path) -> No
     settings = make_settings(
         tmp_path,
         require_bearer_auth=True,
-        enable_claude_experimental=True,
+        enable_claude=True,
         claude_models=("claude:sonnet",),
     )
     settings.write_bearer_token("relay-token")

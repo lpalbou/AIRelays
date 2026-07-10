@@ -4,6 +4,16 @@
 
 Accepted
 
+Amended 2026-07-10: the Claude adapter graduated out of the "experimental"
+label when it merged to mainline (user-facing labels, the `experimental`
+wire fields, and the env-var name changed; `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL`
+remains honored as a legacy alias). The rules below still bind the Claude
+adapter unchanged — explicit model-driven routing, visible capability
+boundaries, local-only/loopback-only operation, stateless default, and
+explicit rejection of unsupported combinations. Only the labeling and the
+"reject open-relay mode" clause (superseded by the relay-wide auth-mode
+behavior documented in README and docs/security.md) have evolved.
+
 ## Context
 
 AIRelays now exposes more than one upstream runtime behind one OpenAI-compatible local edge. The OpenAI runtime remains the primary subscription-backed path, while Claude support is introduced as a smaller local adapter with a materially different auth surface and capability boundary.
