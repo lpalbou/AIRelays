@@ -13,7 +13,10 @@ letting them fail, and always discloses what it changed:
   (`"Unsupported parameter: temperature"`). The names of removed
   parameters are returned in the `x-airelays-ignored-parameters` response
   header and logged as a `compatibility_adaptation` traffic record with the
-  reason. Generation runs with the upstream's own sampling defaults.
+  reason. Generation runs with the upstream's own sampling defaults. The
+  same adaptation applies on the Claude experimental routes: the local
+  `claude` CLI exposes no sampling controls, so these parameters are
+  stripped and disclosed there too instead of failing the request.
 - **Reasoning effort:** `reasoning_effort` (chat completions) and
   `reasoning.effort` (responses) are forwarded verbatim. Requests that omit
   it run at upstream effort `none`, which is lower than the `medium` the
@@ -114,7 +117,9 @@ Claude experimental runtime:
 - no tools
 - no files, images, audio, or structured outputs
 - no AIRelays local conversation reuse
-- unsupported generation controls rejected locally
+- sampling parameters stripped and disclosed via
+  `x-airelays-ignored-parameters` (the `claude` CLI has no sampling
+  controls); other unsupported generation controls rejected locally
 
 ## `POST /v1/completions`
 
@@ -128,7 +133,9 @@ Claude experimental runtime:
 - text-only prompt-in, text-out
 - `stream=true|false`
 - no files, images, audio, tools, or structured outputs
-- unsupported generation controls rejected locally
+- sampling parameters stripped and disclosed via
+  `x-airelays-ignored-parameters`; other unsupported generation controls
+  rejected locally
 
 ## `POST /v1/files`
 

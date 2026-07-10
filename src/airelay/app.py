@@ -37,6 +37,14 @@ from airelay.transforms import (
 )
 
 
+# The Claude CLI exposes no sampling controls, so the sampling parameters
+# standard OpenAI SDKs send by default get the same documented treatment as
+# on the OpenAI runtime: stripped and disclosed, never a hard failure.
+CLAUDE_ADAPTATION_REASON = (
+    "The Claude experimental runtime's local CLI has no sampling controls, "
+    "so the compatibility layer omitted these parameters."
+)
+
 # Endpoints the desktop app and health checks poll continuously. Logging
 # them to the JSONL traffic log floods it and evicts real requests from the
 # recent-window the Traffic view reads, so they are never logged as traffic.
@@ -236,7 +244,14 @@ def create_app(settings: Settings) -> FastAPI:
             "x-airelays-ignored-parameters": ",".join(ignored_parameters),
         }
 
-    def log_adaptation(request_id: str, ignored_parameters: list[str]) -> None:
+    def log_adaptation(
+        request_id: str,
+        ignored_parameters: list[str],
+        reason: str = (
+            "The ChatGPT subscription backend rejects these OpenAI sampling "
+            "parameters, so the compatibility layer omitted them."
+        ),
+    ) -> None:
         if not ignored_parameters:
             return
         traffic.write(
@@ -244,10 +259,7 @@ def create_app(settings: Settings) -> FastAPI:
                 "request_id": request_id,
                 "phase": "compatibility_adaptation",
                 "ignored_parameters": ignored_parameters,
-                "reason": (
-                    "The ChatGPT subscription backend rejects these OpenAI sampling "
-                    "parameters, so the compatibility layer omitted them."
-                ),
+                "reason": reason,
             }
         )
 
@@ -745,6 +757,9 @@ def create_app(settings: Settings) -> FastAPI:
                             "Claude experimental mode is not available in this AIRelays process.",
                             code="provider_unavailable",
                         )
+                    ignored_parameters = strip_unsupported_response_parameters(body)
+                    log_adaptation(request_id, ignored_parameters, reason=CLAUDE_ADAPTATION_REASON)
+                    claude_headers = _adaptation_headers(ignored_parameters)
                     if not body.get("stream"):
                         payload = await claude_runtime.create_chat_completion(body, request_id)
                         usage = payload.get("usage")
@@ -758,7 +773,7 @@ def create_app(settings: Settings) -> FastAPI:
                                     "usage": usage,
                                 }
                             )
-                        return logged_json(request_id, payload)
+                        return logged_json(request_id, payload, headers=claude_headers)
 
                     async def claude_event_stream() -> AsyncIterator[bytes]:
                         async for chunk in claude_runtime.stream_chat_completion(body, request_id):
@@ -775,6 +790,7 @@ def create_app(settings: Settings) -> FastAPI:
                     return StreamingResponse(
                         claude_event_stream(),
                         media_type="text/event-stream",
+                        headers=claude_headers,
                     )
             payload, wants_stream, conversation_id = chat_completions_to_responses(body, store, allow_tools)
             ignored_parameters = strip_unsupported_response_parameters(payload)
@@ -924,6 +940,9 @@ def create_app(settings: Settings) -> FastAPI:
                             "Claude experimental mode is not available in this AIRelays process.",
                             code="provider_unavailable",
                         )
+                    ignored_parameters = strip_unsupported_response_parameters(body)
+                    log_adaptation(request_id, ignored_parameters, reason=CLAUDE_ADAPTATION_REASON)
+                    claude_headers = _adaptation_headers(ignored_parameters)
                     if not body.get("stream"):
                         payload = await claude_runtime.create_completion(body, request_id)
                         usage = payload.get("usage")
@@ -937,7 +956,7 @@ def create_app(settings: Settings) -> FastAPI:
                                     "usage": usage,
                                 }
                             )
-                        return logged_json(request_id, payload)
+                        return logged_json(request_id, payload, headers=claude_headers)
 
                     async def claude_event_stream() -> AsyncIterator[bytes]:
                         async for chunk in claude_runtime.stream_completion(body, request_id):
@@ -954,6 +973,7 @@ def create_app(settings: Settings) -> FastAPI:
                     return StreamingResponse(
                         claude_event_stream(),
                         media_type="text/event-stream",
+                        headers=claude_headers,
                     )
             payload, wants_stream, conversation_id = completions_to_responses(body)
             ignored_parameters = strip_unsupported_response_parameters(payload)

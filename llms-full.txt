@@ -85,7 +85,7 @@ One person can enroll several of their own OpenAI subscriptions; `airelays login
 
 The verified upstream is the ChatGPT subscription backend, not the public platform API:
 
-- `temperature`, `top_p`, `presence_penalty`, `frequency_penalty` are rejected by the upstream; the relay strips them and discloses it via the `x-airelays-ignored-parameters` response header and a `compatibility_adaptation` traffic record. Generation uses the upstream's own sampling defaults.
+- `temperature`, `top_p`, `presence_penalty`, `frequency_penalty` are rejected by the upstream; the relay strips them and discloses it via the `x-airelays-ignored-parameters` response header and a `compatibility_adaptation` traffic record. Generation uses the upstream's own sampling defaults. The Claude routes apply the same strip-and-disclose adaptation (the local `claude` CLI has no sampling controls).
 - `reasoning_effort` (chat) and `reasoning.effort` (responses) pass through verbatim. Omitting them means the upstream's low default; set them explicitly for output quality comparable to the official apps.
 - `store=true`, output-token limit fields, `n>1`, and `best_of`/`echo`/`logprobs`/`suffix` are rejected loudly instead of silently adapted.
 - Claude runtime: explicit `claude:*` models only, text chat/completions only, stateless, loopback-only, no tools/files/images/structured outputs.

@@ -109,18 +109,46 @@ async def test_claude_runtime_rejects_tools_on_chat_route(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_claude_runtime_rejects_temperature_on_completions_route(tmp_path) -> None:
+async def test_claude_runtime_rejects_stop_on_completions_route(tmp_path) -> None:
     runtime = ClaudeCliRuntime(make_settings(tmp_path))
 
-    with pytest.raises(ProviderError, match="does not support `temperature`"):
+    with pytest.raises(ProviderError, match="does not support `stop`"):
         await runtime.create_completion(
             {
                 "model": "claude:sonnet",
                 "prompt": "hello",
-                "temperature": 0.2,
+                "stop": ["END"],
             },
             "req_123",
         )
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_accepts_sampling_parameters_without_forwarding_them(tmp_path, monkeypatch) -> None:
+    """Sampling parameters must not fail the request at the runtime boundary:
+    the app layer strips and discloses them (the claude CLI has no sampling
+    controls), so a body that still carries them is simply ignored here."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    captured: dict[str, object] = {}
+
+    async def fake_run_json(request, request_id):
+        captured["request"] = request
+        return {"result": "ok", "stop_reason": "end_turn"}
+
+    monkeypatch.setattr(runtime, "_run_json", fake_run_json)
+
+    payload = await runtime.create_chat_completion(
+        {
+            "model": "claude:sonnet",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.5,
+            "top_p": 0.9,
+        },
+        "req_123",
+    )
+
+    assert payload["choices"][0]["message"]["content"] == "ok"
+    assert captured["request"].prompt == "hello"
 
 
 def test_provider_registry_marks_disabled_openai_runtime_not_ready(tmp_path) -> None:

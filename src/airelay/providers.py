@@ -517,6 +517,11 @@ class ClaudeCliRuntime:
         resolved = self._resolved_model_from_body(body)
         if body.get("n") not in {None, 1}:
             raise ProviderError(422, "Claude experimental mode supports only `n=1`.", code="unsupported_for_provider")
+        # Sampling parameters (`temperature`, `top_p`, `presence_penalty`,
+        # `frequency_penalty`) are not listed here: the app layer strips and
+        # discloses them (x-airelays-ignored-parameters), the same documented
+        # adaptation the OpenAI runtime applies, because the local claude CLI
+        # exposes no sampling controls and standard SDKs send them by default.
         for field in (
             "tools",
             "functions",
@@ -530,10 +535,6 @@ class ClaudeCliRuntime:
             "audio",
             "prediction",
             "parallel_tool_calls",
-            "temperature",
-            "top_p",
-            "presence_penalty",
-            "frequency_penalty",
             "max_completion_tokens",
         ):
             if _provided(body.get(field)):
@@ -560,6 +561,8 @@ class ClaudeCliRuntime:
         resolved = self._resolved_model_from_body(body)
         if body.get("n") not in {None, 1}:
             raise ProviderError(422, "Claude experimental mode supports only `n=1`.", code="unsupported_for_provider")
+        # Sampling parameters are stripped and disclosed by the app layer
+        # instead of rejected here — see _prepare_chat_request for rationale.
         for field in (
             "best_of",
             "echo",
@@ -567,10 +570,6 @@ class ClaudeCliRuntime:
             "suffix",
             "conversation",
             "store",
-            "temperature",
-            "top_p",
-            "presence_penalty",
-            "frequency_penalty",
             "max_tokens",
             "stop",
         ):

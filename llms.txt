@@ -35,7 +35,7 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - other model ids route to the OpenAI runtime when it is enabled
 - Claude runtime follows the relay's protected or open local auth mode and requires loopback binding
 - `GET /v1/subscription/status` reports OpenAI usage by default and Claude usage with `?provider=claude`, both in one normalized shape
-- the upstream rejects `temperature`/`top_p`/penalty parameters; the relay strips them and discloses it via the `x-airelays-ignored-parameters` header
+- the upstream rejects `temperature`/`top_p`/penalty parameters; the relay strips them on both runtimes and discloses it via the `x-airelays-ignored-parameters` header
 - `reasoning_effort` passes through verbatim; set it explicitly for parity with the official apps
 - `airelays doctor` runs local setup checks plus live OpenAI `/models` and optional `/responses` probes
 
