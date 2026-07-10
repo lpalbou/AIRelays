@@ -14,8 +14,9 @@
 - AIRelays is designed for a single user running a local relay for personal convenience.
 - AIRelays is not presented as a shared, pooled, multi-user, or resale service.
 - The Claude runtime is experimental, local-only, and not presented as a sanctioned provider integration path.
+- You are responsible for complying with each provider's terms. Both providers currently frame subscription access around ordinary, individual use by the account holder; the moment anyone else's requests flow through your relay, you are outside that.
 
-See [DISCLAIMER.md](DISCLAIMER.md).
+See [DISCLAIMER.md](DISCLAIMER.md) — it links the official Anthropic and OpenAI terms and policy pages to review.
 
 ## Install
 
@@ -277,7 +278,9 @@ response header.
 `top_p`, `presence_penalty`, and `frequency_penalty` outright
 (`"Unsupported parameter: temperature"`). AIRelays strips them so standard
 SDK calls keep working; generation then runs with the upstream's own
-sampling defaults, which cannot be overridden.
+sampling defaults, which cannot be overridden. The Claude experimental
+routes apply the same adaptation — the local `claude` CLI has no sampling
+controls — so the same SDK calls work against `claude:*` models too.
 
 **Reasoning effort is forwarded, not invented.** `reasoning_effort` (chat
 completions) and `reasoning: {"effort": ...}` (responses) pass through to
@@ -320,6 +323,7 @@ Claude experimental runtime:
 - no `/v1/responses`
 - no files, images, audio, tools, or structured outputs
 - no AIRelays local conversation reuse
+- sampling parameters are stripped and disclosed, like on the OpenAI runtime
 
 ## Security Defaults
 

@@ -140,7 +140,7 @@ OpenAI runtime:
 
 Claude experimental runtime:
 
-- enabled by default on the local experimental branch; set `[providers.claude].enabled = false` or `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL=false` to opt out
+- enabled by default; set `[providers.claude].enabled = false` or `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL=false` to opt out (requests still require the local `claude` CLI to be installed and signed in)
 - uses the local `claude` CLI
 - browser login is handled by `claude auth login --claudeai`
 - headless login is handled by `claude setup-token` plus `CLAUDE_CODE_OAUTH_TOKEN`
