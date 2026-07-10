@@ -78,10 +78,12 @@ jobs:
 
       - name: Install Linux webkit dependencies
         if: startsWith(matrix.os, 'ubuntu')
+        # libfuse2 lets the linuxdeploy AppImage tooling execute on runners
+        # without FUSE set up.
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-            libxdo-dev librsvg2-dev patchelf libgtk-3-dev
+            libxdo-dev librsvg2-dev patchelf libgtk-3-dev libfuse2
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -109,9 +111,14 @@ jobs:
 
       - name: Build installers
         working-directory: desktop
+        env:
+          # linuxdeploy re-strips every bundled library and fails on the
+          # embedded CPython runtime's shared objects; the Rust binary is
+          # already stripped by the release profile.
+          NO_STRIP: "true"
         run: |
           node scripts/check_runtime.mjs
-          npx tauri build --bundles ${{ matrix.bundles }}
+          npx tauri build --verbose --bundles ${{ matrix.bundles }}
 
       - uses: actions/upload-artifact@v4
         with:
