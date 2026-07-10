@@ -66,6 +66,14 @@ stream_lines = false
 [providers.openai]
 enabled = true
 models_cache_ttl_seconds = 300.0
+
+[providers.claude]
+enabled = false
+bin = "claude"
+timeout_seconds = 600.0
+max_concurrent_requests = 2
+strip_api_key_env = true
+models = ["claude:sonnet", "claude:opus", "claude:haiku", "claude:fable"]
 ```
 
 ## Important Environment Variables
@@ -89,6 +97,12 @@ models_cache_ttl_seconds = 300.0
 - `AIRELAYS_LOG_STREAM_LINES`
 - `AIRELAYS_ENABLE_OPENAI`
 - `AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`
+- `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL`
+- `AIRELAYS_CLAUDE_BIN`
+- `AIRELAYS_CLAUDE_TIMEOUT_SECONDS`
+- `AIRELAYS_CLAUDE_MAX_CONCURRENT_REQUESTS`
+- `AIRELAYS_CLAUDE_STRIP_API_KEY_ENV`
+- `AIRELAYS_CLAUDE_MODELS`
 
 ## Relay Token Inputs
 
@@ -123,3 +137,12 @@ OpenAI runtime:
 
 `AIRELAYS_MODELS_CACHE_TTL_SECONDS` remains accepted as a shorter alias for
 `AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`.
+
+Claude experimental runtime:
+
+- enabled by default; set `[providers.claude].enabled = false` or `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL=false` to opt out (requests still require the local `claude` CLI to be installed and signed in)
+- uses the local `claude` CLI
+- browser login is handled by `claude auth login --claudeai`
+- headless login is handled by `claude setup-token` plus `CLAUDE_CODE_OAUTH_TOKEN`
+- follows the relay's protected or open local auth mode
+- requires loopback binding

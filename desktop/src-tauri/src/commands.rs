@@ -29,7 +29,20 @@ pub struct UiState {
     pub login_url: Option<String>,
     /// Pairing code for a running device-code sign-in.
     pub login_code: Option<String>,
+    /// Provider of the running sign-in ("openai"/"claude"), for
+    /// provider-appropriate banner wording.
+    pub login_provider: Option<String>,
+    /// True while the running sign-in can accept a pasted code on stdin.
+    pub login_accepts_code: bool,
     pub login_running: bool,
+    /// Whether the Claude provider actually runs under the current settings
+    /// (feature flag AND loopback AND no X-Forwarded-For trust). Single
+    /// source of truth for the UI — re-deriving the rule in JS caused traps.
+    pub claude_effective: bool,
+    /// True when a stored Claude token file exists. It overrides the CLI's
+    /// own sign-in for relay requests, so the UI must offer sign-out even
+    /// when the row looks signed out (a stale token masks CLI auth).
+    pub claude_token_present: bool,
     pub settings: AppSettings,
     pub relay_status: Option<Value>,
     pub local_endpoint: String,
@@ -283,7 +296,11 @@ pub fn get_state(app: AppHandle) -> UiState {
         auth_mismatch: *robust_lock(&state.auth_mismatch),
         login_url: robust_lock(&state.login_url).clone(),
         login_code: robust_lock(&state.login_code).clone(),
+        login_provider: robust_lock(&state.login_provider).clone(),
+        login_accepts_code: robust_lock(&state.login_stdin).is_some(),
         login_running: robust_lock(&state.login_pid).is_some(),
+        claude_effective: settings.claude_effectively_enabled(),
+        claude_token_present: AppSettings::data_dir().join("claude-token").exists(),
         local_endpoint: settings.base_url(),
         lan_endpoints: if settings.is_loopback_host() {
             Vec::new()
@@ -441,8 +458,10 @@ fn kill_previous_login(app: &AppHandle) {
     // Clear all shared login state here: the dying child's own teardown
     // deliberately no-ops once its pid is gone (see run_login_streamed),
     // so this is the only place that resets the banner after a kill.
+    *robust_lock(&state.login_stdin) = None;
     *robust_lock(&state.login_url) = None;
     *robust_lock(&state.login_code) = None;
+    *robust_lock(&state.login_provider) = None;
     if let Some(pid) = previous {
         app.state::<AppState>()
             .supervisor
@@ -466,6 +485,7 @@ fn kill_previous_login(app: &AppHandle) {
 fn run_login_streamed(
     app: &AppHandle,
     label: &str,
+    provider: &str,
     program: &str,
     args: &[String],
 ) -> Result<(), String> {
@@ -480,9 +500,10 @@ fn run_login_streamed(
         .args(args)
         .env("PYTHONUNBUFFERED", "1")
         .env("PYTHONDONTWRITEBYTECODE", "1")
-        // No stdin: the flow is driven entirely by the browser/device code.
-        // Inheriting the GUI's stdin would make interactive reads hang.
-        .stdin(Stdio::null())
+        // Piped, kept open: Claude's browser flow asks for a code on stdin
+        // (the dashboard collects it via submit_login_code). Inheriting the
+        // GUI's stdin would make interactive reads hit EOF or hang.
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     configure_platform(&mut command);
@@ -493,12 +514,14 @@ fn run_login_streamed(
     *robust_lock(&state.login_pid) = Some(child_pid);
     *robust_lock(&state.login_url) = None;
     *robust_lock(&state.login_code) = None;
+    *robust_lock(&state.login_provider) = Some(provider.to_string());
+    *robust_lock(&state.login_stdin) = child.stdin.take();
     state
         .login_cancelled
         .store(false, std::sync::atomic::Ordering::Relaxed);
 
-    // Watchdog: an abandoned flow would otherwise pend forever and block
-    // future logins.
+    // Watchdog: external CLIs (claude) have no internal login timeout; an
+    // abandoned flow would otherwise pend forever and block future logins.
     let timeout_secs = robust_lock(&state.settings).login_timeout_seconds.max(60);
     {
         let app_watchdog = app.clone();
@@ -572,6 +595,8 @@ fn run_login_streamed(
         *robust_lock(&state.login_pid) = None;
         *robust_lock(&state.login_url) = None;
         *robust_lock(&state.login_code) = None;
+        *robust_lock(&state.login_provider) = None;
+        *robust_lock(&state.login_stdin) = None;
     }
 
     if status.success() {
@@ -587,6 +612,17 @@ fn run_login_streamed(
     }
 }
 
+/// Program + leading args for an external CLI like `claude`. On Windows
+/// the CLI installs as a .cmd shim that CreateProcess cannot start
+/// directly, so it must run through `cmd /C`.
+fn external_cli_invocation(bin: &str) -> (String, Vec<String>) {
+    if cfg!(windows) && !bin.to_ascii_lowercase().ends_with(".exe") {
+        ("cmd".into(), vec!["/C".into(), bin.into()])
+    } else {
+        (bin.into(), Vec::new())
+    }
+}
+
 /// Cancels the running sign-in flow at the user's request.
 #[tauri::command]
 pub fn cancel_login(app: AppHandle) -> Result<(), String> {
@@ -598,6 +634,29 @@ pub fn cancel_login(app: AppHandle) -> Result<(), String> {
         .login_cancelled
         .store(true, std::sync::atomic::Ordering::Relaxed);
     kill_previous_login(&app);
+    Ok(())
+}
+
+/// Delivers a code the user pasted in the dashboard to the stdin of the
+/// running sign-in flow (Claude's browser flow shows one on the callback
+/// page and reads it from the terminal).
+#[tauri::command]
+pub fn submit_login_code(app: AppHandle, code: String) -> Result<(), String> {
+    use std::io::Write;
+    let code = code.trim().to_string();
+    if code.is_empty() {
+        return Err("Paste the code shown in the browser first.".into());
+    }
+    let state = app.state::<AppState>();
+    let mut slot = robust_lock(&state.login_stdin);
+    let Some(stdin) = slot.as_mut() else {
+        return Err("No sign-in is waiting for a code right now.".into());
+    };
+    writeln!(stdin, "{code}").map_err(|error| format!("Cannot deliver the code: {error}"))?;
+    stdin.flush().ok();
+    state
+        .supervisor
+        .log("login", "Code delivered to the sign-in flow.", false);
     Ok(())
 }
 
@@ -619,9 +678,142 @@ pub async fn run_login(app: AppHandle, provider: String) -> Result<(), String> {
             });
             args.push("--config".into());
             args.push(AppSettings::relay_config_path().to_string_lossy().into_owned());
-            run_login_streamed(&app, "openai-login", &program, &args)
+            run_login_streamed(&app, "openai-login", "openai", &program, &args)
+        }
+        "claude" => {
+            // Claude auth lives in the external claude CLI, not the relay.
+            let claude_bin = {
+                let state = app.state::<AppState>();
+                let bin = robust_lock(&state.settings).claude_bin.clone();
+                bin
+            };
+            let (program, mut args) = external_cli_invocation(&claude_bin);
+            args.extend(["auth".into(), "login".into(), "--claudeai".into()]);
+            run_login_streamed(&app, "claude-login", "claude", &program, &args)
         }
         other => Err(format!("Unknown login provider: {other}")),
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Stores a Claude Code OAuth token (from `claude setup-token` run on any
+/// browser-equipped machine) in the same 0600 file the CLI's
+/// `airelays claude set-token` writes; the relay injects it into every
+/// `claude` invocation, so it applies without a restart.
+#[tauri::command]
+pub async fn set_claude_token(app: AppHandle, token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let token = token.trim().to_string();
+        if token.is_empty() {
+            return Err("The token is empty. Paste the full token printed by `claude setup-token`.".into());
+        }
+        let path = AppSettings::data_dir().join("claude-token");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("Cannot create data dir: {error}"))?;
+        }
+        std::fs::write(&path, format!("{token}\n"))
+            .map_err(|error| format!("Cannot write the token file: {error}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+        let state = app.state::<AppState>();
+        state.supervisor.log(
+            "claude-login",
+            "Claude token stored; the relay uses it on the next Claude request.",
+            false,
+        );
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Removes the stored Claude token. Needed because a stale stored token
+/// overrides the CLI's own login for every relay Claude request — without
+/// this, a bad token can permanently mask a valid browser sign-in.
+#[tauri::command]
+pub async fn clear_claude_token(app: AppHandle) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = AppSettings::data_dir().join("claude-token");
+        let existed = path.exists();
+        if existed {
+            std::fs::remove_file(&path)
+                .map_err(|error| format!("Cannot remove the token file: {error}"))?;
+            let state = app.state::<AppState>();
+            state.supervisor.log(
+                "claude-login",
+                "Stored Claude token removed; the relay now uses the claude CLI's own sign-in.",
+                false,
+            );
+        }
+        Ok(existed)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[derive(Serialize)]
+pub struct ClaudeLogoutOutcome {
+    /// A stored relay token file existed and was deleted.
+    pub token_removed: bool,
+    /// `claude auth logout` exited successfully.
+    pub cli_signed_out: bool,
+    pub cli_error: Option<String>,
+}
+
+/// Complete Claude sign-out: the stored relay token AND the claude CLI's
+/// own credentials. Token file first — it can mask CLI auth (ghost auth)
+/// and must go even on machines without the claude binary; the CLI step's
+/// result is reported separately so a partial sign-out is never presented
+/// as success.
+#[tauri::command]
+pub async fn logout_claude(app: AppHandle) -> Result<ClaudeLogoutOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = AppSettings::data_dir().join("claude-token");
+        let token_removed = path.exists();
+        if token_removed {
+            std::fs::remove_file(&path)
+                .map_err(|error| format!("Cannot remove the stored token: {error}"))?;
+        }
+        let claude_bin = {
+            let state = app.state::<AppState>();
+            let bin = robust_lock(&state.settings).claude_bin.clone();
+            bin
+        };
+        let (program, mut logout_args) = external_cli_invocation(&claude_bin);
+        logout_args.extend(["auth".into(), "logout".into()]);
+        let (cli_signed_out, cli_error) = match Command::new(&program)
+            .args(&logout_args)
+            .stdin(Stdio::null())
+            .output()
+        {
+            Ok(output) if output.status.success() => (true, None),
+            Ok(output) => {
+                let text = format!(
+                    "{}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                (false, Some(concise_error(&text)))
+            }
+            Err(error) => (false, Some(format!("Cannot run {claude_bin}: {error}"))),
+        };
+        let state = app.state::<AppState>();
+        state.supervisor.log(
+            "claude-logout",
+            &format!(
+                "Claude sign-out: stored token removed={token_removed}, CLI signed out={cli_signed_out}."
+            ),
+            cli_error.is_some(),
+        );
+        if let Some(error) = &cli_error {
+            state.supervisor.log("claude-logout", error, true);
+        }
+        Ok(ClaudeLogoutOutcome { token_removed, cli_signed_out, cli_error })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -689,30 +881,47 @@ pub async fn get_models(app: AppHandle) -> Result<Value, String> {
         .map_err(|_| "Unexpected models payload.".to_string())
 }
 
-/// Fetches per-account usage from the relay's subscription-status endpoint.
+/// Fetches per-account usage from the relay's subscription-status endpoint,
+/// plus Claude usage (same normalized shape) when that runtime is on.
 #[tauri::command]
 pub async fn get_usage(app: AppHandle) -> Result<Value, String> {
-    let (base_url, requires_auth) = {
+    let (base_url, requires_auth, claude_on) = {
         let state = app.state::<AppState>();
         let settings = robust_lock(&state.settings);
-        (settings.base_url(), settings.require_bearer_auth)
+        (
+            settings.base_url(),
+            settings.require_bearer_auth,
+            settings.claude_effectively_enabled(),
+        )
     };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|error| error.to_string())?;
-    // all_accounts folds to the single-account shape when only one exists.
-    let mut request = client.get(format!("{base_url}/subscription/status?all_accounts=true"));
-    if requires_auth {
-        if let Ok(token) = std::fs::read_to_string(AppSettings::bearer_token_file()) {
-            request = request.bearer_auth(token.trim());
+    let token = if requires_auth {
+        std::fs::read_to_string(AppSettings::bearer_token_file())
+            .ok()
+            .map(|token| token.trim().to_string())
+    } else {
+        None
+    };
+    let authed = |mut request: reqwest::RequestBuilder| {
+        if let Some(token) = &token {
+            request = request.bearer_auth(token);
         }
-    }
-    let response = request
+        request
+    };
+    // all_accounts folds to the single-account shape when only one exists.
+    let response = authed(client.get(format!("{base_url}/subscription/status?all_accounts=true")))
         .send()
         .await
         .map_err(|_| "The relay is not reachable.".to_string())?;
-    if !response.status().is_success() {
+    let mut payload: Value = if response.status().is_success() {
+        response
+            .json()
+            .await
+            .map_err(|_| "Unexpected usage payload.".to_string())?
+    } else {
         let code = response.status();
         let detail: Value = response.json().await.unwrap_or(Value::Null);
         let message = detail
@@ -720,12 +929,45 @@ pub async fn get_usage(app: AppHandle) -> Result<Value, String> {
             .and_then(Value::as_str)
             .map(String::from)
             .unwrap_or_else(|| format!("Relay answered {code}."));
-        return Err(message);
-    }
-    response
-        .json()
+        // An OpenAI failure (e.g. the provider is disabled → 501) must not
+        // abort the whole command: a Claude-only relay still has Claude
+        // usage to show.
+        if !claude_on {
+            return Err(message);
+        }
+        serde_json::json!({ "error": message })
+    };
+
+    // Claude usage is best-effort: its absence must never break the OpenAI
+    // usage display. Failures are forwarded as {"error": ...} so the UI can
+    // say WHY usage is missing (e.g. the upstream rate-limits its usage
+    // endpoint for up to an hour) instead of showing a blank row.
+    if claude_on {
+        let claude_value = match authed(
+            client.get(format!("{base_url}/subscription/status?provider=claude")),
+        )
+        .send()
         .await
-        .map_err(|_| "Unexpected usage payload.".to_string())
+        {
+            Ok(response) if response.status().is_success() => {
+                response.json::<Value>().await.ok()
+            }
+            Ok(response) => {
+                let detail: Value = response.json().await.unwrap_or(Value::Null);
+                let message = detail
+                    .get("detail")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Usage is temporarily unavailable.")
+                    .to_string();
+                Some(serde_json::json!({ "error": message }))
+            }
+            Err(_) => None,
+        };
+        if let (Some(claude), Some(map)) = (claude_value, payload.as_object_mut()) {
+            map.insert("claude".into(), claude);
+        }
+    }
+    Ok(payload)
 }
 
 #[tauri::command]

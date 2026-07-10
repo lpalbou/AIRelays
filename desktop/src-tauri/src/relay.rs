@@ -5,7 +5,7 @@
 //! - never hold the child mutex across sleeps or waits; stop() extracts the
 //!   child under the lock and terminates it outside the lock
 //! - kill the whole process tree: process groups on Unix, a Job Object on
-//!   Windows, so uvicorn workers die with us
+//!   Windows, so `claude` subprocesses and uvicorn workers die with us
 //! - command overrides are split quote-aware (paths with spaces)
 
 use crate::settings::AppSettings;
@@ -281,10 +281,10 @@ pub fn push_console(
 }
 
 /// GUI apps on macOS (and some Linux sessions) inherit a minimal PATH
-/// without the user's bin directories, so PATH-installed tools are "not
-/// found" even though they work in a terminal. Extending the process PATH
-/// once at startup fixes every child spawn — relay, login flows, doctor —
-/// in one place.
+/// without the user's bin directories, so external tools like the `claude`
+/// CLI are "not found" even though they work in a terminal. Extending the
+/// process PATH once at startup fixes every child spawn — relay, login
+/// flows, doctor — in one place.
 pub fn extend_path_for_gui() {
     let home = AppSettings::home_dir();
     let extras = [
@@ -343,9 +343,9 @@ fn embedded_python(resource_dir: PathBuf) -> Option<String> {
 /// Applies to every subprocess we spawn (relay and CLI runs alike).
 pub fn configure_platform(command: &mut Command) {
     // GUI apps launched from Finder/launchd inherit a minimal PATH
-    // (/usr/bin:/bin:...), so user-installed tools in ~/.local/bin or
-    // /opt/homebrew/bin are invisible. Use the login shell's PATH for
-    // children so they see what the user's terminal sees.
+    // (/usr/bin:/bin:...), so user-installed tools like `claude` in
+    // ~/.local/bin or /opt/homebrew/bin are invisible. Use the login
+    // shell's PATH for children so they see what the user's terminal sees.
     if let Some(path) = login_shell_path() {
         command.env("PATH", path);
     }
@@ -397,8 +397,8 @@ fn login_shell_path() -> Option<String> {
 
 #[cfg(unix)]
 fn terminate_tree(supervised: &mut Supervised) {
-    // SIGTERM the process group so uvicorn and any subprocesses can shut
-    // down cleanly; escalate to SIGKILL after the grace period.
+    // SIGTERM the process group so uvicorn and any claude subprocesses can
+    // shut down cleanly; escalate to SIGKILL after the grace period.
     let pgid = supervised.child.id() as i32;
     unsafe {
         libc::kill(-pgid, libc::SIGTERM);
@@ -419,7 +419,7 @@ fn terminate_tree(supervised: &mut Supervised) {
     // Closing the job handle kills the entire tree
     // (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE). TerminateProcess semantics are
     // abrupt, but Windows offers no SIGTERM for windowless children; the
-    // job object at least guarantees no orphaned uvicorn processes.
+    // job object at least guarantees no orphaned uvicorn/claude processes.
     supervised.job.terminate();
     let _ = supervised.child.kill();
 }

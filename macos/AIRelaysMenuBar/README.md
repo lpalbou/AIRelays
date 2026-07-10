@@ -51,10 +51,11 @@ The app:
 
 - switches auth mode: protected (relay token) or open (`--no-auth`), one click in the dashboard or status-bar menu
 - switches network exposure: loopback only or private network (LAN); the app defaults to accepting private-network connections on `0.0.0.0:8317` (8317 avoids the dev-server collisions that 8080 invites)
+- disables the loopback-only Claude experimental runtime automatically while the listener is exposed to the LAN
 - starts, stops, and restarts the local relay
 - edits and writes the AIRelays config file
 - toggles protected mode vs `--no-auth`
 - rotates or reveals the relay token
-- launches the OpenAI login flow
+- launches OpenAI and Claude login flows
 - polls `/v1/relay/status`
 - tails AIRelays JSONL traffic logs into a request-oriented view

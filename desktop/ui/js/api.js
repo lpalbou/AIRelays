@@ -28,8 +28,12 @@ export const api = {
   openPath: (path) => invoke("open_path", { path }),
   getAutostart: () => invoke("get_autostart"),
   setAutostart: (enabled) => invoke("set_autostart", { enabled }),
+  setClaudeToken: (token) => invoke("set_claude_token", { token }),
+  clearClaudeToken: () => invoke("clear_claude_token"),
+  logoutClaude: () => invoke("logout_claude"),
   cancelLogin: () => invoke("cancel_login"),
   getModels: () => invoke("get_models"),
+  submitLoginCode: (code) => invoke("submit_login_code", { code }),
 };
 
 const toasts = () => document.getElementById("toasts");

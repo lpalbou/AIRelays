@@ -90,6 +90,8 @@ def _base_settings(args: argparse.Namespace) -> Settings:
             and settings.bearer_token_file == original_data_dir / "relay-token"
         ):
             settings.bearer_token_file = settings.data_dir / "relay-token"
+        if settings.claude_oauth_token_file == original_data_dir / "claude-token":
+            settings.claude_oauth_token_file = settings.data_dir / "claude-token"
     if getattr(args, "logs_dir", None):
         settings.logs_dir = Path(args.logs_dir).expanduser()
     if getattr(args, "auth_storage", None):
@@ -129,6 +131,7 @@ def _provider_registry(settings: Settings, manager: AuthManager) -> ProviderRegi
 def _status_payload(settings: Settings, manager: AuthManager) -> dict[str, object]:
     provider_statuses = _provider_registry(settings, manager).provider_statuses()
     auth_status = dict(provider_statuses.get("openai", {}))
+    claude_status = dict(provider_statuses.get("claude", {}))
     next_steps: list[str] = []
     any_provider_ready = any(
         bool(status.get("ready_for_requests"))
@@ -141,6 +144,9 @@ def _status_payload(settings: Settings, manager: AuthManager) -> dict[str, objec
     if not any_provider_ready:
         if settings.enable_openai_provider and not auth_status.get("ready_for_requests"):
             next_steps.append(_login_hint())
+        if settings.enable_claude_experimental and not claude_status.get("ready_for_requests"):
+            next_steps.append("claude auth login --claudeai")
+            next_steps.append("airelays claude set-token")
     if any_provider_ready and token_ready:
         next_steps.append(_serve_command(settings))
     return {
@@ -180,6 +186,9 @@ def _init_payload(
     next_steps: list[str] = []
     if settings.enable_openai_provider:
         next_steps.append(_login_hint())
+    if settings.enable_claude_experimental:
+        next_steps.append("claude auth login --claudeai")
+        next_steps.append("airelays claude set-token")
     next_steps.append(_serve_command(settings))
     return {
         "app_name": APP_NAME,
@@ -292,17 +301,28 @@ async def _doctor_payload(settings: Settings, *, skip_response: bool = False) ->
     next_steps: list[str] = []
     selected_model: str | None = None
 
-    config_exists = settings.config_path.exists()
-    check = _check(
-        "config",
-        "pass" if config_exists else "warn",
-        "Configuration file found." if config_exists else "Using built-in defaults; no config file exists.",
-        next_steps=None if config_exists else ["airelays init"],
-        data={
-            "config_path": str(settings.config_path),
-            "config_exists": config_exists,
-        },
-    )
+    try:
+        settings.validate_provider_guardrails()
+    except RuntimeError as exc:
+        check = _check(
+            "config",
+            "fail",
+            str(exc),
+            next_steps=["Fix the provider settings in the AIRelays config file."],
+            data={"config_path": str(settings.config_path)},
+        )
+    else:
+        config_exists = settings.config_path.exists()
+        check = _check(
+            "config",
+            "pass" if config_exists else "warn",
+            "Configuration file found." if config_exists else "Using built-in defaults; no config file exists.",
+            next_steps=None if config_exists else ["airelays init"],
+            data={
+                "config_path": str(settings.config_path),
+                "config_exists": config_exists,
+            },
+        )
     checks.append(check)
     _add_next_steps(next_steps, _next_steps_from_check(check))
 
@@ -494,6 +514,36 @@ async def _doctor_payload(settings: Settings, *, skip_response: bool = False) ->
             _add_next_steps(next_steps, _next_steps_from_check(check))
     if backend is not None:
         await backend.close()
+
+    claude_status = dict(provider_statuses.get("claude", {}))
+    if not settings.enable_claude_experimental:
+        checks.append(_check("claude", "skip", "Claude experimental runtime is disabled."))
+    elif claude_status.get("ready_for_requests"):
+        checks.append(
+            _check(
+                "claude",
+                "pass",
+                "Claude experimental runtime is ready.",
+                data={
+                    "cli_version": claude_status.get("cli_version") or "",
+                    "auth_method": claude_status.get("auth_method") or "",
+                    "email": claude_status.get("email") or "",
+                },
+            )
+        )
+    else:
+        check = _check(
+            "claude",
+            "fail",
+            "Claude experimental runtime is enabled but not ready.",
+            next_steps=["claude auth login --claudeai", "airelays claude set-token"],
+            data={
+                "cli_version": claude_status.get("cli_version") or "",
+                "auth_method": claude_status.get("auth_method") or "",
+            },
+        )
+        checks.append(check)
+        _add_next_steps(next_steps, _next_steps_from_check(check))
 
     failed = [check for check in checks if check.get("status") == "fail"]
     warned = [check for check in checks if check.get("status") == "warn"]
@@ -765,6 +815,18 @@ def _print_status_summary(payload: dict[str, object]) -> None:
         "yes" if openai_provider.get("ready_for_requests") else "no",
         kind="good" if openai_provider.get("ready_for_requests") else "warn",
     )
+    claude_provider = dict(providers.get("claude", {}))
+    _print_field("Claude enabled", "yes" if claude_provider.get("enabled") else "no")
+    if claude_provider.get("enabled"):
+        _print_field(
+            "Claude ready",
+            "yes" if claude_provider.get("ready_for_requests") else "no",
+            kind="good" if claude_provider.get("ready_for_requests") else "warn",
+        )
+        _print_field("Claude experimental", "yes", kind="warn")
+        _print_field("Claude CLI", claude_provider.get("cli_version"))
+        _print_field("Claude email", claude_provider.get("email"))
+        _print_field("Claude auth", claude_provider.get("auth_method"))
 
     _print_client_section(client)
     _print_steps([str(step) for step in payload.get("next_steps", [])])
@@ -881,8 +943,21 @@ def _print_serve_banner(settings: Settings, provider_statuses: dict[str, object]
             "ready" if openai_provider.get("ready_for_requests") else "missing",
             kind="good" if openai_provider.get("ready_for_requests") else "warn",
         )
+    claude_provider = dict(provider_statuses.get("claude", {}))
+    _print_field("Claude", "enabled" if claude_provider.get("enabled") else "disabled")
+    if claude_provider.get("enabled"):
+        _print_field("Claude mode", "experimental local adapter", kind="warn")
+        _print_field(
+            "Claude ready",
+            "yes" if claude_provider.get("ready_for_requests") else "no",
+            kind="good" if claude_provider.get("ready_for_requests") else "warn",
+        )
+        _print_field("Claude CLI", claude_provider.get("cli_version"))
     if openai_provider.get("enabled") and not openai_provider.get("ready_for_requests"):
         _print_command("OpenAI login", _login_hint())
+    if claude_provider.get("enabled") and not claude_provider.get("ready_for_requests"):
+        _print_command("Claude login", "claude auth login --claudeai")
+        _print_command("Claude headless", "airelays claude set-token")
     print()
 
 
@@ -991,6 +1066,10 @@ async def _run_login(args: argparse.Namespace) -> None:
 
 def _run_init(args: argparse.Namespace) -> None:
     settings = _base_settings(args)
+    try:
+        settings.validate_provider_guardrails()
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     created_config = settings.write_config_file(force=args.force)
     token = settings.resolve_bearer_token()
     token_created = False
@@ -1198,6 +1277,73 @@ def _print_accounts_summary(payload: dict[str, object]) -> None:
     print()
 
 
+def _run_claude_set_token(args: argparse.Namespace) -> None:
+    settings = _base_settings(args)
+    _print_title("Claude Token")
+    print("Paste a Claude Code OAuth token. You get this token from the")
+    print("`claude` CLI itself — on any machine WITH a browser, run:")
+    print()
+    print("    claude setup-token")
+    print()
+    print("then copy the token it prints and paste it here.")
+    print()
+    # Read from stdin (or hidden prompt on a TTY), never argv: command-line
+    # arguments leak into shell history and `ps` output.
+    if sys.stdin.isatty():
+        import getpass
+
+        token = getpass.getpass("  Token: ").strip()
+    else:
+        token = sys.stdin.readline().strip()
+    if not token:
+        raise SystemExit("No token provided.")
+    settings.write_claude_oauth_token(token)
+    print()
+    _print_field("Stored in", settings.claude_oauth_token_file, kind="good")
+    print("  AIRelays passes it to the local `claude` CLI automatically;")
+    print("  no environment variable export is needed.")
+    print()
+
+
+def _run_claude_logout(args: argparse.Namespace) -> None:
+    """Complete Claude sign-out, mirroring the desktop app: the stored
+    relay token first (it can mask CLI auth), then the claude CLI's own
+    credentials, with each result reported separately."""
+    import subprocess
+
+    settings = _base_settings(args)
+    _print_title("Claude Sign-Out")
+    token_file = settings.claude_oauth_token_file
+    if token_file.exists():
+        token_file.unlink()
+        _print_field("Stored token", f"removed ({token_file})", kind="good")
+    else:
+        _print_field("Stored token", "none stored")
+    try:
+        result = subprocess.run(
+            [settings.claude_bin, "auth", "logout"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        _print_field("claude CLI", f"not found ({settings.claude_bin}); nothing else to sign out", kind="warn")
+        return
+    except subprocess.TimeoutExpired:
+        raise SystemExit("`claude auth logout` timed out. Run it manually to finish the sign-out.")
+    if result.returncode == 0:
+        _print_field("claude CLI", "signed out on this machine", kind="good")
+        print("  Note: other tools using the claude CLI here (e.g. Claude Code)")
+        print("  are signed out too.")
+    else:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        raise SystemExit(
+            "`claude auth logout` failed: "
+            + (detail[-1] if detail else f"exit code {result.returncode}")
+        )
+
+
 def _run_models(args: argparse.Namespace) -> None:
     """Lists model ids from the running relay — the same list the desktop
     Models tab shows, one source of truth for what the endpoint accepts."""
@@ -1230,7 +1376,7 @@ def _run_models(args: argparse.Namespace) -> None:
     for model in models:
         provider = (model.get("airelays") or {}).get("provider", "other")
         by_provider.setdefault(provider, []).append(model)
-    display_names = {"openai": "OpenAI"}
+    display_names = {"openai": "OpenAI", "claude": "Claude"}
     for provider, entries in by_provider.items():
         _print_section(display_names.get(provider, provider))
         for model in entries:
@@ -1264,6 +1410,10 @@ def _run_token_show(args: argparse.Namespace) -> None:
 
 def _run_serve(args: argparse.Namespace) -> None:
     settings = _base_settings(args)
+    try:
+        settings.validate_provider_guardrails()
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     if settings.require_bearer_auth and not settings.resolve_bearer_token():
         if settings.auto_generate_bearer_token:
             settings.ensure_bearer_token()
@@ -1309,7 +1459,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Disable AIRelays local bearer auth for this server process; upstream provider login "
-            "is still required"
+            "is still required and Claude experimental mode rejects this option"
         ),
     )
     serve.set_defaults(func=_run_serve)
@@ -1326,7 +1476,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Write config with local bearer auth disabled and skip relay-token creation; "
-            "upstream provider login is still required"
+            "upstream provider login is still required and Claude experimental mode rejects this option"
         ),
     )
     init.add_argument(
@@ -1427,6 +1577,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Clear usage-limit benches on the running relay and re-check capacity",
     )
     accounts_refresh.set_defaults(func=_run_accounts, accounts_action="refresh")
+
+    claude_cmd = subparsers.add_parser(
+        "claude",
+        parents=[shared],
+        help="Manage the local Claude runtime credentials",
+    )
+    claude_subparsers = claude_cmd.add_subparsers(dest="claude_command", required=True)
+    claude_set_token = claude_subparsers.add_parser(
+        "set-token",
+        parents=[shared],
+        help="Store a Claude Code OAuth token (from `claude setup-token`) for headless use",
+    )
+    claude_set_token.set_defaults(func=_run_claude_set_token)
+    claude_logout = claude_subparsers.add_parser(
+        "logout",
+        parents=[shared],
+        help="Sign Claude out: remove the stored token and run `claude auth logout`",
+    )
+    claude_logout.set_defaults(func=_run_claude_logout)
 
     models = subparsers.add_parser(
         "models",

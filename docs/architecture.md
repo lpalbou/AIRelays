@@ -2,17 +2,18 @@
 
 ## Overview
 
-AIRelays is an OpenAI-shaped edge over the OpenAI subscription runtime.
+AIRelays is an OpenAI-shaped edge over provider-specific local runtimes.
 
-- The runtime uses the ChatGPT Codex subscription backend.
+- The default runtime uses the ChatGPT Codex subscription backend.
+- The experimental Claude runtime uses isolated local `claude -p` subprocesses.
 
 ## Request Flow
 
 1. FastAPI receives an OpenAI-shaped request.
 2. Middleware enforces relay auth and local abuse controls.
-3. AIRelays resolves the request model id to the provider runtime.
-4. The runtime uses shared request/response transforms plus the OpenAI backend adapter.
-5. The runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope.
+3. AIRelays resolves the request model id to a provider runtime.
+4. Claude-specific validation and invocation stay inside the Claude runtime, while the OpenAI runtime currently uses shared request/response transforms plus the OpenAI backend adapter.
+5. The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope.
 6. AIRelays logs the request, runtime selection, and result.
 
 ## Main Components
@@ -45,6 +46,7 @@ AIRelays is an OpenAI-shaped edge over the OpenAI subscription runtime.
 - provider registry
 - provider model catalogs
 - provider readiness
+- experimental Claude runtime
 
 ### `airelays.transforms`
 
@@ -61,11 +63,21 @@ AIRelays is an OpenAI-shaped edge over the OpenAI subscription runtime.
 
 ## State Model
 
+OpenAI runtime:
+
 - supports AIRelays local conversations
 - supports local file reuse
 
+Claude experimental runtime:
+
+- stateless only
+- no local conversation reuse
+- no file reuse
+
 ## Intentional Boundaries
 
+- no silent fallback across providers
+- no blanket parity claim across providers
 - no silent truncation
 - no fake token budgets
 - no reuse of upstream subscription auth as relay-client auth

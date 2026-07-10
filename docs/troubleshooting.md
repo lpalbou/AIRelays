@@ -33,6 +33,34 @@ Two fixes:
   first, then open the printed URL in your local browser. The tunnel can be
   opened even after `airelays login` has started waiting.
 
+## Claude runtime is "not ready" under systemd/docker even though `claude setup-token` worked
+
+A shell `export CLAUDE_CODE_OAUTH_TOKEN=...` never reaches a service
+manager's environment, and it evaporates on reboot. Store the token instead:
+
+```bash
+airelays claude set-token   # paste the token from `claude setup-token`
+```
+
+It is written 0600 to `~/.airelays/claude-token` and injected into every
+`claude` invocation automatically. `airelays status` shows the token source
+(`file`, `env`, or `none`) under the Claude provider.
+
+## Claude requests fail even though `claude auth login` succeeded
+
+A stored token (from `airelays claude set-token`) overrides the `claude`
+CLI's own sign-in for relay requests. If that stored token is stale, relay
+requests keep failing no matter how often you sign in through the CLI.
+
+Checks and fix:
+
+- `airelays status` shows the Claude token source; `file` means a stored
+  token is in effect
+- remove it with `airelays claude logout` (also signs the CLI out) or, in
+  the desktop app, open the Claude token dialog and use "Remove stored
+  token" (keeps the CLI sign-in)
+- verify with a `claude:*` test request or `airelays doctor`
+
 ## Desktop app shows "Running — not responding"
 
 The relay process is alive but did not answer the app's health probe —
@@ -42,6 +70,24 @@ usually heavy system load or a long request burst.
   to "Running"
 - if it persists, open the Console tab for relay output, or use Restart
 - Stop/Restart keep working: the app still manages the process
+
+## `422` on Claude experimental routes
+
+The current Claude runtime supports only explicit `claude:*` models on text `chat.completions` and text `completions`.
+
+Checks:
+
+- confirm the model id is one of the configured `claude:*` ids
+- remove tools, files, images, audio, structured outputs, and `conversation`
+- remove unsupported generation controls
+
+## Claude startup refusal
+
+When Claude experimental mode is enabled:
+
+- keep the listener on `127.0.0.1`, `localhost`, or `::1`
+- keep relay bearer auth enabled
+- keep `trust_x_forwarded_for=false`
 
 ## `429 Too many invalid authentication attempts from this IP`
 

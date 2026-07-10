@@ -10,7 +10,7 @@ let filterText = "";
 let lastReachable = null;
 let loading = false;
 
-const PROVIDER_NAMES = { openai: "OpenAI" };
+const PROVIDER_NAMES = { openai: "OpenAI", claude: "Claude" };
 
 export const modelsView = {
   async mount(container, ctx) {

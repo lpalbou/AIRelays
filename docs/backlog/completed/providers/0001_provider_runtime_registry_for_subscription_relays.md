@@ -6,7 +6,8 @@
 - Completed: 2026-06-21
 
 ## ADR status
-- Governing ADRs: 0002, 0003
+- Governing ADRs: 0002, 0003, 0004
+- ADR impact: Resolved by ADR 0004
 
 ## Context
 
@@ -16,7 +17,7 @@ AIRelays initially served one northbound OpenAI-shaped API over one upstream run
 
 - `src/airelay/providers.py` now owns provider runtime registration, model metadata, model resolution, and provider readiness.
 - `src/airelay/app.py` uses provider-aware model listing, provider-aware readiness reporting, and provider-specific route rejection.
-- `src/airelay/config.py` now includes provider toggles.
+- `src/airelay/config.py` now includes provider toggles and Claude-specific guardrails.
 
 ## Problem
 
@@ -46,7 +47,7 @@ This made multi-provider routing explicit and gave AIRelays one place to declare
 
 ## Expected outcomes achieved
 
-- AIRelays can expose provider-scoped runtimes from one process.
+- AIRelays can expose OpenAI and Claude-backed runtimes from one process.
 - `/v1/models` now identifies provider ownership and route capabilities.
 - `/v1/relay/status` now reports provider-scoped readiness and overall provider availability.
 
@@ -55,7 +56,7 @@ This made multi-provider routing explicit and gave AIRelays one place to declare
 - `pytest -q`
 - `python -m compileall src tests`
 - `mkdocs build -q`
-- live `curl` checks for `/v1/models`, `/v1/relay/status`, `/v1/responses`, and `/v1/chat/completions`
+- live `curl` checks for `/v1/models`, `/v1/relay/status`, OpenAI `/v1/responses`, and Claude `/v1/chat/completions`
 
 ## Progress checklist
 - [x] Add the provider registry and runtime contracts.
@@ -93,8 +94,8 @@ AIRelays now has an explicit provider-runtime seam. OpenAI remains the default r
 
 ### Residual risks
 
-- The provider seam is still partial: OpenAI route shaping remains shared rather than fully encapsulated in the runtime adapter.
-- OpenAI model routing is still permissive for arbitrary model ids when the OpenAI runtime is enabled.
+- The provider seam is still partial: OpenAI route shaping remains shared while Claude has a narrower runtime adapter.
+- OpenAI model routing is still permissive for non-`claude:*` model ids when the OpenAI runtime is enabled.
 
 ### Follow-ups
 

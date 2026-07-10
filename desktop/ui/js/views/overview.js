@@ -11,14 +11,20 @@ let renderCache = { endpoints: "", accounts: "" };
 let revealedToken = null;
 // Emails with an in-flight sign-out, for optimistic row dimming.
 const pendingLogout = new Set();
-// The sign-out the confirmation dialog is about: {email}.
+// The sign-out the confirmation dialog is about: {provider, email}.
 let pendingLogoutTarget = null;
+let pendingClaudeLogout = false;
+// Claude method chosen while the provider was off (network mode); resumed
+// after the user confirms the mode switch.
+let pendingClaudeMethod = null;
 // The outside-click menu closer, removed on unmount.
 let documentClickHandler = null;
 
 let usageLoadedOnce = false;
 // Last usage payload, keyed by account email, merged into the Accounts card.
 let usageByEmail = new Map();
+// Claude usage (same normalized shape as one OpenAI account's status).
+let claudeUsage = null;
 let usageStamp = 0;
 
 export const overviewView = {
@@ -51,7 +57,9 @@ export const overviewView = {
     renderCache = { endpoints: "", accounts: "" };
     pendingLogout.clear();
     pendingLogoutTarget = null;
+    pendingClaudeLogout = false;
     usageByEmail = new Map();
+    claudeUsage = null;
     usageStamp = 0;
   },
 };
@@ -127,6 +135,23 @@ function template() {
         </div>
       </div>
       <div id="ov-accounts"><div class="empty">Start the relay to see accounts.</div></div>
+
+      <div id="ov-claude-section" hidden>
+        <div class="provider-head">
+          <h3>Claude</h3>
+          <span class="badge badge-warn" id="ov-claude-off-badge" hidden>Off in network mode</span>
+          <span class="spacer"></span>
+          <div class="split-btn">
+            <button class="btn btn-small" id="ov-login-claude">${icon("logIn", 13)} Sign in</button>
+            <button class="btn btn-small split-btn-toggle" id="ov-login-claude-menu" aria-label="Choose Claude sign-in method" aria-haspopup="true">${icon("chevronDown", 12)}</button>
+            <div class="split-menu" id="ov-claude-menu" hidden role="menu">
+              <button role="menuitem" data-method="browser">In a browser (this machine)</button>
+              <button role="menuitem" data-method="token">With a token (any device)</button>
+            </div>
+          </div>
+        </div>
+        <div id="ov-claude-account"></div>
+      </div>
       <div class="login-banner" id="ov-login-banner" hidden>
         <div class="row">
           <span class="dot dot-warn"></span>
@@ -150,6 +175,12 @@ function template() {
           Open the URL in a browser on any device (phone or laptop) and
           enter the code to approve the sign-in.
         </p>
+        <div class="row" id="ov-login-paste-row" hidden style="margin-top:8px">
+          <input type="text" id="ov-login-paste-input" class="filter-input"
+                 placeholder="Paste the code from the browser page…"
+                 aria-label="Sign-in code" />
+          <button class="btn btn-small" id="ov-login-paste-send">Submit code</button>
+        </div>
       </div>
     </section>
 
@@ -179,6 +210,10 @@ function template() {
       <div class="hint warn" id="ov-open-warning" hidden>
         <span>⚠</span>
         <span>Without a key, any program on this machine can use the relay and your subscription quota.</span>
+      </div>
+      <div class="hint" id="ov-claude-note" hidden>
+        <span>ⓘ</span>
+        <span>The experimental Claude provider only works in "This machine only" mode; it stays off while network access is on.</span>
       </div>
     </section>
 
@@ -218,6 +253,44 @@ function template() {
       </div>
     </dialog>
 
+    <dialog id="ov-claude-mode-dialog">
+      <h3>Claude needs "This machine only" mode</h3>
+      <p class="dialog-text">
+        For security, the experimental Claude provider only runs while the
+        relay is not exposed to your network. Switching now restarts the
+        relay on this machine only — <strong>devices on your network lose
+        access</strong> until you switch back.
+      </p>
+      <div class="row" style="margin-top:14px">
+        <span class="spacer"></span>
+        <button class="btn" id="ov-claude-mode-cancel">Cancel</button>
+        <button class="btn btn-primary" id="ov-claude-mode-switch">Switch &amp; continue</button>
+      </div>
+    </dialog>
+
+    <dialog id="ov-claude-token-dialog">
+      <h3>Sign in to Claude with a token</h3>
+      <p class="dialog-text">
+        On any machine with a browser, run <code>claude setup-token</code>
+        in a terminal, approve the sign-in, then paste the token it prints.
+      </p>
+      <div class="field" style="margin-top:12px">
+        <label for="ov-claude-token-input">Token</label>
+        <input type="password" id="ov-claude-token-input" autocomplete="off"
+               placeholder="sk-ant-oat…" />
+      </div>
+      <p class="dialog-text" style="margin-top:10px; font-size:12px">
+        A stored token overrides the claude CLI's own sign-in for relay
+        requests. Removing it keeps the CLI's sign-in; the account row's
+        sign-out removes everything.
+      </p>
+      <div class="row" style="margin-top:14px">
+        <button class="btn btn-ghost" id="ov-claude-token-clear">Remove stored token</button>
+        <span class="spacer"></span>
+        <button class="btn" id="ov-claude-token-cancel">Cancel</button>
+        <button class="btn btn-primary" id="ov-claude-token-save">Save token</button>
+      </div>
+    </dialog>
   `;
 }
 
@@ -254,7 +327,14 @@ function bindActions(ctx) {
   el("ov-auth-protected").addEventListener("click", () => call(api.setAuthMode(true), "Change failed"));
   el("ov-auth-open").addEventListener("click", () => call(api.setAuthMode(false), "Change failed"));
   el("ov-net-loopback").addEventListener("click", () => call(api.setNetworkExposure(false), "Change failed"));
-  el("ov-net-lan").addEventListener("click", () => call(api.setNetworkExposure(true), "Change failed"));
+  el("ov-net-lan").addEventListener("click", async () => {
+    const claudeWasOn = Boolean(lastState?.claude_effective);
+    const done = await call(api.setNetworkExposure(true), "Change failed");
+    // The reverse trap: switching to network mode silently pauses Claude.
+    if (done !== undefined && claudeWasOn) {
+      toast("Claude paused", "It stays off while network access is on.", "info");
+    }
+  });
 
   el("ov-token-toggle").addEventListener("click", async () => {
     if (revealedToken) {
@@ -300,6 +380,7 @@ function bindActions(ctx) {
   el("ov-login-openai-menu").addEventListener("click", (event) => {
     event.stopPropagation();
     const menu = el("ov-login-menu");
+    el("ov-claude-menu").hidden = true;
     menu.hidden = !menu.hidden;
   });
   root.querySelectorAll("#ov-login-menu button").forEach((item) => {
@@ -309,22 +390,100 @@ function bindActions(ctx) {
       startOpenAiSignIn();
     });
   });
-  // Close the open method menu on an outside click. Registered once per
+  el("ov-login-claude").addEventListener("click", () => beginClaudeMethod("browser"));
+  el("ov-login-claude-menu").addEventListener("click", (event) => {
+    event.stopPropagation();
+    const menu = el("ov-claude-menu");
+    el("ov-login-menu").hidden = true;
+    menu.hidden = !menu.hidden;
+  });
+  root.querySelectorAll("#ov-claude-menu button").forEach((item) => {
+    item.addEventListener("click", () => {
+      el("ov-claude-menu").hidden = true;
+      beginClaudeMethod(item.dataset.method);
+    });
+  });
+  el("ov-claude-mode-cancel").addEventListener("click", () => {
+    pendingClaudeMethod = null;
+    el("ov-claude-mode-dialog").close();
+  });
+  el("ov-claude-mode-switch").addEventListener("click", async () => {
+    const method = pendingClaudeMethod;
+    pendingClaudeMethod = null;
+    const button = el("ov-claude-mode-switch");
+    button.disabled = true;
+    // Blocks through the relay restart; when it returns, loopback mode is
+    // live and Claude is effective.
+    const done = await call(api.setNetworkExposure(false), "Mode switch failed");
+    button.disabled = false;
+    if (!root) return;
+    el("ov-claude-mode-dialog").close();
+    if (done === undefined) return;
+    toast("Switched to \u201CThis machine only\u201D", "Claude is available; network devices are disconnected.", "success");
+    if (method) runClaudeMethod(method);
+  });
+  el("ov-claude-token-cancel").addEventListener("click", () => el("ov-claude-token-dialog").close());
+  el("ov-claude-token-clear").addEventListener("click", async () => {
+    const existed = await call(api.clearClaudeToken(), "Token removal failed");
+    if (existed === undefined || !root) return;
+    el("ov-claude-token-dialog").close();
+    toast(
+      existed ? "Stored token removed" : "No stored token",
+      existed ? "The relay now uses the claude CLI's own sign-in." : "Nothing to remove.",
+      existed ? "success" : "info"
+    );
+  });
+  el("ov-claude-token-save").addEventListener("click", async () => {
+    const input = el("ov-claude-token-input");
+    const saved = await call(api.setClaudeToken(input.value), "Token save failed");
+    if (saved !== undefined) {
+      input.value = "";
+      toast("Claude token saved", "The relay uses it on the next Claude request.", "success");
+      if (root) el("ov-claude-token-dialog").close();
+    }
+  });
+  // Close any open method menu on an outside click. Registered once per
   // mount and removed on unmount — accumulating document listeners across
   // view switches was a slow leak.
   documentClickHandler = () => {
-    const menu = root?.querySelector("#ov-login-menu");
-    if (menu) menu.hidden = true;
+    for (const id of ["ov-login-menu", "ov-claude-menu"]) {
+      const menu = root?.querySelector(`#${id}`);
+      if (menu) menu.hidden = true;
+    }
   };
   document.addEventListener("click", documentClickHandler);
 
-  // Sign-out confirm dialog wiring.
+  // Sign-out confirm dialog wiring (shared by both providers).
   el("ov-logout-cancel").addEventListener("click", () => el("ov-logout-dialog").close());
   el("ov-logout-confirm").addEventListener("click", async () => {
     const target = pendingLogoutTarget;
     pendingLogoutTarget = null;
     el("ov-logout-dialog").close();
     if (!target) return;
+    if (target.provider === "claude") {
+      pendingClaudeLogout = true;
+      renderCache.accounts = "";
+      render(ctx.getState());
+      const outcome = await call(api.logoutClaude(), "Claude sign-out failed");
+      pendingClaudeLogout = false;
+      renderCache.accounts = "";
+      if (outcome !== undefined) {
+        if (outcome.cli_signed_out) {
+          toast("Signed out of Claude", "", "success");
+        } else {
+          // Partial: the stored token is gone but CLI credentials may
+          // remain, so the relay could still answer Claude requests.
+          toast(
+            "Claude sign-out incomplete",
+            `${outcome.cli_error ?? "The claude CLI sign-out failed."} Run \u201Cclaude auth logout\u201D in a terminal to finish.`,
+            "error"
+          );
+        }
+        loadUsage();
+      }
+      render(ctx.getState());
+      return;
+    }
     const email = target.email;
     pendingLogout.add(email);
     renderCache.accounts = ""; // force a redraw showing the dimmed row
@@ -373,6 +532,34 @@ function bindActions(ctx) {
   el("ov-login-cancel").addEventListener("click", () => {
     call(api.cancelLogin(), "Cancel failed");
   });
+  el("ov-login-paste-send").addEventListener("click", async () => {
+    const input = el("ov-login-paste-input");
+    const sent = await call(api.submitLoginCode(input.value), "Code delivery failed");
+    if (sent !== undefined) {
+      input.value = "";
+      toast("Code submitted", "Finishing the sign-in…", "success");
+    }
+  });
+}
+
+// Entry point for both Claude methods: when the provider is off because
+// network access is on, explain and offer the switch instead of hiding or
+// silently no-op'ing (both previous iterations confused users).
+function beginClaudeMethod(method) {
+  if (lastState && !lastState.claude_effective) {
+    pendingClaudeMethod = method;
+    el("ov-claude-mode-dialog").showModal();
+    return;
+  }
+  runClaudeMethod(method);
+}
+
+function runClaudeMethod(method) {
+  if (method === "token") {
+    el("ov-claude-token-dialog").showModal();
+  } else {
+    startClaudeSignIn();
+  }
 }
 
 // Runs a sign-in; a deliberate cancel is informational, never an error.
@@ -391,6 +578,16 @@ async function runLoginFlow(provider, failTitle) {
   }
 }
 
+async function startClaudeSignIn() {
+  toast(
+    "Claude sign-in started",
+    "A browser opens for the Anthropic sign-in. If the final page shows a code, paste it in the banner below."
+  );
+  if (await runLoginFlow("claude", "Claude sign-in failed")) {
+    toast("Claude sign-in finished", "", "success");
+  }
+}
+
 async function startOpenAiSignIn() {
   toast("OpenAI sign-in started", "Follow the prompt below or in your browser; progress appears in the Console tab.");
   if (await runLoginFlow("openai", "OpenAI sign-in failed")) {
@@ -404,11 +601,21 @@ async function startOpenAiSignIn() {
 }
 
 function openLogoutDialog(email, isLast) {
-  pendingLogoutTarget = { email };
+  pendingLogoutTarget = { provider: "openai", email };
   root.querySelector("#ov-logout-title").textContent = `Sign out ${email}?`;
   root.querySelector("#ov-logout-text").textContent = isLast
     ? "Requests will fail until you sign in again. This removes the stored sign-in from this machine; your OpenAI account itself is unaffected."
     : "Requests will use your remaining account(s). This removes the stored sign-in from this machine; your OpenAI account itself is unaffected.";
+  root.querySelector("#ov-logout-dialog").showModal();
+}
+
+function openClaudeLogoutDialog() {
+  pendingLogoutTarget = { provider: "claude", email: null };
+  root.querySelector("#ov-logout-title").textContent = "Sign out of Claude?";
+  root.querySelector("#ov-logout-text").textContent =
+    "This signs the claude CLI out on this machine and removes any token stored in AIRelays. " +
+    "Claude requests will fail until you sign in again, and other tools that use the claude CLI here " +
+    "— including Claude Code — are signed out too. Your Anthropic account itself is unaffected.";
   root.querySelector("#ov-logout-dialog").showModal();
 }
 
@@ -422,6 +629,7 @@ async function loadUsage() {
   }
   if (!root) return;
   usageByEmail = new Map();
+  claudeUsage = usage?.claude ?? null;
   if (Array.isArray(usage?.accounts)) {
     for (const entry of usage.accounts) {
       usageByEmail.set(entry.email ?? entry.slug, entry);
@@ -470,17 +678,28 @@ function usageWindowRow(label, window) {
 
   const bar = document.createElement("div");
   bar.className = "usage-bar";
+  const detail = document.createElement("span");
+  detail.className = "usage-detail";
+
+  // A null used_percent means the window rolled over while we couldn't
+  // reach the endpoint (stale snapshot): the old numbers are meaningless,
+  // so show an empty bar and say so rather than fabricating "0% · <1m".
+  if (window.used_percent == null) {
+    detail.textContent = "awaiting fresh data";
+    row.append(name, bar, detail);
+    return row;
+  }
+
   const fill = document.createElement("div");
   fill.className = "usage-fill";
-  const used = Math.max(0, Math.min(100, window.used_percent ?? 0));
+  const used = Math.max(0, Math.min(100, window.used_percent));
   fill.style.width = `${used}%`;
   if (used >= 100) fill.classList.add("full");
   else if (used >= 80) fill.classList.add("high");
   bar.appendChild(fill);
 
-  const detail = document.createElement("span");
-  detail.className = "usage-detail";
-  const resets = formatDuration(window.reset_after_seconds);
+  const resets =
+    window.reset_after_seconds > 0 ? formatDuration(window.reset_after_seconds) : null;
   detail.textContent =
     `${used.toFixed(0)}% used` + (resets ? ` · resets in ${resets}` : "");
 
@@ -562,13 +781,32 @@ function render(state) {
 
   el("ov-open-lan-warning").hidden = requireAuth || loopback;
   el("ov-open-warning").hidden = requireAuth || !loopback;
+  el("ov-claude-note").hidden = loopback || !state.settings.enableClaudeExperimental;
 
   // Key row: masked value only meaningful in protected mode.
   el("ov-key-row").hidden = !requireAuth;
   el("ov-key-open-hint").hidden = requireAuth;
 
-  // Repeated OpenAI sign-ins are additive (the CLI guard keeps existing
-  // accounts), so one label covers first sign-in and adding more.
+  // Claude section: always visible while the feature flag is on (hiding it
+  // read as "the feature is gone"), with an explicit badge when the
+  // provider is off because network access is on. Clicking sign-in while
+  // off opens the mode-switch dialog instead of a sign-in that would do
+  // nothing.
+  el("ov-claude-section").hidden = !state.settings.enableClaudeExperimental;
+  el("ov-claude-off-badge").hidden = state.claude_effective;
+
+  // Sign-in stays enabled while signed in: the claude CLI treats a repeat
+  // sign-in as a credential refresh / account switch, both legitimate.
+  const claudeSignedIn = Boolean(
+    state.claude_effective && state.relay_status?.providers?.claude?.ready_for_requests
+  );
+  el("ov-login-claude").title = claudeSignedIn
+    ? "Signing in again refreshes credentials or switches the account."
+    : "";
+
+  // Both sign-in buttons carry the provider name; repeated OpenAI sign-ins
+  // are additive (the CLI guard keeps existing accounts), so one label
+  // covers first sign-in and adding more.
   const openaiReady = state.relay_status?.providers?.openai?.ready_for_requests;
   el("ov-login-openai").title = openaiReady
     ? "Add another OpenAI account"
@@ -585,13 +823,17 @@ function render(state) {
     el("ov-login-url").textContent = state.login_url ?? "";
     el("ov-login-open").disabled = !hasUrl;
     el("ov-login-copy").disabled = !hasUrl;
+    const isClaude = state.login_provider === "claude";
     const hasCode = Boolean(state.login_code);
     el("ov-login-code-row").hidden = !hasCode;
     if (hasCode) {
       el("ov-login-code").textContent = state.login_code;
     }
-    el("ov-login-hint-browser").hidden = !hasUrl || hasCode;
-    el("ov-login-hint-device").hidden = !hasUrl || !hasCode;
+    // Claude's browser flow ends with a code shown on the callback page
+    // that must be sent back to the CLI — collect it right here.
+    el("ov-login-paste-row").hidden = !(isClaude && state.login_accepts_code);
+    el("ov-login-hint-browser").hidden = !hasUrl || hasCode || isClaude;
+    el("ov-login-hint-device").hidden = !hasUrl || !hasCode || isClaude;
   }
 
   renderAccounts(state);
@@ -722,7 +964,9 @@ function accountBlock(account, index, total) {
 function renderAccounts(state) {
   const providers = state.relay_status?.providers;
   const cacheKey =
-    JSON.stringify(providers ?? null) + "|" + usageStamp + "|" + [...pendingLogout].join(",");
+    JSON.stringify(providers ?? null) + "|" + usageStamp + "|" + [...pendingLogout].join(",") +
+    "|" + (lastState?.claude_effective ?? "") + "|" + (lastState?.claude_token_present ?? "") +
+    "|" + pendingClaudeLogout;
   if (cacheKey === renderCache.accounts) {
     return;
   }
@@ -731,6 +975,7 @@ function renderAccounts(state) {
   const container = el("ov-accounts");
   if (!providers) {
     container.innerHTML = `<div class="empty">Start the relay to see accounts.</div>`;
+    el("ov-claude-account").innerHTML = "";
     return;
   }
   container.innerHTML = "";
@@ -760,4 +1005,145 @@ function renderAccounts(state) {
     caption.textContent = "Requests go to the first account with capacity.";
     container.appendChild(caption);
   }
+
+  // Claude renders into its own section (own header + sign-in button); the
+  // paused state persists the row so a signed-in Claude never silently
+  // vanishes after a network-mode switch.
+  const claude = providers.claude;
+  const claudePaused = Boolean(
+    lastState?.settings?.enableClaudeExperimental && !lastState?.claude_effective
+  );
+  const claudeContainer = el("ov-claude-account");
+  claudeContainer.innerHTML = "";
+  claudeContainer.appendChild(claudeBlock(claude ?? {}, claudePaused));
+}
+
+// Claude rendered with the exact same block as an OpenAI account: identity
+// grid on top (email / plan / badge / sign-out), usage bars with reset
+// times underneath (from the same endpoint shape Claude Code's /usage
+// command reads).
+function claudeBlock(claude, paused) {
+  const block = document.createElement("div");
+  block.className = "account-block";
+  if (pendingClaudeLogout) block.classList.add("pending");
+  const head = document.createElement("div");
+  head.className = "account-head";
+
+  const emailEl = document.createElement("span");
+  emailEl.className = "account-email";
+  emailEl.textContent = claude.email ?? claudeUsage?.account?.email ?? "Not signed in";
+  if (claude.cli_version) {
+    emailEl.title = `Served by the local claude CLI ${claude.cli_version}`;
+  }
+
+  const plan = document.createElement("span");
+  plan.className = "account-plan";
+  plan.textContent = claude.subscription_type ?? claudeUsage?.account?.plan_type ?? "";
+
+  const badge = document.createElement("span");
+  const atLimit = Boolean(claudeUsage?.rate_limit_reached_type);
+  // Usage state is part of the row's health: "Ready" with a broken usage
+  // meter would be a half-truth.
+  const usageBlocked = Boolean(claudeUsage?.error);
+  if (paused) {
+    badge.className = "badge badge-neutral";
+    badge.textContent = "Paused";
+    badge.title = "Off while network access is on — switch to \u201CThis machine only\u201D to use it.";
+  } else if (atLimit) {
+    badge.className = "badge badge-warn";
+    badge.textContent = "At limit";
+    badge.title = "Usage limit reached; it resets on schedule.";
+  } else if (claude.ready_for_requests && usageBlocked) {
+    badge.className = "badge badge-warn";
+    badge.textContent = "Usage unavailable";
+    badge.title = "Requests work; the usage meter is temporarily unavailable (see the note below).";
+  } else if (claude.ready_for_requests) {
+    badge.className = "badge badge-accent";
+    badge.textContent = "Ready";
+  } else {
+    // A deliberate signed-out state is not a fault: neutral, not amber.
+    badge.className = "badge badge-neutral";
+    badge.textContent = "Not signed in";
+  }
+
+  head.append(emailEl, plan, badge);
+
+  // Sign-out parity with OpenAI rows. Also offered when only a stored
+  // token exists: a stale token silently masks CLI auth, and sign-out is
+  // exactly the escape hatch for that state.
+  const canSignOut =
+    !paused && (claude.ready_for_requests || Boolean(lastState?.claude_token_present));
+  if (pendingClaudeLogout) {
+    const pending = document.createElement("span");
+    pending.className = "account-plan";
+    pending.textContent = "…";
+    head.append(pending);
+  } else if (canSignOut) {
+    const button = document.createElement("button");
+    button.className = "copy-btn";
+    button.innerHTML = icon("logOut", 14);
+    button.setAttribute("aria-label", "Sign out of Claude");
+    button.title = "Sign out of Claude";
+    button.addEventListener("click", () => openClaudeLogoutDialog());
+    head.append(button);
+  }
+  block.appendChild(head);
+
+  if (paused) {
+    const note = document.createElement("div");
+    note.className = "account-plan";
+    note.textContent = "Off while network access is on — switch to \u201CThis machine only\u201D to use it.";
+    block.appendChild(note);
+    return block;
+  }
+  if (!claude.ready_for_requests) {
+    const note = document.createElement("div");
+    note.className = "account-plan";
+    // A usage-fetch error (e.g. the relay process predates a settings
+    // change) is more accurate than assuming the user is signed out.
+    note.textContent = claudeUsage?.error
+      ? `Usage unavailable — ${claudeUsage.error}`
+      : "Not signed in — use Sign in above.";
+    block.appendChild(note);
+    return block;
+  }
+  // Same renderer as OpenAI usage: "5h window / Weekly" bars with
+  // "x% used · resets in …" details.
+  if (claudeUsage?.rate_limits) {
+    for (const [label, window] of usageWindows(claudeUsage)) {
+      block.appendChild(usageWindowRow(label, window));
+    }
+    // Stale snapshot: show the bars (better than nothing) but say they are
+    // cached, and why a fresh read isn't possible yet.
+    if (claudeUsage.stale) {
+      const note = document.createElement("div");
+      note.className = "account-plan";
+      const age = claudeUsage.as_of_epoch
+        ? formatDuration(Math.max(0, Date.now() / 1000 - claudeUsage.as_of_epoch))
+        : null;
+      const retry = claudeUsage.retry_after_seconds
+        ? formatDuration(claudeUsage.retry_after_seconds)
+        : null;
+      let why;
+      if (claudeUsage.stale_reason === "credential_rejected_file") {
+        why = "stored token rejected — replace it with a new token or remove it";
+      } else if (claudeUsage.stale_reason === "credential_rejected") {
+        why = "updates on Claude's next served request";
+      } else if (retry) {
+        why = `refreshes in ~${retry} (rate-limited upstream)`;
+      } else {
+        why = "refreshes shortly";
+      }
+      note.textContent = `Cached usage${age ? ` from ${age} ago` : ""} — ${why}.`;
+      block.appendChild(note);
+    }
+  } else if (claudeUsage?.error) {
+    // No usable snapshot: explain why the bars are missing instead of
+    // leaving the row silently blank.
+    const note = document.createElement("div");
+    note.className = "account-plan";
+    note.textContent = claudeUsage.error;
+    block.appendChild(note);
+  }
+  return block;
 }

@@ -43,7 +43,7 @@ airelays token rotate
 
 ## Open Local Relay Mode
 
-Open local relay mode disables the AIRelays client-token gate.
+Open local relay mode applies to all enabled providers, including Claude experimental mode.
 
 ```bash
 airelays init --no-auth
@@ -55,6 +55,16 @@ Equivalent environment override:
 ```bash
 AIRELAYS_REQUIRE_BEARER_AUTH=false airelays serve --port 8080
 ```
+
+## Claude Experimental Guardrails
+
+When the Claude runtime is enabled:
+
+- bearer auth is required
+- loopback binding is required
+- `trust_x_forwarded_for` is rejected
+- the runtime is stateless
+- the runtime is local-only
 
 ## Rate Limits
 

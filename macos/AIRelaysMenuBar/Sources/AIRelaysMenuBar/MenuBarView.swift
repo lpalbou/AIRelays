@@ -43,6 +43,9 @@ struct MenuBarRootView: View {
             Button("OpenAI Login") {
                 controller.runOpenAILogin()
             }
+            Button("Claude Login") {
+                controller.runClaudeLogin()
+            }
             Divider()
             Button("Quit") {
                 controller.quitApp()
