@@ -5,8 +5,60 @@ on:
     tags: ["desktop-v*"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
+  # The desktop installers bundle the relay from this checkout, so a
+  # desktop release must ship the exact relay version PyPI has: the
+  # desktop-vX.Y.Z tag, the desktop manifests, and pyproject.toml must
+  # all agree before anything builds.
+  version-guard:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check desktop tag matches relay and desktop versions
+        id: check
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          ref = os.environ.get("GITHUB_REF_NAME", "")
+          match = re.fullmatch(r"desktop-v(\d+\.\d+\.\d+(?:[a-zA-Z0-9.-]+)?)", ref)
+          if not match:
+              raise SystemExit(f"Unexpected desktop tag: {ref!r}")
+          version = match.group(1)
+
+          relay = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          relay_version = relay["project"]["version"]
+          tauri = json.loads(Path("desktop/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+          cargo = tomllib.loads(Path("desktop/src-tauri/Cargo.toml").read_text(encoding="utf-8"))
+          package = json.loads(Path("desktop/package.json").read_text(encoding="utf-8"))
+
+          versions = {
+              "tag": version,
+              "pyproject": relay_version,
+              "tauri.conf.json": tauri["version"],
+              "Cargo.toml": cargo["package"]["version"],
+              "package.json": package["version"],
+          }
+          if len(set(versions.values())) != 1:
+              raise SystemExit(f"Version mismatch: {versions}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              print(f"version={version}", file=fh)
+          PY
+
   build:
+    needs: [version-guard]
+    if: always() && (needs.version-guard.result == 'success' || github.event_name == 'workflow_dispatch')
     strategy:
       fail-fast: false
       matrix:
@@ -70,3 +122,29 @@ jobs:
             desktop/src-tauri/target/release/bundle/appimage/*.AppImage
             desktop/src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
+
+  # Attach the installers to the same vX.Y.Z GitHub Release the relay
+  # publishes to, keeping GitHub and PyPI in sync: one version, one
+  # release page carrying both the Python distributions and the desktop
+  # installers.
+  attach-to-release:
+    if: github.event_name == 'push'
+    needs: [version-guard, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: airelays-desktop-*
+          path: installers
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version-guard.outputs.version }}
+          files: |
+            installers/**/*.dmg
+            installers/**/*.exe
+            installers/**/*.AppImage
+            installers/**/*.deb
+          fail_on_unmatched_files: true
