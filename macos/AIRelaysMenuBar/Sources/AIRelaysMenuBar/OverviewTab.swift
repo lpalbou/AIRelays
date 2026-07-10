@@ -128,6 +128,11 @@ struct OverviewTab: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+                if !controller.settings.isLoopbackHost && controller.settings.enableClaudeExperimental {
+                    Label("Claude is loopback-only; it stays disabled while exposed to the LAN.", systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -186,6 +191,12 @@ struct OverviewTab: View {
                 HStack(spacing: 8) {
                     Button("OpenAI Login") {
                         controller.runOpenAILogin()
+                    }
+                    Button("Claude Login") {
+                        controller.runClaudeLogin()
+                    }
+                    Button("Claude setup-token") {
+                        controller.runClaudeSetupToken()
                     }
                     Spacer()
                     Button("Run Doctor") {

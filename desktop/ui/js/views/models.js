@@ -10,7 +10,7 @@ let filterText = "";
 let lastReachable = null;
 let loading = false;
 
-const PROVIDER_NAMES = { openai: "OpenAI" };
+const PROVIDER_NAMES = { openai: "OpenAI", claude: "Claude" };
 
 export const modelsView = {
   async mount(container, ctx) {
@@ -155,12 +155,6 @@ function modelRow(model) {
   id.className = "model-id";
   id.textContent = model.id;
   row.appendChild(id);
-  if (model.airelays?.experimental) {
-    const badge = document.createElement("span");
-    badge.className = "badge badge-neutral";
-    badge.textContent = "Experimental";
-    row.appendChild(badge);
-  }
   const spacer = document.createElement("span");
   spacer.className = "spacer";
   row.appendChild(spacer);

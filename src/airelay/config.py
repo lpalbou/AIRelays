@@ -18,6 +18,12 @@ DEFAULT_CONFIG_PATH = Path.home() / ".config" / "airelays" / "config.toml"
 DEFAULT_DATA_DIR = Path.home() / ".airelays"
 LEGACY_DEFAULT_CONFIG_PATH = Path.home() / ".config" / "airelay" / "config.toml"
 LEGACY_DEFAULT_DATA_DIR = Path.home() / ".airelay"
+DEFAULT_CLAUDE_MODELS = (
+    "claude:sonnet",
+    "claude:opus",
+    "claude:haiku",
+    "claude:fable",
+)
 
 
 def _env(*names: str) -> str | None:
@@ -70,6 +76,18 @@ def _path(value: Any, default: Path) -> Path:
     return Path(str(value)).expanduser()
 
 
+def _str_list(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        items = tuple(segment.strip() for segment in value.split(",") if segment.strip())
+        return items or default
+    if isinstance(value, (list, tuple)):
+        items = tuple(str(segment).strip() for segment in value if str(segment).strip())
+        return items or default
+    return default
+
+
 def _preferred_default_path(current: Path, legacy: Path) -> Path:
     expanded_current = current.expanduser()
     expanded_legacy = legacy.expanduser()
@@ -105,10 +123,13 @@ class Settings:
     bearer_token: str | None = None
     bearer_token_env_override: bool = False
     bearer_token_file: Path = DEFAULT_DATA_DIR / "relay-token"
+    # Claude Code OAuth token stored by `airelays claude set-token`. A file
+    # survives service managers (systemd/docker) where shell exports do not.
+    claude_oauth_token_file: Path = DEFAULT_DATA_DIR / "claude-token"
     auto_generate_bearer_token: bool = False
     rate_limit_per_minute: int = 120
     rate_limit_burst: int = 40
-    concurrent_requests_per_ip: int = 8
+    concurrent_requests_per_ip: int = 50
     failed_auth_window_seconds: int = 300
     failed_auth_max_attempts: int = 8
     failed_auth_block_seconds: int = 900
@@ -127,6 +148,12 @@ class Settings:
     # requests evenly across healthy accounts.
     openai_balance: str = "ordered"
     openai_account_cooldown_seconds: int = 300
+    enable_claude: bool = True
+    claude_bin: str = "claude"
+    claude_timeout_seconds: float = 600.0
+    claude_max_concurrent_requests: int = 2
+    claude_strip_api_key_env: bool = True
+    claude_models: tuple[str, ...] = DEFAULT_CLAUDE_MODELS
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -160,6 +187,11 @@ class Settings:
             _env("AIRELAYS_BEARER_TOKEN_FILE", "AIRELAY_BEARER_TOKEN_FILE")
             or _cfg(payload, "security", "bearer_token_file"),
             data_dir / "relay-token",
+        )
+        claude_oauth_token_file = _path(
+            _env("AIRELAYS_CLAUDE_OAUTH_TOKEN_FILE")
+            or _cfg(payload, "providers", "claude", "oauth_token_file"),
+            data_dir / "claude-token",
         )
 
         env_bearer_token = _env("AIRELAYS_BEARER_TOKEN", "AIRELAY_BEARER_TOKEN")
@@ -246,6 +278,7 @@ class Settings:
             bearer_token=env_bearer_token,
             bearer_token_env_override=env_bearer_token is not None,
             bearer_token_file=bearer_token_file,
+            claude_oauth_token_file=claude_oauth_token_file,
             auto_generate_bearer_token=_bool(
                 _env("AIRELAYS_AUTO_GENERATE_BEARER_TOKEN", "AIRELAY_AUTO_GENERATE_BEARER_TOKEN")
                 or _cfg(payload, "security", "auto_generate_bearer_token"),
@@ -264,7 +297,7 @@ class Settings:
             concurrent_requests_per_ip=_int(
                 _env("AIRELAYS_CONCURRENT_REQUESTS_PER_IP", "AIRELAY_CONCURRENT_REQUESTS_PER_IP")
                 or _cfg(payload, "security", "concurrent_requests_per_ip"),
-                8,
+                50,
             ),
             failed_auth_window_seconds=_int(
                 _env("AIRELAYS_FAILED_AUTH_WINDOW_SECONDS", "AIRELAY_FAILED_AUTH_WINDOW_SECONDS")
@@ -326,6 +359,52 @@ class Settings:
                 or _cfg(payload, "providers", "openai", "account_cooldown_seconds"),
                 300,
             ),
+            enable_claude=_bool(
+                _env(
+                    "AIRELAYS_ENABLE_CLAUDE",
+                    # Legacy names from when the Claude runtime carried the
+                    # "experimental" label; still honored so existing
+                    # environments keep working.
+                    "AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL",
+                    "AIRELAY_ENABLE_CLAUDE_EXPERIMENTAL",
+                )
+                or _cfg(payload, "providers", "claude", "enabled"),
+                True,
+            ),
+            claude_bin=str(
+                _env("AIRELAYS_CLAUDE_BIN", "AIRELAY_CLAUDE_BIN")
+                or _cfg(payload, "providers", "claude", "bin")
+                or "claude"
+            ),
+            claude_timeout_seconds=_float(
+                _env(
+                    "AIRELAYS_CLAUDE_TIMEOUT_SECONDS",
+                    "AIRELAY_CLAUDE_TIMEOUT_SECONDS",
+                )
+                or _cfg(payload, "providers", "claude", "timeout_seconds"),
+                600.0,
+            ),
+            claude_max_concurrent_requests=_int(
+                _env(
+                    "AIRELAYS_CLAUDE_MAX_CONCURRENT_REQUESTS",
+                    "AIRELAY_CLAUDE_MAX_CONCURRENT_REQUESTS",
+                )
+                or _cfg(payload, "providers", "claude", "max_concurrent_requests"),
+                2,
+            ),
+            claude_strip_api_key_env=_bool(
+                _env(
+                    "AIRELAYS_CLAUDE_STRIP_API_KEY_ENV",
+                    "AIRELAY_CLAUDE_STRIP_API_KEY_ENV",
+                )
+                or _cfg(payload, "providers", "claude", "strip_api_key_env"),
+                True,
+            ),
+            claude_models=_str_list(
+                _env("AIRELAYS_CLAUDE_MODELS", "AIRELAY_CLAUDE_MODELS")
+                or _cfg(payload, "providers", "claude", "models"),
+                DEFAULT_CLAUDE_MODELS,
+            ),
         )
 
     def ensure_directories(self) -> None:
@@ -369,6 +448,29 @@ class Settings:
         self.write_bearer_token(token)
         return token
 
+    def resolve_claude_oauth_token(self) -> str | None:
+        """Token stored via `airelays claude set-token`; env keeps working
+        as a fallback for existing setups, but the file wins because it is
+        explicit configuration."""
+        if self.claude_oauth_token_file.exists():
+            token = self.claude_oauth_token_file.read_text(encoding="utf-8").strip()
+            if token:
+                return token
+        return None
+
+    def write_claude_oauth_token(self, token: str) -> None:
+        self.ensure_directories()
+        self.claude_oauth_token_file.parent.mkdir(parents=True, exist_ok=True)
+        self.claude_oauth_token_file.write_text(f"{token}\n", encoding="utf-8")
+        os.chmod(self.claude_oauth_token_file, 0o600)
+
+    def claude_oauth_token_source(self) -> str:
+        if self.resolve_claude_oauth_token():
+            return "file"
+        if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+            return "env"
+        return "none"
+
     def write_bearer_token(self, token: str) -> None:
         self.ensure_directories()
         self.bearer_token_file.parent.mkdir(parents=True, exist_ok=True)
@@ -385,6 +487,22 @@ class Settings:
     def ensure_runtime_state(self) -> str | None:
         self.ensure_directories()
         return self.ensure_bearer_token()
+
+    def is_loopback_host(self) -> bool:
+        return self.host in {"127.0.0.1", "localhost", "::1"}
+
+    def validate_provider_guardrails(self) -> None:
+        if not self.enable_claude:
+            return
+        if not self.is_loopback_host():
+            raise RuntimeError(
+                "The Claude runtime is restricted to loopback listeners. "
+                "Use `127.0.0.1`, `localhost`, or `::1`."
+            )
+        if self.trust_x_forwarded_for:
+            raise RuntimeError(
+                "The Claude runtime does not allow `trust_x_forwarded_for`."
+            )
 
     def write_config_file(self, force: bool = False) -> bool:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -442,6 +560,15 @@ enabled = {str(self.enable_openai_provider).lower()}
 models_cache_ttl_seconds = {self.models_cache_ttl_seconds}
 balance = "{self.openai_balance}"
 account_cooldown_seconds = {self.openai_account_cooldown_seconds}
+
+[providers.claude]
+enabled = {str(self.enable_claude).lower()}
+oauth_token_file = "{self.claude_oauth_token_file}"
+bin = "{self.claude_bin}"
+timeout_seconds = {self.claude_timeout_seconds}
+max_concurrent_requests = {self.claude_max_concurrent_requests}
+strip_api_key_env = {str(self.claude_strip_api_key_env).lower()}
+models = [{", ".join(f'"{model}"' for model in self.claude_models)}]
 """
 
     def client_base_url(self) -> str:
@@ -481,6 +608,18 @@ account_cooldown_seconds = {self.openai_account_cooldown_seconds}
                     "models_cache_ttl_seconds": self.models_cache_ttl_seconds,
                     "balance": self.openai_balance,
                     "account_cooldown_seconds": self.openai_account_cooldown_seconds,
+                },
+                "claude": {
+                    "enabled": self.enable_claude,
+                    "bin": self.claude_bin,
+                    "timeout_seconds": self.claude_timeout_seconds,
+                    "max_concurrent_requests": self.claude_max_concurrent_requests,
+                    "strip_api_key_env": self.claude_strip_api_key_env,
+                    "models": list(self.claude_models),
+                    # Presence + fingerprint only; the token itself must
+                    # never appear in status output or logs.
+                    "oauth_token_source": self.claude_oauth_token_source(),
+                    "oauth_token_fingerprint": _token_fingerprint(self.resolve_claude_oauth_token()),
                 },
             },
         }

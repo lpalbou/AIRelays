@@ -26,7 +26,8 @@ dist/
 
 node_modules/
 target/
+untracked/
+.cache/
 desktop/src-tauri/runtime/*
 !desktop/src-tauri/runtime/.gitkeep
 desktop/src-tauri/gen/
-.cache

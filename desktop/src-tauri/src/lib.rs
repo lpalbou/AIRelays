@@ -20,7 +20,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // Before any child process spawns: GUI PATH lacks user bin dirs
-            // (breaks any PATH-installed relay).
+            // (breaks the `claude` CLI and any PATH-installed relay).
             relay::extend_path_for_gui();
             let settings_path = app
                 .path()
@@ -73,6 +73,10 @@ pub fn run() {
             commands::open_path,
             commands::get_autostart,
             commands::set_autostart,
+            commands::set_claude_token,
+            commands::clear_claude_token,
+            commands::logout_claude,
+            commands::submit_login_code,
             commands::cancel_login,
             commands::get_models,
         ])

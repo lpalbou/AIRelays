@@ -1,19 +1,19 @@
 # Documentation
 
 - [Getting Started](getting-started.md)
-  - installation, OpenAI setup, and verification
+  - installation, OpenAI setup, Claude setup, and verification
 - [Desktop App](../desktop/README.md)
   - the cross-platform tray app: layout, build, and supervision behavior
 - [Configuration](configuration.md)
   - config file shape, environment overrides, and provider toggles
 - [Security](security.md)
-  - relay auth and open local relay mode
+  - relay auth, open local relay mode, and Claude guardrails
 - [API Notes](api.md)
   - supported routes and provider-scoped limits
 - [Architecture](architecture.md)
   - request flow and module boundaries
 - [Subscription Status](subscription-status.md)
-  - usage reporting for the OpenAI runtime
+  - usage reporting for the OpenAI and Claude runtimes
 - [FAQ](faq.md)
   - common usage and provider questions
 - [Troubleshooting](troubleshooting.md)

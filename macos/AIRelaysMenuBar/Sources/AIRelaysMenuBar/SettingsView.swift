@@ -82,6 +82,12 @@ struct SettingsRootView: View {
                 settingsGrid {
                     booleanField("Enable OpenAI", keyPath: \.enableOpenAIProvider)
                     doubleField("OpenAI Models Cache TTL", keyPath: \.modelsCacheTTLSeconds)
+                    booleanField("Enable Claude", keyPath: \.enableClaudeExperimental)
+                    textField("Claude Bin", keyPath: \.claudeBin)
+                    doubleField("Claude Timeout Seconds", keyPath: \.claudeTimeoutSeconds)
+                    integerField("Claude Max Concurrent", keyPath: \.claudeMaxConcurrentRequests)
+                    booleanField("Claude Strip API Key Env", keyPath: \.claudeStripAPIKeyEnv)
+                    textField("Claude Models CSV", keyPath: \.claudeModelsCSV)
                 }
             }
             SectionCard(title: "Shell Parity") {

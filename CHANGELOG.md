@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Claude runtime: explicit `claude:*` model ids served through the local `claude` CLI under its existing subscription sign-in. Text `/v1/chat/completions` and `/v1/completions` (stream and non-stream), stateless, loopback-only; unsupported routes, states, and parameters are rejected locally and explicitly (ADR 0004). Enabled by default; opt out with `[providers.claude].enabled = false` or `AIRELAYS_ENABLE_CLAUDE=false`. `airelays doctor` includes Claude readiness checks.
+- Claude sign-in and sign-out: browser flow (`claude auth login --claudeai`), headless flow (`claude setup-token` on any browser-equipped machine, then `airelays claude set-token` — stored 0600, survives service managers and reboots), and `airelays claude logout` (removes the stored token, then runs `claude auth logout`). The desktop app offers the same flows: a sign-in split button ("In a browser (this machine)" / "With a token (any device)"), a code-entry field for the browser flow's final step, and per-row sign-out with a confirmation that explains the machine-wide effect on the `claude` CLI.
+- Claude subscription usage: `GET /v1/subscription/status?provider=claude` returns the 5-hour and weekly windows (plus per-model weekly caps when reported) in the same normalized shape as OpenAI usage. The upstream usage endpoint is aggressively rate-limited, so the relay caches briefly, single-flights refreshes, serves honestly-labeled stale snapshots during lockouts, and persists the guardrail state across restarts. The desktop Accounts card renders both providers identically — usage bars, reset times, and an "At limit" badge.
+- Provider identity in the model catalog: `/v1/models` Claude entries carry provider, upstream model, and route-capability metadata; `airelays models` and the desktop Models tab group model ids by provider.
+
+### Changed
+
+- The Claude runtime is no longer labeled experimental. The `experimental` field was removed from `/v1/models` entries and provider status payloads, Claude model `owned_by` is now `airelays-claude-subscription`, error messages say "The Claude runtime …", and UI badges and labels dropped the tag. The enable switch is now `AIRELAYS_ENABLE_CLAUDE` (the legacy `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL` name is still honored, and desktop settings files written under the old name keep loading). The runtime's guardrails are unchanged: local-only, loopback-only, stateless, explicit rejections outside the published route subset.
+- Provider routing is explicit and model-driven: `claude:*` ids select the Claude runtime when it is enabled; other ids select the OpenAI runtime. AIRelays rejects requests when the selected runtime is disabled or the route is outside that runtime's published subset.
+- The relay's status route refreshes Claude CLI probes in the background with hard timeouts; status responses return immediately even when the `claude` binary is slow or hung.
+- Desktop Overview: the Accounts card shows OpenAI and Claude section headers. The Claude sign-in button shows an "Off in network mode" badge while the relay is exposed to the network (the runtime is loopback-only) and offers a one-click switch to "This machine only"; a signed-in Claude that network mode paused stays visible as a "Paused" row.
+- Documented upstream terms and personal use: the disclaimer (root and docs site) explains that AIRelays drives provider-owned tooling under the account holder's own sign-ins for ordinary individual use, and links the official Anthropic and OpenAI terms and policy pages to review. A new FAQ entry summarizes the same point.
+
+### Fixed
+
+- Claude routes no longer fail with `422 Claude experimental mode does not support temperature` when standard OpenAI SDK clients send sampling parameters. `temperature`, `top_p`, `presence_penalty`, and `frequency_penalty` now get the same documented adaptation as on the OpenAI runtime: stripped (the local `claude` CLI has no sampling controls), disclosed in the `x-airelays-ignored-parameters` response header, and logged as a `compatibility_adaptation` traffic record.
+- Desktop Claude sign-in on a GUI-launched app: the extended startup PATH also locates the `claude` CLI, and on Windows the `claude` .cmd shim is invoked correctly.
+- Headless Claude setup: `airelays claude set-token` stores a token that keeps working under systemd, launchd, and docker, where shell exports never reach the relay process.
+
 ## 0.3.0
 
 ### Added

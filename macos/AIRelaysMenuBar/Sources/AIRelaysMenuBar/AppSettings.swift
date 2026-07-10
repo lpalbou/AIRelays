@@ -198,6 +198,12 @@ struct RelayAppSettings: Codable {
     var maxTotalUploadBytes: Int
     var enableOpenAIProvider: Bool
     var modelsCacheTTLSeconds: Double
+    var enableClaudeExperimental: Bool
+    var claudeBin: String
+    var claudeTimeoutSeconds: Double
+    var claudeMaxConcurrentRequests: Int
+    var claudeStripAPIKeyEnv: Bool
+    var claudeModelsCSV: String
     var extraServeArgs: String
     var extraEnvironment: String
     // Optional so settings from earlier app versions still decode; nil marks
@@ -240,6 +246,12 @@ struct RelayAppSettings: Codable {
             maxTotalUploadBytes: 256 * 1024 * 1024,
             enableOpenAIProvider: true,
             modelsCacheTTLSeconds: 300.0,
+            enableClaudeExperimental: true,
+            claudeBin: "claude",
+            claudeTimeoutSeconds: 600.0,
+            claudeMaxConcurrentRequests: 2,
+            claudeStripAPIKeyEnv: true,
+            claudeModelsCSV: "claude:sonnet, claude:opus, claude:haiku, claude:fable",
             extraServeArgs: "",
             extraEnvironment: "",
             networkDefaultsVersion: 1
@@ -311,6 +323,10 @@ struct RelayAppSettings: Codable {
         NSString(string: bearerTokenFile).expandingTildeInPath
     }
 
+    var expandedClaudeBin: String {
+        NSString(string: claudeBin).expandingTildeInPath
+    }
+
     var isLoopbackHost: Bool {
         ["127.0.0.1", "localhost", "::1"].contains(host)
     }
@@ -325,7 +341,22 @@ struct RelayAppSettings: Codable {
         "http://\(clientHost):\(port)/v1"
     }
 
+    /// The relay enforces guardrails for the Claude runtime
+    /// (loopback-only listener, no X-Forwarded-For trust); the rendered
+    /// config must respect both or serve refuses to start.
+    var claudeEffectivelyEnabled: Bool {
+        enableClaudeExperimental && isLoopbackHost && !trustXForwardedFor
+    }
+
+    var claudeModels: [String] {
+        claudeModelsCSV
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
     func renderConfigTOML() -> String {
+        let quotedModels = claudeModels.map { "\"\($0)\"" }.joined(separator: ", ")
         return """
 [server]
 host = "\(host)"
@@ -366,6 +397,14 @@ max_total_upload_bytes = \(maxTotalUploadBytes)
 [providers.openai]
 enabled = \(String(enableOpenAIProvider).lowercased())
 models_cache_ttl_seconds = \(modelsCacheTTLSeconds)
+
+[providers.claude]
+enabled = \(String(claudeEffectivelyEnabled).lowercased())
+bin = "\(expandedClaudeBin)"
+timeout_seconds = \(claudeTimeoutSeconds)
+max_concurrent_requests = \(claudeMaxConcurrentRequests)
+strip_api_key_env = \(String(claudeStripAPIKeyEnv).lowercased())
+models = [\(quotedModels)]
 """
     }
 

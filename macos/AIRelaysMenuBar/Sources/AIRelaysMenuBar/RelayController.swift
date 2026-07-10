@@ -178,9 +178,12 @@ final class RelayController: ObservableObject {
             return
         }
         updateSettings { $0.host = exposed ? "0.0.0.0" : "127.0.0.1" }
-        let note = exposed
+        var note = exposed
             ? "Listener: all interfaces (private network can connect)."
             : "Listener: loopback only (this Mac)."
+        if exposed && settings.enableClaudeExperimental {
+            note += " Claude is loopback-only and stays disabled while exposed."
+        }
         appendConsole(source: "config", text: note, isError: false)
         saveAndRestartIfNeeded()
     }
@@ -249,6 +252,16 @@ final class RelayController: ObservableObject {
             label: "openai-login",
             shellCommand: settings.relayShellCommand(["login", "--config", settings.expandedConfigPath])
         )
+    }
+
+    func runClaudeLogin() {
+        let command = "cd \(shellEscape(settings.expandedWorkingDirectory)) && \(shellEscape(settings.expandedClaudeBin)) auth login --claudeai"
+        runDetachedShellCommand(label: "claude-login", shellCommand: command)
+    }
+
+    func runClaudeSetupToken() {
+        let command = "cd \(shellEscape(settings.expandedWorkingDirectory)) && \(shellEscape(settings.expandedClaudeBin)) setup-token"
+        runDetachedShellCommand(label: "claude-setup-token", shellCommand: command)
     }
 
     func openLogsFolder() {

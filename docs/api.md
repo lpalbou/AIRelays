@@ -13,7 +13,10 @@ letting them fail, and always discloses what it changed:
   (`"Unsupported parameter: temperature"`). The names of removed
   parameters are returned in the `x-airelays-ignored-parameters` response
   header and logged as a `compatibility_adaptation` traffic record with the
-  reason. Generation runs with the upstream's own sampling defaults.
+  reason. Generation runs with the upstream's own sampling defaults. The
+  same adaptation applies on the Claude routes: the local
+  `claude` CLI exposes no sampling controls, so these parameters are
+  stripped and disclosed there too instead of failing the request.
 - **Reasoning effort:** `reasoning_effort` (chat completions) and
   `reasoning.effort` (responses) are forwarded verbatim. Requests that omit
   it run at upstream effort `none`, which is lower than the `medium` the
@@ -31,10 +34,12 @@ letting them fail, and always discloses what it changed:
 
 ## `GET /v1/models`
 
-Returns an OpenAI-style models list built from the OpenAI runtime.
+Returns an OpenAI-style models list built from the enabled provider runtimes.
 
 - OpenAI models come from the verified ChatGPT subscription backend when that runtime is ready.
-- All model ids route to the OpenAI runtime.
+- Claude models are explicit `claude:*` ids.
+- models starting with `claude:` route to the Claude runtime when it is enabled
+- other model ids route to the OpenAI runtime when it is enabled
 - Each model record includes an `airelays` extension block with provider identity and route capabilities.
 - Successful OpenAI upstream model-list responses are cached in memory for
   `models_cache_ttl_seconds` seconds. The default is 300 seconds; `0`
@@ -47,7 +52,9 @@ Returns an OpenAI-style models list built from the OpenAI runtime.
 Returns a normalized subscription-usage snapshot with per-window usage
 percentages, window labels ("5h", "weekly"), and reset times.
 
-- provider is OpenAI (source: `chatgpt.com/backend-api/wham/usage`)
+- default provider is OpenAI (source: `chatgpt.com/backend-api/wham/usage`)
+- `?provider=claude` returns Claude subscription usage in the same
+  normalized shape (see [Subscription Status](subscription-status.md))
 - `?account=<email-or-prefix>` selects one enrolled OpenAI account
 - `?all_accounts=true` returns one entry per enrolled OpenAI account
   (folds to the single-account shape when only one exists)
@@ -76,27 +83,59 @@ state. `airelays doctor` runs the same local checks and also probes the OpenAI
 upstream `/models` route plus a tiny `/responses` smoke request when the OpenAI
 runtime is enabled and logged in. Use `airelays doctor --skip-response` to skip
 the response smoke request. `airelays models` lists every model id the running
-relay accepts (`--json` supported).
+relay accepts, grouped by provider (`--json` supported).
 
 ## `POST /v1/responses`
+
+OpenAI runtime:
 
 - general OpenAI Responses envelope
 - `stream=true|false`
 - local conversations
 - local files and verified `input_file` forms
 
-Current limits:
+Current OpenAI limits:
 
 - `store=true` rejected
 - output-token limit fields rejected explicitly
 
+Claude runtime:
+
+- rejected explicitly on this route
+
 ## `POST /v1/chat/completions`
 
+OpenAI runtime:
+
 - current AIRelays OpenAI compatibility path
+
+Claude runtime:
+
+- explicit `claude:*` models only
+- text-only `system`, `developer`, `user`, and `assistant` messages
+- `stream=true|false`
+- no tools
+- no files, images, audio, or structured outputs
+- no AIRelays local conversation reuse
+- sampling parameters stripped and disclosed via
+  `x-airelays-ignored-parameters` (the `claude` CLI has no sampling
+  controls); other unsupported generation controls rejected locally
 
 ## `POST /v1/completions`
 
+OpenAI runtime:
+
 - current AIRelays OpenAI compatibility path
+
+Claude runtime:
+
+- explicit `claude:*` models only
+- text-only prompt-in, text-out
+- `stream=true|false`
+- no files, images, audio, tools, or structured outputs
+- sampling parameters stripped and disclosed via
+  `x-airelays-ignored-parameters`; other unsupported generation controls
+  rejected locally
 
 ## `POST /v1/files`
 
@@ -106,6 +145,8 @@ Local AIRelays file storage for the OpenAI runtime compatibility path.
 
 Local AIRelays conversation storage for the OpenAI runtime compatibility path.
 
+The Claude runtime is stateless and does not use local conversations.
+
 ## Unsupported Routes
 
 These currently return `501 unsupported_error`:
@@ -114,3 +155,5 @@ These currently return `501 unsupported_error`:
 - image generation
 - audio
 - realtime sessions
+
+Claude models are also rejected on any route that is not part of their published subset.

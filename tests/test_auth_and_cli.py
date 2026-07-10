@@ -268,6 +268,7 @@ def test_cli_status_defaults_to_human_output_and_supports_json(
     tmp_path, capsys, monkeypatch
 ) -> None:
     _clear_airelay_env(monkeypatch)
+    monkeypatch.setenv("AIRELAYS_ENABLE_CLAUDE", "false")
     # The login hint depends on the machine (desktop → browser flow,
     # headless → device flow); pin it so the assertion is deterministic
     # on displayless CI runners.
@@ -413,7 +414,7 @@ def test_cli_doctor_runs_upstream_model_and_response_smoke_checks(
     assert calls == ["models:doctor_models", "response:doctor_response", "close"]
 
 
-def test_cli_status_prefers_serve_when_provider_is_ready(
+def test_cli_status_prefers_serve_when_claude_is_ready(
     tmp_path, capsys, monkeypatch
 ) -> None:
     _clear_airelay_env(monkeypatch)
@@ -426,6 +427,9 @@ def test_cli_status_prefers_serve_when_provider_is_ready(
         """
 [providers.openai]
 enabled = true
+
+[providers.claude]
+enabled = true
 """.strip(),
         encoding="utf-8",
     )
@@ -435,6 +439,10 @@ enabled = true
         def provider_statuses() -> dict[str, object]:
             return {
                 "openai": {
+                    "enabled": True,
+                    "ready_for_requests": False,
+                },
+                "claude": {
                     "enabled": True,
                     "ready_for_requests": True,
                 },
@@ -449,6 +457,33 @@ enabled = true
     machine = json.loads(capsys.readouterr().out)
 
     assert machine["next_steps"] == ["airelays serve --host 127.0.0.1 --port 8080"]
+
+
+def test_cli_init_claude_only_skips_openai_login_hint(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    _clear_airelay_env(monkeypatch)
+    parser = build_parser()
+    config_path = tmp_path / "config.toml"
+    data_dir = tmp_path / "state"
+
+    args = parser.parse_args(
+        [
+            "init",
+            "--json",
+            "--config",
+            str(config_path),
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    monkeypatch.setenv("AIRELAYS_ENABLE_OPENAI", "false")
+    monkeypatch.setenv("AIRELAYS_ENABLE_CLAUDE", "true")
+    args.func(args)
+    payload = json.loads(capsys.readouterr().out)
+
+    assert "airelays login" not in payload["next_steps"]
+    assert "claude auth login --claudeai" in payload["next_steps"]
 
 
 def test_cli_token_show_displays_existing_token_and_supports_json(
@@ -564,3 +599,81 @@ def test_cli_serve_no_auth_starts_open_mode_without_token(tmp_path, monkeypatch,
     assert "ChatGPT login" in output
     assert "airelays login" in output
     assert captured["port"] == 8090
+
+
+def test_cli_serve_allows_no_auth_when_claude_is_enabled(
+    tmp_path, monkeypatch
+) -> None:
+    _clear_airelay_env(monkeypatch)
+    parser = build_parser()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[providers.claude]
+enabled = true
+""".strip(),
+        encoding="utf-8",
+    )
+    args = parser.parse_args(
+        [
+            "serve",
+            "--no-auth",
+            "--config",
+            str(config_path),
+            "--data-dir",
+            str(tmp_path / "state"),
+        ]
+    )
+
+    captured: dict[str, object] = {}
+
+    class _FakeRegistry:
+        @staticmethod
+        def provider_statuses() -> dict[str, object]:
+            return {
+                "openai": {"enabled": False, "ready_for_requests": False},
+                "claude": {"enabled": True, "ready_for_requests": True},
+            }
+
+    def fake_run(app, host, port, log_level):  # type: ignore[no-untyped-def]
+        del app
+        captured["host"] = host
+        captured["port"] = port
+        captured["log_level"] = log_level
+
+    monkeypatch.setattr("airelay.cli._provider_registry", lambda settings, manager: _FakeRegistry())
+    monkeypatch.setattr("airelay.cli.uvicorn.run", fake_run)
+
+    args.func(args)
+
+    assert captured["host"] == "127.0.0.1"
+    assert captured["port"] == 8080
+
+
+def test_cli_init_allows_no_auth_when_claude_is_enabled(
+    tmp_path, monkeypatch
+) -> None:
+    _clear_airelay_env(monkeypatch)
+    parser = build_parser()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[providers.claude]
+enabled = true
+""".strip(),
+        encoding="utf-8",
+    )
+    args = parser.parse_args(
+        [
+            "init",
+            "--no-auth",
+            "--config",
+            str(config_path),
+            "--data-dir",
+            str(tmp_path / "state"),
+        ]
+    )
+
+    args.func(args)
+
+    assert not (tmp_path / "state" / "relay-token").exists()

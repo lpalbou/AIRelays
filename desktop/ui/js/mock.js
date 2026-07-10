@@ -20,7 +20,7 @@ const settings = {
   requestTimeoutSeconds: 120,
   rateLimitPerMinute: 120,
   rateLimitBurst: 40,
-  concurrentRequestsPerIp: 8,
+  concurrentRequestsPerIp: 50,
   failedAuthWindowSeconds: 300,
   failedAuthMaxAttempts: 8,
   failedAuthBlockSeconds: 900,
@@ -29,6 +29,12 @@ const settings = {
   maxTotalUploadBytes: 268435456,
   enableOpenaiProvider: true,
   modelsCacheTtlSeconds: 300,
+  enableClaude: true,
+  claudeBin: "claude",
+  claudeTimeoutSeconds: 600,
+  claudeMaxConcurrentRequests: 2,
+  claudeStripApiKeyEnv: true,
+  claudeModelsCsv: "claude:sonnet, claude:opus, claude:haiku, claude:fable",
   extraServeArgs: "",
 };
 
@@ -42,7 +48,14 @@ const state = () => ({
   auth_mismatch: false,
   login_url: null,
   login_code: null,
+  login_provider: null,
+  login_accepts_code: false,
   login_running: false,
+  claude_effective:
+    settings.enableClaude &&
+    ["127.0.0.1", "localhost", "::1"].includes(settings.host) &&
+    !settings.trustXForwardedFor,
+  claude_token_present: false,
   settings: { ...settings },
   relay_status: managed
     ? {
@@ -60,6 +73,7 @@ const state = () => ({
               { slug: "work-x", email: "work@company.com", plan_type: "enterprise", ready_for_requests: true, limited: true, limited_for_seconds: 7800 },
             ],
           },
+          claude: { enabled: false, ready_for_requests: false },
         },
       }
     : null,
@@ -141,6 +155,31 @@ export async function mockInvoke(command, args = {}) {
       // Mirrors the relay's normalized all_accounts payload shape.
       return {
         object: "subscription_status_list",
+        claude: {
+          object: "subscription_status",
+          provider: "claude",
+          account: { email: "perso@claude.ai", plan_type: "pro" },
+          rate_limit_reached_type: null,
+          rate_limits: {
+            default: {
+              allowed: null,
+              limit_reached: false,
+              primary_window: {
+                used_percent: 22,
+                window_seconds: 18000,
+                window_label: "5h",
+                reset_after_seconds: 9000,
+              },
+              secondary_window: {
+                used_percent: 61,
+                window_seconds: 604800,
+                window_label: "weekly",
+                reset_after_seconds: 400000,
+              },
+            },
+            additional: [],
+          },
+        },
         accounts: [
           {
             slug: "default",
@@ -210,18 +249,26 @@ export async function mockInvoke(command, args = {}) {
     case "set_autostart":
       mockAutostart = args.enabled;
       return null;
+    case "clear_claude_token":
+      return true;
+    case "logout_claude":
+      return { token_removed: true, cli_signed_out: true, cli_error: null };
     case "cancel_login":
       return null;
     case "get_models":
       return {
         object: "list",
         data: [
-          { id: "gpt-5.5", object: "model", airelays: { provider: "openai", experimental: false } },
-          { id: "gpt-5.4", object: "model", airelays: { provider: "openai", experimental: false } },
-          { id: "gpt-5.4-mini", object: "model", airelays: { provider: "openai", experimental: false } },
+          { id: "gpt-5.5", object: "model", airelays: { provider: "openai" } },
+          { id: "gpt-5.4", object: "model", airelays: { provider: "openai" } },
+          { id: "gpt-5.4-mini", object: "model", airelays: { provider: "openai" } },
+          { id: "claude:sonnet", object: "model", airelays: { provider: "claude" } },
+          { id: "claude:opus", object: "model", airelays: { provider: "claude" } },
         ],
       };
     case "set_custom_token":
+    case "set_claude_token":
+    case "submit_login_code":
     case "run_login":
     case "open_path":
       return null;

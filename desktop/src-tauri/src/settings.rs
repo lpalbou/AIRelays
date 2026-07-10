@@ -49,6 +49,15 @@ pub struct AppSettings {
     pub max_total_upload_bytes: u64,
     pub enable_openai_provider: bool,
     pub models_cache_ttl_seconds: f64,
+    // The serde alias keeps settings files written while the Claude runtime
+    // carried the "experimental" label loading unchanged.
+    #[serde(alias = "enableClaudeExperimental")]
+    pub enable_claude: bool,
+    pub claude_bin: String,
+    pub claude_timeout_seconds: f64,
+    pub claude_max_concurrent_requests: u32,
+    pub claude_strip_api_key_env: bool,
+    pub claude_models_csv: String,
     pub extra_serve_args: String,
 }
 
@@ -78,7 +87,7 @@ impl Default for AppSettings {
             request_timeout_seconds: 120.0,
             rate_limit_per_minute: 120,
             rate_limit_burst: 40,
-            concurrent_requests_per_ip: 8,
+            concurrent_requests_per_ip: 50,
             failed_auth_window_seconds: 300,
             failed_auth_max_attempts: 8,
             failed_auth_block_seconds: 900,
@@ -87,6 +96,12 @@ impl Default for AppSettings {
             max_total_upload_bytes: 256 * 1024 * 1024,
             enable_openai_provider: true,
             models_cache_ttl_seconds: 300.0,
+            enable_claude: true,
+            claude_bin: "claude".into(),
+            claude_timeout_seconds: 600.0,
+            claude_max_concurrent_requests: 2,
+            claude_strip_api_key_env: true,
+            claude_models_csv: "claude:sonnet, claude:opus, claude:haiku, claude:fable".into(),
             extra_serve_args: String::new(),
         }
     }
@@ -107,6 +122,13 @@ impl AppSettings {
 
     pub fn base_url(&self) -> String {
         format!("http://{}:{}/v1", self.client_host(), self.port)
+    }
+
+    /// The relay enforces guardrails for the Claude runtime (loopback-only
+    /// listener, no X-Forwarded-For trust); the rendered config must
+    /// respect them or serve refuses to start.
+    pub fn claude_effectively_enabled(&self) -> bool {
+        self.enable_claude && self.is_loopback_host() && !self.trust_x_forwarded_for
     }
 
     /// Rejects values that would render an invalid or dangerous config.
@@ -132,6 +154,14 @@ impl AppSettings {
             }
         }
         Ok(())
+    }
+
+    pub fn claude_models(&self) -> Vec<String> {
+        self.claude_models_csv
+            .split(',')
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+            .collect()
     }
 
     pub fn home_dir() -> PathBuf {
@@ -197,6 +227,14 @@ impl AppSettings {
                     enabled: self.enable_openai_provider,
                     models_cache_ttl_seconds: self.models_cache_ttl_seconds,
                 },
+                claude: ClaudeSection {
+                    enabled: self.claude_effectively_enabled(),
+                    bin: &self.claude_bin,
+                    timeout_seconds: self.claude_timeout_seconds,
+                    max_concurrent_requests: self.claude_max_concurrent_requests,
+                    strip_api_key_env: self.claude_strip_api_key_env,
+                    models: self.claude_models(),
+                },
             },
         };
         toml::to_string_pretty(&config).map_err(|error| format!("Cannot render config: {error}"))
@@ -214,7 +252,7 @@ struct RelayConfigFile<'a> {
     upstream: UpstreamSection<'a>,
     security: SecuritySection,
     uploads: UploadsSection,
-    providers: ProvidersSection,
+    providers: ProvidersSection<'a>,
 }
 
 #[derive(Serialize)]
@@ -266,14 +304,25 @@ struct UploadsSection {
 }
 
 #[derive(Serialize)]
-struct ProvidersSection {
+struct ProvidersSection<'a> {
     openai: OpenAiSection,
+    claude: ClaudeSection<'a>,
 }
 
 #[derive(Serialize)]
 struct OpenAiSection {
     enabled: bool,
     models_cache_ttl_seconds: f64,
+}
+
+#[derive(Serialize)]
+struct ClaudeSection<'a> {
+    enabled: bool,
+    bin: &'a str,
+    timeout_seconds: f64,
+    max_concurrent_requests: u32,
+    strip_api_key_env: bool,
+    models: Vec<String>,
 }
 
 /// TOML paths use forward slashes even on Windows; Python's pathlib

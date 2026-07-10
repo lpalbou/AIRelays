@@ -61,10 +61,16 @@ const FIELDS = [
   },
   {
     title: "Providers",
-    caption: "The OpenAI provider serving relay requests.",
+    caption: "The Claude provider requires 'This machine only' network mode.",
     items: [
       { key: "enableOpenaiProvider", label: "Enable OpenAI provider", kind: "bool" },
       { key: "modelsCacheTtlSeconds", label: "OpenAI models cache TTL (seconds)", kind: "number", min: 0, max: 86400 },
+      { key: "enableClaude", label: "Enable Claude", kind: "bool" },
+      { key: "claudeBin", label: "Claude CLI binary", kind: "text" },
+      { key: "claudeTimeoutSeconds", label: "Claude timeout (seconds)", kind: "number", min: 1, max: 7200 },
+      { key: "claudeMaxConcurrentRequests", label: "Claude max concurrent requests", kind: "number", min: 1, max: 64 },
+      { key: "claudeStripApiKeyEnv", label: "Strip API key env for Claude", kind: "bool" },
+      { key: "claudeModelsCsv", label: "Claude models (comma-separated)", kind: "text" },
     ],
   },
 ];

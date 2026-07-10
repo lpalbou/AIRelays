@@ -93,7 +93,64 @@ airelays login
 airelays serve --no-auth --host 127.0.0.1 --port 8080
 ```
 
-In this mode AIRelays does not require `Authorization` on `/v1/*`.
+In this mode AIRelays does not require `Authorization` on `/v1/*`. Open local relay mode applies to all enabled providers, including the Claude runtime.
+
+## Claude Runtime
+
+Browser-based local Claude login:
+
+```bash
+claude auth login --claudeai
+```
+
+Headless Claude login — `claude setup-token` needs a browser, so run it on
+any machine that has one, then carry the token to the server:
+
+```bash
+# on a machine with a browser:
+claude setup-token
+
+# on the server:
+airelays init
+airelays claude set-token   # paste the token; stored 0600, survives restarts
+```
+
+Exporting `CLAUDE_CODE_OAUTH_TOKEN` also works, but it does not survive
+service managers (systemd, docker) or reboots.
+
+Sign Claude out completely (removes the stored token and runs
+`claude auth logout`, which signs out every tool using the `claude` CLI on
+this machine):
+
+```bash
+airelays claude logout
+```
+
+Start AIRelays with the Claude runtime enabled:
+
+```bash
+airelays serve --host 127.0.0.1 --port 8080
+```
+
+Verify:
+
+```bash
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "claude:sonnet",
+    "messages": [{"role": "user", "content": "Reply with exactly: CLAUDE AIRelays OK"}]
+  }'
+```
+
+Current Claude limits:
+
+- local-only
+- loopback-only
+- bearer-auth-required
+- text-only
+- stateless
 
 ## Status
 
@@ -110,10 +167,11 @@ airelays doctor
 ```
 
 `airelays doctor` checks config, relay-token state, OpenAI login readiness,
-upstream `/models`, and a tiny `/responses` smoke request. Use
-`airelays doctor --skip-response` to skip the response smoke request.
+upstream `/models`, a tiny `/responses` smoke request, and Claude readiness
+when the Claude runtime is enabled. Use `airelays doctor --skip-response`
+to skip the response smoke request.
 
-List every model id the running relay accepts:
+List every model id the running relay accepts, grouped by provider:
 
 ```bash
 airelays models
@@ -131,12 +189,14 @@ airelays models --json
 
 - relay config and token state
 - OpenAI runtime readiness
+- Claude runtime readiness when enabled
 - next recommended commands
 
 ## Provider Routing
 
-- all model ids route to the OpenAI runtime
-- AIRelays rejects requests when the runtime is disabled or the route is outside its published subset
+- models starting with `claude:` use the Claude runtime when it is enabled
+- other model ids use the OpenAI runtime when it is enabled
+- AIRelays rejects requests when the selected runtime is disabled or the route is outside that runtime's published subset
 
 ## Client Configuration
 
@@ -161,6 +221,13 @@ OpenAI subscription usage:
 
 ```bash
 curl http://127.0.0.1:8080/v1/subscription/status \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
+```
+
+Claude subscription usage (same normalized shape):
+
+```bash
+curl 'http://127.0.0.1:8080/v1/subscription/status?provider=claude' \
   -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
 ```
 
