@@ -74,6 +74,23 @@ fi
 echo "Installing airelays into the embedded runtime"
 "$PYTHON" -m pip install --quiet --no-cache-dir "$REPO_ROOT"
 
+# The relay is a headless server: tkinter and its bundled Tcl/Tk are dead
+# weight in every installer, and their shared objects reference Tcl/Tk
+# libraries that AppImage tooling cannot resolve on build runners
+# ("Could not find dependency: libtcl9.0.so"). Remove the GUI stack from
+# both the unix (lib/pythonX.Y) and windows (Lib, DLLs) layouts.
+echo "Removing tkinter/Tcl/Tk from the embedded runtime"
+for stdlib in "$RUNTIME_DIR"/lib/python*/ "$RUNTIME_DIR/Lib/"; do
+  [[ -d "$stdlib" ]] || continue
+  rm -rf "$stdlib/tkinter" "$stdlib/idlelib" "$stdlib/turtledemo"
+  rm -f "$stdlib/turtle.py"
+  rm -f "$stdlib"/lib-dynload/_tkinter*.so
+done
+rm -rf "$RUNTIME_DIR"/lib/tcl* "$RUNTIME_DIR"/lib/tk* "$RUNTIME_DIR"/lib/itcl* \
+  "$RUNTIME_DIR"/lib/thread* "$RUNTIME_DIR"/lib/sqlite3-tcl* "$RUNTIME_DIR/tcl"
+rm -f "$RUNTIME_DIR"/lib/libtcl* "$RUNTIME_DIR"/lib/libtk* \
+  "$RUNTIME_DIR"/DLLs/_tkinter.pyd "$RUNTIME_DIR"/DLLs/tcl*.dll "$RUNTIME_DIR"/DLLs/tk*.dll
+
 # Console-script shebangs embed absolute build paths (leaking CI paths and
 # breaking relocation); the app always invokes `python -m airelays`, so all
 # entry-point scripts are dead weight. Keep only the interpreter binaries.
