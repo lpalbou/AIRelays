@@ -1050,7 +1050,10 @@ letting them fail, and always discloses what it changed:</p>
   (<code>"Unsupported parameter: temperature"</code>). The names of removed
   parameters are returned in the <code>x-airelays-ignored-parameters</code> response
   header and logged as a <code>compatibility_adaptation</code> traffic record with the
-  reason. Generation runs with the upstream's own sampling defaults.</li>
+  reason. Generation runs with the upstream's own sampling defaults. The
+  same adaptation applies on the Claude routes: the local
+  <code>claude</code> CLI exposes no sampling controls, so these parameters are
+  stripped and disclosed there too instead of failing the request.</li>
 <li><strong>Reasoning effort:</strong> <code>reasoning_effort</code> (chat completions) and
   <code>reasoning.effort</code> (responses) are forwarded verbatim. Requests that omit
   it run at upstream effort <code>none</code>, which is lower than the <code>medium</code> the
@@ -1067,10 +1070,12 @@ letting them fail, and always discloses what it changed:</p>
   boundaries, logged as an <code>account_failover</code> traffic record.</li>
 </ul>
 <h2 id="get-v1models"><code>GET /v1/models</code><a class="headerlink" href="#get-v1models" title="Permanent link">&para;</a></h2>
-<p>Returns an OpenAI-style models list built from the OpenAI runtime.</p>
+<p>Returns an OpenAI-style models list built from the enabled provider runtimes.</p>
 <ul>
 <li>OpenAI models come from the verified ChatGPT subscription backend when that runtime is ready.</li>
-<li>All model ids route to the OpenAI runtime.</li>
+<li>Claude models are explicit <code>claude:*</code> ids.</li>
+<li>models starting with <code>claude:</code> route to the Claude runtime when it is enabled</li>
+<li>other model ids route to the OpenAI runtime when it is enabled</li>
 <li>Each model record includes an <code>airelays</code> extension block with provider identity and route capabilities.</li>
 <li>Successful OpenAI upstream model-list responses are cached in memory for
   <code>models_cache_ttl_seconds</code> seconds. The default is 300 seconds; <code>0</code>
@@ -1082,7 +1087,9 @@ letting them fail, and always discloses what it changed:</p>
 <p>Returns a normalized subscription-usage snapshot with per-window usage
 percentages, window labels ("5h", "weekly"), and reset times.</p>
 <ul>
-<li>provider is OpenAI (source: <code>chatgpt.com/backend-api/wham/usage</code>)</li>
+<li>default provider is OpenAI (source: <code>chatgpt.com/backend-api/wham/usage</code>)</li>
+<li><code>?provider=claude</code> returns Claude subscription usage in the same
+  normalized shape (see <a href="../subscription-status/">Subscription Status</a>)</li>
 <li><code>?account=&lt;email-or-prefix&gt;</code> selects one enrolled OpenAI account</li>
 <li><code>?all_accounts=true</code> returns one entry per enrolled OpenAI account
   (folds to the single-account shape when only one exists)</li>
@@ -1105,31 +1112,61 @@ state. <code>airelays doctor</code> runs the same local checks and also probes t
 upstream <code>/models</code> route plus a tiny <code>/responses</code> smoke request when the OpenAI
 runtime is enabled and logged in. Use <code>airelays doctor --skip-response</code> to skip
 the response smoke request. <code>airelays models</code> lists every model id the running
-relay accepts (<code>--json</code> supported).</p>
+relay accepts, grouped by provider (<code>--json</code> supported).</p>
 <h2 id="post-v1responses"><code>POST /v1/responses</code><a class="headerlink" href="#post-v1responses" title="Permanent link">&para;</a></h2>
+<p>OpenAI runtime:</p>
 <ul>
 <li>general OpenAI Responses envelope</li>
 <li><code>stream=true|false</code></li>
 <li>local conversations</li>
 <li>local files and verified <code>input_file</code> forms</li>
 </ul>
-<p>Current limits:</p>
+<p>Current OpenAI limits:</p>
 <ul>
 <li><code>store=true</code> rejected</li>
 <li>output-token limit fields rejected explicitly</li>
 </ul>
+<p>Claude runtime:</p>
+<ul>
+<li>rejected explicitly on this route</li>
+</ul>
 <h2 id="post-v1chatcompletions"><code>POST /v1/chat/completions</code><a class="headerlink" href="#post-v1chatcompletions" title="Permanent link">&para;</a></h2>
+<p>OpenAI runtime:</p>
 <ul>
 <li>current AIRelays OpenAI compatibility path</li>
 </ul>
+<p>Claude runtime:</p>
+<ul>
+<li>explicit <code>claude:*</code> models only</li>
+<li>text-only <code>system</code>, <code>developer</code>, <code>user</code>, and <code>assistant</code> messages</li>
+<li><code>stream=true|false</code></li>
+<li>no tools</li>
+<li>no files, images, audio, or structured outputs</li>
+<li>no AIRelays local conversation reuse</li>
+<li>sampling parameters stripped and disclosed via
+  <code>x-airelays-ignored-parameters</code> (the <code>claude</code> CLI has no sampling
+  controls); other unsupported generation controls rejected locally</li>
+</ul>
 <h2 id="post-v1completions"><code>POST /v1/completions</code><a class="headerlink" href="#post-v1completions" title="Permanent link">&para;</a></h2>
+<p>OpenAI runtime:</p>
 <ul>
 <li>current AIRelays OpenAI compatibility path</li>
+</ul>
+<p>Claude runtime:</p>
+<ul>
+<li>explicit <code>claude:*</code> models only</li>
+<li>text-only prompt-in, text-out</li>
+<li><code>stream=true|false</code></li>
+<li>no files, images, audio, tools, or structured outputs</li>
+<li>sampling parameters stripped and disclosed via
+  <code>x-airelays-ignored-parameters</code>; other unsupported generation controls
+  rejected locally</li>
 </ul>
 <h2 id="post-v1files"><code>POST /v1/files</code><a class="headerlink" href="#post-v1files" title="Permanent link">&para;</a></h2>
 <p>Local AIRelays file storage for the OpenAI runtime compatibility path.</p>
 <h2 id="post-v1conversations"><code>POST /v1/conversations</code><a class="headerlink" href="#post-v1conversations" title="Permanent link">&para;</a></h2>
 <p>Local AIRelays conversation storage for the OpenAI runtime compatibility path.</p>
+<p>The Claude runtime is stateless and does not use local conversations.</p>
 <h2 id="unsupported-routes">Unsupported Routes<a class="headerlink" href="#unsupported-routes" title="Permanent link">&para;</a></h2>
 <p>These currently return <code>501 unsupported_error</code>:</p>
 <ul>
@@ -1138,6 +1175,7 @@ relay accepts (<code>--json</code> supported).</p>
 <li>audio</li>
 <li>realtime sessions</li>
 </ul>
+<p>Claude models are also rejected on any route that is not part of their published subset.</p>
 
 
 

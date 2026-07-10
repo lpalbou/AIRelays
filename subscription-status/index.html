@@ -484,6 +484,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#claude" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Claude
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#auth" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -787,6 +798,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#claude" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Claude
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#auth" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -823,7 +845,8 @@
 <li><code>GET /v1/subscription/status</code></li>
 <li><code>GET /v1/account/rate_limits</code> (alias)</li>
 </ul>
-<p>Usage is reported in one normalized shape: per-window <code>used_percent</code>,
+<p>Both providers report usage in one normalized shape, so a client can render
+OpenAI and Claude quota with the same code: per-window <code>used_percent</code>,
 <code>window_label</code> ("5h", "weekly"), and reset times (<code>reset_after_seconds</code>,
 <code>reset_at_iso</code>).</p>
 <h2 id="openai">OpenAI<a class="headerlink" href="#openai" title="Permanent link">&para;</a></h2>
@@ -838,6 +861,21 @@
 <li><code>?all_accounts=true</code> returns one entry per account (folds to the
   single-account shape when only one exists)</li>
 <li><code>?raw=true</code> includes the raw upstream payload</li>
+</ul>
+<h2 id="claude">Claude<a class="headerlink" href="#claude" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">&#39;http://127.0.0.1:8080/v1/subscription/status?provider=claude&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span>
+</code></pre></div>
+<p>Returns the 5-hour and weekly windows, plus per-model weekly caps
+(Sonnet/Opus) when the subscription reports them. Notes:</p>
+<ul>
+<li>requires the Claude runtime to be enabled</li>
+<li>credentials resolve from the stored token file
+  (<code>airelays claude set-token</code>) first, then the <code>claude</code> CLI's own
+  credential store</li>
+<li>the upstream source is the same usage surface Claude Code's <code>/usage</code>
+  command reads; it is not a publicly documented API, so AIRelays caches it
+  briefly (30s) and degrades gracefully if it becomes unavailable</li>
 </ul>
 <h2 id="auth">Auth<a class="headerlink" href="#auth" title="Permanent link">&para;</a></h2>
 <p>Default protected mode requires the relay bearer token, as shown above.

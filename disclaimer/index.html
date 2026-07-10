@@ -503,6 +503,24 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Disclaimer
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -519,6 +537,36 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#upstream-terms-and-personal-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upstream Terms And Personal Use
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -710,6 +758,25 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#upstream-terms-and-personal-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upstream Terms And Personal Use
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -731,8 +798,21 @@
 <h1 id="disclaimer">Disclaimer<a class="headerlink" href="#disclaimer" title="Permanent link">&para;</a></h1>
 <p>AIRelays is an independent third-party project. It is not affiliated with, endorsed by, or sponsored by any provider.</p>
 <p>Provider and product names are used only to describe compatibility targets, client shapes, and upstream protocol behavior.</p>
-<p>AIRelays is designed for a single user operating a local relay for personal convenience. It is not presented as a shared, pooled, multi-user, or resale service.
-You are responsible for reviewing and complying with the terms, policies, and usage limits that apply to any upstream account or subscription you use with AIRelays.</p>
+<p>AIRelays is designed for a single user operating a local relay for personal convenience. It is not presented as a shared, pooled, multi-user, or resale service.</p>
+<p>The Claude runtime is local-only, bearer-auth-required, loopback-only, and driven by the local Claude CLI. AIRelays does not present it as a sanctioned provider integration path or a shared gateway feature.</p>
+<p>You are responsible for reviewing and complying with the terms, policies, and usage limits that apply to any upstream account or subscription you use with AIRelays.</p>
+<h2 id="upstream-terms-and-personal-use">Upstream Terms And Personal Use<a class="headerlink" href="#upstream-terms-and-personal-use" title="Permanent link">&para;</a></h2>
+<p>AIRelays drives provider-owned tooling with credentials you already hold: the OpenAI runtime uses your own ChatGPT subscription sign-in, and the Claude runtime shells out to the official local <code>claude</code> CLI under its existing login. AIRelays does not reimplement a provider's authentication protocol and does not offer provider sign-in to anyone else.</p>
+<p>Whether a given use of your subscription is permitted is defined by your agreement with the provider, not by AIRelays. Both providers currently frame subscription access around ordinary, individual use by the account holder. Anthropic's published policy explicitly does not permit routing requests through personal-plan credentials on behalf of other users — which matches this project's single-user design: the moment anyone else's requests flow through your relay, you are outside both the provider's terms and AIRelays' intended use.</p>
+<p>Review the official terms yourself and re-check them periodically; they change:</p>
+<ul>
+<li><a href="https://www.anthropic.com/legal/consumer-terms">Anthropic Consumer Terms</a></li>
+<li><a href="https://code.claude.com/docs/en/legal-and-compliance">Claude Code legal and compliance — authentication and credential use</a></li>
+<li><a href="https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan">Claude plans and the Agent SDK / <code>claude -p</code></a></li>
+<li><a href="https://openai.com/terms">OpenAI Terms of Use</a></li>
+<li><a href="https://openai.com/policies/usage-policies/">OpenAI Usage Policies</a></li>
+</ul>
+<p>None of this is legal advice. You remain responsible for how you use your accounts.</p>
 
 
 

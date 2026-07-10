@@ -425,6 +425,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#claude-guardrails" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Claude Guardrails
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rate-limits" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -853,6 +864,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#claude-guardrails" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Claude Guardrails
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rate-limits" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -935,13 +957,22 @@
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>token<span class="w"> </span>rotate
 </code></pre></div>
 <h2 id="open-local-relay-mode">Open Local Relay Mode<a class="headerlink" href="#open-local-relay-mode" title="Permanent link">&para;</a></h2>
-<p>Open local relay mode disables the AIRelays client-token gate.</p>
+<p>Open local relay mode applies to all enabled providers, including the Claude runtime.</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init<span class="w"> </span>--no-auth
 airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
 <p>Equivalent environment override:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">AIRELAYS_REQUIRE_BEARER_AUTH</span><span class="o">=</span><span class="nb">false</span><span class="w"> </span>airelays<span class="w"> </span>serve<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
+<h2 id="claude-guardrails">Claude Guardrails<a class="headerlink" href="#claude-guardrails" title="Permanent link">&para;</a></h2>
+<p>When the Claude runtime is enabled:</p>
+<ul>
+<li>bearer auth is required</li>
+<li>loopback binding is required</li>
+<li><code>trust_x_forwarded_for</code> is rejected</li>
+<li>the runtime is stateless</li>
+<li>the runtime is local-only</li>
+</ul>
 <h2 id="rate-limits">Rate Limits<a class="headerlink" href="#rate-limits" title="Permanent link">&para;</a></h2>
 <p>Default single-process protections:</p>
 <ul>

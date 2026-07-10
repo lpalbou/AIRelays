@@ -946,7 +946,8 @@
 </ul>
 <h2 id="adr-status">ADR status<a class="headerlink" href="#adr-status" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Governing ADRs: 0002, 0003</li>
+<li>Governing ADRs: 0002, 0003, 0004</li>
+<li>ADR impact: Resolved by ADR 0004</li>
 </ul>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>AIRelays initially served one northbound OpenAI-shaped API over one upstream runtime. The product goal expanded to multiple subscription-backed local runtimes without collapsing them into one false parity surface.</p>
@@ -954,7 +955,7 @@
 <ul>
 <li><code>src/airelay/providers.py</code> now owns provider runtime registration, model metadata, model resolution, and provider readiness.</li>
 <li><code>src/airelay/app.py</code> uses provider-aware model listing, provider-aware readiness reporting, and provider-specific route rejection.</li>
-<li><code>src/airelay/config.py</code> now includes provider toggles.</li>
+<li><code>src/airelay/config.py</code> now includes provider toggles and Claude-specific guardrails.</li>
 </ul>
 <h2 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h2>
 <p>Without a provider boundary, a second runtime would have scattered branches across the app and unclear ownership of model routing and capability reporting.</p>
@@ -978,7 +979,7 @@
 </ul>
 <h2 id="expected-outcomes-achieved">Expected outcomes achieved<a class="headerlink" href="#expected-outcomes-achieved" title="Permanent link">&para;</a></h2>
 <ul>
-<li>AIRelays can expose provider-scoped runtimes from one process.</li>
+<li>AIRelays can expose OpenAI and Claude-backed runtimes from one process.</li>
 <li><code>/v1/models</code> now identifies provider ownership and route capabilities.</li>
 <li><code>/v1/relay/status</code> now reports provider-scoped readiness and overall provider availability.</li>
 </ul>
@@ -987,7 +988,7 @@
 <li><code>pytest -q</code></li>
 <li><code>python -m compileall src tests</code></li>
 <li><code>mkdocs build -q</code></li>
-<li>live <code>curl</code> checks for <code>/v1/models</code>, <code>/v1/relay/status</code>, <code>/v1/responses</code>, and <code>/v1/chat/completions</code></li>
+<li>live <code>curl</code> checks for <code>/v1/models</code>, <code>/v1/relay/status</code>, OpenAI <code>/v1/responses</code>, and Claude <code>/v1/chat/completions</code></li>
 </ul>
 <h2 id="progress-checklist">Progress checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1021,8 +1022,8 @@
 </ul>
 <h3 id="residual-risks">Residual risks<a class="headerlink" href="#residual-risks" title="Permanent link">&para;</a></h3>
 <ul>
-<li>The provider seam is still partial: OpenAI route shaping remains shared rather than fully encapsulated in the runtime adapter.</li>
-<li>OpenAI model routing is still permissive for arbitrary model ids when the OpenAI runtime is enabled.</li>
+<li>The provider seam is still partial: OpenAI route shaping remains shared while Claude has a narrower runtime adapter.</li>
+<li>OpenAI model routing is still permissive for non-<code>claude:*</code> model ids when the OpenAI runtime is enabled.</li>
 </ul>
 <h3 id="follow-ups">Follow-ups<a class="headerlink" href="#follow-ups" title="Permanent link">&para;</a></h3>
 <ul>

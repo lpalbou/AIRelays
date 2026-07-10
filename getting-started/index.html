@@ -382,6 +382,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#claude-runtime" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Claude Runtime
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#status" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -886,6 +897,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#claude-runtime" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Claude Runtime
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#status" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1011,7 +1033,47 @@ curl<span class="w"> </span>http://127.0.0.1:8080/v1/chat/completions<span class
 airelays<span class="w"> </span>login
 airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
-<p>In this mode AIRelays does not require <code>Authorization</code> on <code>/v1/*</code>.</p>
+<p>In this mode AIRelays does not require <code>Authorization</code> on <code>/v1/*</code>. Open local relay mode applies to all enabled providers, including the Claude runtime.</p>
+<h2 id="claude-runtime">Claude Runtime<a class="headerlink" href="#claude-runtime" title="Permanent link">&para;</a></h2>
+<p>Browser-based local Claude login:</p>
+<div class="highlight"><pre><span></span><code>claude<span class="w"> </span>auth<span class="w"> </span>login<span class="w"> </span>--claudeai
+</code></pre></div>
+<p>Headless Claude login — <code>claude setup-token</code> needs a browser, so run it on
+any machine that has one, then carry the token to the server:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># on a machine with a browser:</span>
+claude<span class="w"> </span>setup-token
+
+<span class="c1"># on the server:</span>
+airelays<span class="w"> </span>init
+airelays<span class="w"> </span>claude<span class="w"> </span>set-token<span class="w">   </span><span class="c1"># paste the token; stored 0600, survives restarts</span>
+</code></pre></div>
+<p>Exporting <code>CLAUDE_CODE_OAUTH_TOKEN</code> also works, but it does not survive
+service managers (systemd, docker) or reboots.</p>
+<p>Sign Claude out completely (removes the stored token and runs
+<code>claude auth logout</code>, which signs out every tool using the <code>claude</code> CLI on
+this machine):</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>claude<span class="w"> </span><span class="nb">logout</span>
+</code></pre></div>
+<p>Start AIRelays with the Claude runtime enabled:</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>serve<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+</code></pre></div>
+<p>Verify:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/v1/chat/completions<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;content-type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<span class="s1">    &quot;model&quot;: &quot;claude:sonnet&quot;,</span>
+<span class="s1">    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Reply with exactly: CLAUDE AIRelays OK&quot;}]</span>
+<span class="s1">  }&#39;</span>
+</code></pre></div>
+<p>Current Claude limits:</p>
+<ul>
+<li>local-only</li>
+<li>loopback-only</li>
+<li>bearer-auth-required</li>
+<li>text-only</li>
+<li>stateless</li>
+</ul>
 <h2 id="status">Status<a class="headerlink" href="#status" title="Permanent link">&para;</a></h2>
 <p>Inspect relay and provider readiness:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>status
@@ -1020,9 +1082,10 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>doctor
 </code></pre></div>
 <p><code>airelays doctor</code> checks config, relay-token state, OpenAI login readiness,
-upstream <code>/models</code>, and a tiny <code>/responses</code> smoke request. Use
-<code>airelays doctor --skip-response</code> to skip the response smoke request.</p>
-<p>List every model id the running relay accepts:</p>
+upstream <code>/models</code>, a tiny <code>/responses</code> smoke request, and Claude readiness
+when the Claude runtime is enabled. Use <code>airelays doctor --skip-response</code>
+to skip the response smoke request.</p>
+<p>List every model id the running relay accepts, grouped by provider:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>models
 </code></pre></div>
 <p>Machine-readable output:</p>
@@ -1034,12 +1097,14 @@ airelays<span class="w"> </span>models<span class="w"> </span>--json
 <ul>
 <li>relay config and token state</li>
 <li>OpenAI runtime readiness</li>
+<li>Claude runtime readiness when enabled</li>
 <li>next recommended commands</li>
 </ul>
 <h2 id="provider-routing">Provider Routing<a class="headerlink" href="#provider-routing" title="Permanent link">&para;</a></h2>
 <ul>
-<li>all model ids route to the OpenAI runtime</li>
-<li>AIRelays rejects requests when the runtime is disabled or the route is outside its published subset</li>
+<li>models starting with <code>claude:</code> use the Claude runtime when it is enabled</li>
+<li>other model ids use the OpenAI runtime when it is enabled</li>
+<li>AIRelays rejects requests when the selected runtime is disabled or the route is outside that runtime's published subset</li>
 </ul>
 <h2 id="client-configuration">Client Configuration<a class="headerlink" href="#client-configuration" title="Permanent link">&para;</a></h2>
 <p>Base URL:</p>
@@ -1053,6 +1118,10 @@ airelays<span class="w"> </span>models<span class="w"> </span>--json
 <h2 id="subscription-status">Subscription Status<a class="headerlink" href="#subscription-status" title="Permanent link">&para;</a></h2>
 <p>OpenAI subscription usage:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/v1/subscription/status<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span>
+</code></pre></div>
+<p>Claude subscription usage (same normalized shape):</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">&#39;http://127.0.0.1:8080/v1/subscription/status?provider=claude&#39;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span>
 </code></pre></div>
 <p>See <a href="../subscription-status/">Subscription Status</a> for multi-account

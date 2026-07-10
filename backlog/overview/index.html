@@ -812,12 +812,12 @@
 
 <h1 id="backlog-overview">Backlog Overview<a class="headerlink" href="#backlog-overview" title="Permanent link">&para;</a></h1>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>AIRelays is a local OpenAI-shaped relay with a provider-scoped runtime registry. AIRelays serves the ChatGPT subscription path as its runtime.</p>
+<p>AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The initial provider-runtime expansion is now complete: AIRelays serves the ChatGPT subscription path as the primary runtime and a constrained experimental Claude adapter as a second local runtime.</p>
 <h2 id="counts">Counts<a class="headerlink" href="#counts" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Planned: 0</li>
 <li>Proposed: 0</li>
-<li>Completed: 1</li>
+<li>Completed: 2</li>
 <li>Deprecated: 0</li>
 <li>Recurrent: 0</li>
 </ul>
@@ -831,6 +831,7 @@
 <ul>
 <li><a href="../completed/providers/">Provider runtimes</a></li>
 <li><a href="../completed/providers/0001_provider_runtime_registry_for_subscription_relays/">0001_provider_runtime_registry_for_subscription_relays.md</a></li>
+<li><a href="../completed/providers/0010_experimental_claude_subscription_cli_adapter/">0010_experimental_claude_subscription_cli_adapter.md</a></li>
 </ul>
 <table>
 <thead>
@@ -855,6 +856,16 @@
 <td>Completed</td>
 <td>Added provider runtime registry, model metadata, and provider-aware readiness.</td>
 <td><code>pytest -q</code>; <code>python -m compileall src tests</code>; <code>mkdocs build -q</code>; live <code>/v1/models</code> and <code>/v1/relay/status</code> checks</td>
+</tr>
+<tr>
+<td>0010</td>
+<td>Experimental Claude subscription CLI adapter</td>
+<td><code>docs/backlog/planned/providers/0010_experimental_claude_subscription_cli_adapter.md</code></td>
+<td><code>docs/backlog/completed/providers/0010_experimental_claude_subscription_cli_adapter.md</code></td>
+<td>2026-06-21</td>
+<td>Completed</td>
+<td>Added local-only experimental Claude text runtime with explicit guardrails and docs.</td>
+<td><code>pytest -q</code>; <code>python -m compileall src tests</code>; <code>mkdocs build -q</code>; live Claude and OpenAI request smoke checks</td>
 </tr>
 </tbody>
 </table>

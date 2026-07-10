@@ -947,6 +947,14 @@
 <span class="k">[providers.openai]</span>
 <span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="n">models_cache_ttl_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">300.0</span>
+
+<span class="k">[providers.claude]</span>
+<span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<span class="n">bin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;claude&quot;</span>
+<span class="n">timeout_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">600.0</span>
+<span class="n">max_concurrent_requests</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
+<span class="n">strip_api_key_env</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="n">models</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;claude:sonnet&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;claude:opus&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;claude:haiku&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;claude:fable&quot;</span><span class="p">]</span>
 </code></pre></div>
 <h2 id="important-environment-variables">Important Environment Variables<a class="headerlink" href="#important-environment-variables" title="Permanent link">&para;</a></h2>
 <ul>
@@ -969,6 +977,12 @@
 <li><code>AIRELAYS_LOG_STREAM_LINES</code></li>
 <li><code>AIRELAYS_ENABLE_OPENAI</code></li>
 <li><code>AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS</code></li>
+<li><code>AIRELAYS_ENABLE_CLAUDE</code> (legacy <code>AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL</code> is still honored)</li>
+<li><code>AIRELAYS_CLAUDE_BIN</code></li>
+<li><code>AIRELAYS_CLAUDE_TIMEOUT_SECONDS</code></li>
+<li><code>AIRELAYS_CLAUDE_MAX_CONCURRENT_REQUESTS</code></li>
+<li><code>AIRELAYS_CLAUDE_STRIP_API_KEY_ENV</code></li>
+<li><code>AIRELAYS_CLAUDE_MODELS</code></li>
 </ul>
 <h2 id="relay-token-inputs">Relay Token Inputs<a class="headerlink" href="#relay-token-inputs" title="Permanent link">&para;</a></h2>
 <p>AIRelays resolves the relay token in this order:</p>
@@ -996,6 +1010,15 @@
 </ul>
 <p><code>AIRELAYS_MODELS_CACHE_TTL_SECONDS</code> remains accepted as a shorter alias for
 <code>AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS</code>.</p>
+<p>Claude runtime:</p>
+<ul>
+<li>enabled by default; set <code>[providers.claude].enabled = false</code> or <code>AIRELAYS_ENABLE_CLAUDE=false</code> to opt out (requests still require the local <code>claude</code> CLI to be installed and signed in)</li>
+<li>uses the local <code>claude</code> CLI</li>
+<li>browser login is handled by <code>claude auth login --claudeai</code></li>
+<li>headless login is handled by <code>claude setup-token</code> plus <code>CLAUDE_CODE_OAUTH_TOKEN</code></li>
+<li>follows the relay's protected or open local auth mode</li>
+<li>requires loopback binding</li>
+</ul>
 
 
 
