@@ -339,6 +339,11 @@ def test_cli_doctor_runs_upstream_model_and_response_smoke_checks(
     tmp_path, capsys, monkeypatch
 ) -> None:
     _clear_airelay_env(monkeypatch)
+    # This test exercises the OpenAI smoke checks. The Claude readiness
+    # check depends on the host machine (installed + signed-in CLI passes,
+    # anything else fails doctor), so pin the runtime off to keep the
+    # result deterministic on CI runners without the claude CLI.
+    monkeypatch.setenv("AIRELAYS_ENABLE_CLAUDE", "false")
     parser = build_parser()
     config_path = tmp_path / "config.toml"
     config_path.write_text("", encoding="utf-8")
