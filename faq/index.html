@@ -1045,12 +1045,15 @@
 <h2 id="is-airelays-affiliated-with-any-provider">Is AIRelays affiliated with any provider?<a class="headerlink" href="#is-airelays-affiliated-with-any-provider" title="Permanent link">&para;</a></h2>
 <p>No. AIRelays is an independent third-party project.</p>
 <h2 id="how-are-requests-spread-across-my-openai-accounts">How are requests spread across my OpenAI accounts?<a class="headerlink" href="#how-are-requests-spread-across-my-openai-accounts" title="Permanent link">&para;</a></h2>
-<p>With more than one enrolled account, the relay balances requests across
-every account with capacity that serves the requested model (the default,
-<code>balance = "round_robin"</code>). An account that reaches its usage limit is
-benched until its window resets and rejoins rotation automatically. Set
-<code>[providers.openai] balance = "ordered"</code> to drain the first account before
-touching the next instead. See <a href="../configuration/">Configuration</a>.</p>
+<p>With more than one enrolled account, the relay routes each request to the
+account with the most remaining short-window quota among those that serve
+the requested model (the default, <code>balance = "balanced"</code>), so consumption
+equalizes as a percentage of each plan's own capacity — plans of very
+different sizes deplete proportionally. Usage is probed at launch and
+refreshed in the background; an account that reaches its limit is benched
+until its window resets. Alternatives: <code>balance = "round_robin"</code> for
+strictly equal request counts, <code>balance = "ordered"</code> to drain the first
+account before the next. See <a href="../configuration/">Configuration</a>.</p>
 <h2 id="can-i-disable-relay-auth">Can I disable relay auth?<a class="headerlink" href="#can-i-disable-relay-auth" title="Permanent link">&para;</a></h2>
 <p>Yes. Open local relay mode applies to all enabled providers, including the Claude runtime.</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init<span class="w"> </span>--no-auth

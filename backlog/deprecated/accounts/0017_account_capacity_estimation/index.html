@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://www.lpalbou.info/AIRelays/backlog/proposed/accounts/0013_openai_usage_probe_caching_and_single_flight/">
+        <link rel="canonical" href="https://www.lpalbou.info/AIRelays/backlog/deprecated/accounts/0017_account_capacity_estimation/">
       
       
       
@@ -23,7 +23,7 @@
     
     
       
-        <title>Proposed: OpenAI usage-probe caching and single-flight - AIRelays</title>
+        <title>Deprecated (rejected): Absolute account-capacity estimation from usage history - AIRelays</title>
       
     
     
@@ -64,7 +64,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#proposed-openai-usage-probe-caching-and-single-flight" class="md-skip">
+        <a href="#deprecated-rejected-absolute-account-capacity-estimation-from-usage-history" class="md-skip">
           Skip to content
         </a>
       
@@ -100,7 +100,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Proposed: OpenAI usage-probe caching and single-flight
+              Deprecated (rejected): Absolute account-capacity estimation from usage history
             
           </span>
         </div>
@@ -714,10 +714,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#question-investigated" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Summary
+        Question investigated
       
     </span>
   </a>
@@ -725,10 +725,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#reason" class="md-nav__link">
+  <a href="#what-the-investigation-established" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reason
+        What the investigation established
       
     </span>
   </a>
@@ -736,10 +736,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#current-code-reality" class="md-nav__link">
+  <a href="#sanctioned-fallback-since-shipped" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Current code reality
+        Sanctioned fallback (since shipped)
       
     </span>
   </a>
@@ -747,10 +747,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#scope" class="md-nav__link">
+  <a href="#original-fallback-description" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Scope
+        Original fallback description
       
     </span>
   </a>
@@ -758,10 +758,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validation" class="md-nav__link">
+  <a href="#related" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Validation
+        Related
       
     </span>
   </a>
@@ -788,28 +788,42 @@
   
 
 
-<h1 id="proposed-openai-usage-probe-caching-and-single-flight">Proposed: OpenAI usage-probe caching and single-flight<a class="headerlink" href="#proposed-openai-usage-probe-caching-and-single-flight" title="Permanent link">&para;</a></h1>
+<h1 id="deprecated-rejected-absolute-account-capacity-estimation-from-usage-history">Deprecated (rejected): Absolute account-capacity estimation from usage history<a class="headerlink" href="#deprecated-rejected-absolute-account-capacity-estimation-from-usage-history" title="Permanent link">&para;</a></h1>
 <h2 id="metadata">Metadata<a class="headerlink" href="#metadata" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Created: 2026-07-11</li>
-<li>Status: Proposed</li>
+<li>Status: Deprecated (rejected after adversarial investigation; not built)</li>
 </ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Add a short per-account TTL cache and single-flight to the OpenAI subscription-usage path, mirroring the guardrails the Claude usage path already has (cache, fetch lock, attempt spacing, retry-after handling).</p>
-<h2 id="reason">Reason<a class="headerlink" href="#reason" title="Permanent link">&para;</a></h2>
-<p><code>/v1/subscription/status</code> is public relay API and each call hits the upstream usage endpoint once per account with no protection. Current desktop cadence is trivial (fetches on mount/refresh only), but any client scripting the route at a poll cadence would generate thousands of upstream hits per hour per account, plausibly triggering upstream throttling on a personal account. Cheap probes would also make proactive benching affordable at higher frequency.</p>
-<h2 id="current-code-reality">Current code reality<a class="headerlink" href="#current-code-reality" title="Permanent link">&para;</a></h2>
-<p><code>ChatGptCodexBackend.get_subscription_status</code> (src/airelay/backend.py) fetches unconditionally; <code>OpenAiAccountPool.subscription_statuses</code> (src/airelay/accounts.py) loops accounts per call. Compare <code>ClaudeCliRuntime</code> usage guardrails in src/airelay/providers.py.</p>
-<h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
+<h2 id="question-investigated">Question investigated<a class="headerlink" href="#question-investigated" title="Permanent link">&para;</a></h2>
+<p>Can an OpenAI account's absolute 5h-window capacity (input/output tokens) be estimated from the relay's own usage history (per-request token accounting correlated with used_percent movement), and should the relay ship such an estimate?</p>
+<h2 id="what-the-investigation-established">What the investigation established<a class="headerlink" href="#what-the-investigation-established" title="Permanent link">&para;</a></h2>
 <ul>
-<li>15–30s per-account TTL cache with single-flight in the pool</li>
-<li>bypass or short-circuit knob for the refresh action (which wants fresh evidence)</li>
-<li>keep <code>_bench_from_usage</code> semantics unchanged (probe-start gating already in place)</li>
+<li>Window semantics (from live log evidence): the 5h window is a fixed bucket anchored at first use — <code>reset_at</code> freezes at <code>first_use + 18000s</code>, <code>used_percent</code> grows cumulatively, then hard-resets. Pairing snapshots with identical <code>reset_at</code> and differencing percent is therefore well-posed.</li>
+<li>Empirical tokens-per-percent (Jul 11 logs, pairs with identical <code>reset_at</code>, Δpercent ≥ 2, censored at 100%):</li>
+<li>plus account: median ≈ 22k tokens/percent → ≈ 2.2M tokens per 5h window, but cross-pair spread 316–651%</li>
+<li>enterprise account: median ≈ 0.58–0.89M tokens/percent → ≈ 58–89M tokens per 5h window, spread 150–234%</li>
+<li>a cached-discounted basis (cached input at 0.1 weight) consistently reduced spread, consistent with credit-weighted upstream metering</li>
+<li>Why a shipped estimate was rejected:</li>
+<li>The unit is wrong: the upstream quota is credit-denominated with per-model, per-token-class weights spanning ~400x (published Codex rate card), so "capacity in tokens" depends entirely on traffic mix — the observed spreads are structural, not sampling noise.</li>
+<li>Integer percent quantization makes large plans nearly unobservable (~1 point per ~1M tokens → ±25–100% error for a long time).</li>
+<li>Usage outside the relay (same subscription in first-party apps) biases estimates downward by an unknowable amount; window roll effects bias upward.</li>
+<li>ADR 0001 forbids invented token budgets; a point estimate is exactly that, and even an honest range ("30–300M depending on mix") is practically useless.</li>
+<li>Routing must not consume it: balanced routing's percent equalization is already the correct fixed point (it splits traffic proportionally to capacity without knowing it, and all accounts exhaust simultaneously); absolute-remaining routing would front-load the large account and behave worse under estimate error.</li>
+<li>The wham/usage payload exposes no absolute quota anywhere (full field inventory checked), and public plan documentation covers neither the unit nor enterprise org policies.</li>
 </ul>
-<h2 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h2>
+<h2 id="sanctioned-fallback-since-shipped">Sanctioned fallback (since shipped)<a class="headerlink" href="#sanctioned-fallback-since-shipped" title="Permanent link">&para;</a></h2>
+<p>The ground-truth reduced form shipped on 2026-07-12 as the Accounts card
+"more" hover: per-model input/output tokens served via the relay in the
+current 5h window plus totals (<code>window_tokens</code> on the account status
+payload; tallied in <code>src/airelay/usage_tally.py</code>). No extrapolation, no
+capacity claims — exactly the boundary this item drew.</p>
+<h2 id="original-fallback-description">Original fallback description<a class="headerlink" href="#original-fallback-description" title="Permanent link">&para;</a></h2>
+<p>If capacity visibility is ever wanted in UI, the honest reduced form is the observed exchange rate composed purely of ground truth — e.g. "this 5h window: 1.9M tokens via relay ≈ 47 points" — with no extrapolation, no persistence, no routing coupling. If the upstream ever exposes credit-denominated usage (the payload's <code>credits</code> block shows the shape exists), read it instead of estimating.</p>
+<h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
-<li>unit tests for cache hit/miss/single-flight and refresh bypass</li>
-<li>confirm the desktop Accounts card still shows fresh data after Refresh</li>
+<li>completed/accounts/0016_capacity_aware_balanced_routing.md (percent equalization; why absolute capacity is unnecessary for routing)</li>
+<li>completed/accounts/0013_openai_usage_probe_caching_and_single_flight.md (probe cadence the estimator would have used)</li>
+<li>docs/adr/0001-no-silent-degradation-truncation-or-budget-invention.md</li>
 </ul>
 
 
