@@ -46,6 +46,7 @@ const state = () => ({
   lifecycle: managed ? "running" : "stopped",
   reachable: managed,
   managed,
+  app_version: "0.0.0-mock",
   auth_mismatch: false,
   login_url: null,
   login_code: null,

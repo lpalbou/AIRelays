@@ -111,11 +111,16 @@ jobs:
               raise SystemExit(f"Invalid release version: {raw_version!r}")
           tag = f"v{version}"
 
-          pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-          package_version = pyproject["project"]["version"]
+          # Canonical version source: src/airelay/__init__.py (pyproject
+          # declares version as dynamic and reads the same attribute).
+          init_text = Path("src/airelay/__init__.py").read_text(encoding="utf-8")
+          match = re.search(r'^__version__ = "([^"]+)"', init_text, re.M)
+          if not match:
+              raise SystemExit("src/airelay/__init__.py has no __version__")
+          package_version = match.group(1)
           if version != package_version:
               raise SystemExit(
-                  f"Requested version {version!r} does not match pyproject.toml version {package_version!r}"
+                  f"Requested version {version!r} does not match airelay.__version__ {package_version!r}"
               )
 
           changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")

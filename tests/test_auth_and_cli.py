@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -225,7 +226,7 @@ def test_cli_init_generates_token_once_and_hides_existing_token(
     args.func(args)
     first = capsys.readouterr().out
 
-    assert "AIRelays Init" in first
+    assert re.search(r"AIRelays \S+ Init", first)
     assert "Client Setup" in first
     assert "Authorization: Bearer <AIRelays token>" in first
     assert str(data_dir / "relay-token") in first
@@ -256,7 +257,7 @@ def test_cli_init_no_auth_writes_disabled_config_and_skips_token(
     args.func(args)
     output = capsys.readouterr().out
 
-    assert "AIRelays Init" in output
+    assert re.search(r"AIRelays \S+ Init", output)
     assert "Bearer auth" in output
     assert "disabled" in output
     assert "optional placeholder only" in output
@@ -285,7 +286,8 @@ def test_cli_status_defaults_to_human_output_and_supports_json(
     args.func(args)
     human = capsys.readouterr().out
 
-    assert "AIRelays Status" in human
+    # The title carries the running version (e.g. "AIRelays 0.6.0 Status").
+    assert re.search(r"AIRelays \S+ Status", human)
     assert "OpenAI Session" in human
     assert "Client Setup" in human
     assert "airelays login" in human
@@ -508,7 +510,7 @@ def test_cli_token_show_displays_existing_token_and_supports_json(
     args.func(args)
     human = capsys.readouterr().out
 
-    assert "AIRelays Token" in human
+    assert re.search(r"AIRelays \S+ Token", human)
     assert "token-value" in human
     assert "Reveal token" not in human
 
@@ -560,7 +562,7 @@ def test_cli_serve_prints_client_auth_guidance(tmp_path, monkeypatch, capsys) ->
     args.func(args)
     output = capsys.readouterr().out
 
-    assert "AIRelays Server" in output
+    assert re.search(r"AIRelays \S+ Server", output)
     assert "http://127.0.0.1:8090/v1" in output
     assert "Authorization: Bearer <AIRelays token>" in output
     assert "airelays token show" in output
@@ -598,7 +600,7 @@ def test_cli_serve_no_auth_starts_open_mode_without_token(tmp_path, monkeypatch,
     args.func(args)
     output = capsys.readouterr().out
 
-    assert "AIRelays Server" in output
+    assert re.search(r"AIRelays \S+ Server", output)
     assert "disabled" in output
     assert "optional placeholder only" in output
     assert "ChatGPT login" in output

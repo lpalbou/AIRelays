@@ -4,7 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "airelays"
-version = "0.5.0"
+# Single source of truth for the relay version: src/airelay/__init__.py
+# (__version__). Bump every component at once with scripts/set_version.py.
+dynamic = ["version"]
 description = "AIRelays: an independent OpenAI-compatible local relay for single-user subscription-backed access."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -52,6 +54,9 @@ airelays = "airelays.cli:main"
 "GitHub" = "https://github.com/lpalbou/AIRelays"
 "Documentation" = "https://www.lpalbou.info/AIRelays/"
 "Changelog" = "https://github.com/lpalbou/AIRelays/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/airelay/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/airelay", "src/airelays"]

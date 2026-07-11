@@ -1,6 +1,6 @@
 [package]
 name = "airelays-desktop"
-version = "0.5.0"
+version = "0.6.0-dev"
 description = "AIRelays tray app: supervises the local relay and hosts its dashboard."
 authors = ["Laurent-Philippe Albou"]
 edition = "2021"

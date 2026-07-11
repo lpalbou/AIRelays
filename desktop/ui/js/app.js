@@ -101,12 +101,25 @@ function updateSidebarStatus(state) {
   }
 }
 
+let versionApplied = false;
+
+function applyVersion(state) {
+  // The version comes from the running backend (compiled package info), so
+  // the title and brand always show exactly what is installed.
+  if (versionApplied || !state?.app_version) return;
+  versionApplied = true;
+  document.title = `AIRelays ${state.app_version}`;
+  const brand = document.getElementById("brand-version");
+  if (brand) brand.textContent = ` ${state.app_version}`;
+}
+
 async function poll() {
   try {
     latestState = await api.getState();
   } catch {
     latestState = null;
   }
+  applyVersion(latestState);
   updateSidebarStatus(latestState);
   if (activeView?.update) {
     try {

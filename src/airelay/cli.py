@@ -11,6 +11,7 @@ from typing import Any
 
 import uvicorn
 
+from airelay import __version__
 from airelay.accounts import (
     ACCOUNTS_DIRNAME,
     OpenAiAccountPool,
@@ -571,6 +572,10 @@ def _emit_json(payload: dict[str, object]) -> None:
 
 
 def _print_title(title: str) -> None:
+    # Brand-prefixed titles always carry the running version, so terminal
+    # output shows exactly which relay produced it.
+    if title == APP_NAME or title.startswith(f"{APP_NAME} "):
+        title = f"{APP_NAME} {__version__}{title[len(APP_NAME):]}"
     print(accent(title))
 
 

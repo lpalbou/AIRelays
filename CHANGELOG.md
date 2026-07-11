@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The running version is now visible everywhere the product presents itself: the desktop window title, tray tooltip, and dashboard sidebar (e.g. "AIRelays 0.6.0"), the relay landing page, and CLI report titles. Each surface reads the version from its component's single canonical source at run time — `airelay.__version__` for the relay (`pyproject.toml` derives from it) and `Cargo.toml` for the desktop app (`tauri.conf.json` inherits it) — so what is displayed can never drift from what is installed. `scripts/set_version.py` bumps every component in one command, and the release workflows enforce agreement before publishing.
+
 ## 0.5.0
 
 ### Changed

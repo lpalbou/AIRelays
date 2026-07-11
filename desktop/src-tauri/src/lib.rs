@@ -33,6 +33,16 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
+            // The window title always carries the running version (single
+            // source: Cargo.toml via the compiled package info), so what the
+            // user sees can never drift from what is actually installed.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_title(&format!(
+                    "AIRelays {}",
+                    app.package_info().version
+                ));
+            }
+
             // A failed tray (e.g. Linux without an appindicator host) must
             // not leave the app invisible: fall back to showing the window.
             let tray_ok = tray::init(app.handle()).is_ok();

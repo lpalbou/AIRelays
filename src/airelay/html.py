@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from airelay import __version__
+
+
 def render_home(
     *,
     relay_token_ready: bool,
@@ -130,7 +133,7 @@ def render_home(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AIRelays</title>
+  <title>AIRelays {__version__}</title>
   <style>
     :root {{
       --paper: #f4efe6;
@@ -283,7 +286,7 @@ def render_home(
 <body>
   <main class="shell">
     <section class="hero">
-      <div class="eyebrow">Subscription-backed AI relay</div>
+      <div class="eyebrow">AIRelays {__version__} · Subscription-backed AI relay</div>
       <div class="chips">
         <div class="chip">{auth_state}</div>
         <div class="chip safe">{token_state}</div>

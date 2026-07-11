@@ -49,6 +49,9 @@ pub struct UiState {
     pub lan_endpoints: Vec<String>,
     pub config_path: String,
     pub logs_dir: String,
+    /// The running app version (from the compiled package info), so every
+    /// UI surface shows exactly what is installed.
+    pub app_version: String,
 }
 
 // MARK: internal helpers shared with the tray
@@ -314,6 +317,7 @@ pub fn get_state(app: AppHandle) -> UiState {
         config_path: AppSettings::relay_config_path().to_string_lossy().into_owned(),
         logs_dir: AppSettings::logs_dir().to_string_lossy().into_owned(),
         settings,
+        app_version: app.package_info().version.to_string(),
     };
     ui_state
 }

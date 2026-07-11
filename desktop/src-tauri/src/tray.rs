@@ -30,7 +30,7 @@ static APPLIED_ICON: AtomicU8 = AtomicU8::new(ICON_NONE);
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
     let tray = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon_image(ICON_DISCONNECTED))
-        .tooltip("AIRelays")
+        .tooltip(format!("AIRelays {}", app.package_info().version))
         .menu(&build_menu(app)?)
         .show_menu_on_left_click(true)
         .on_menu_event(handle_menu_event)
