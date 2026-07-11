@@ -9,7 +9,7 @@ AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provi
 - Planned: 0
 - Proposed: 2
 - Completed: 6
-- Deprecated: 0
+- Deprecated: 1
 - Recurrent: 0
 
 ## Priority
@@ -53,7 +53,7 @@ No active planned items.
 
 ## Deprecated Work
 
-No deprecated backlog items yet.
+- [0017_account_capacity_estimation.md](deprecated/accounts/0017_account_capacity_estimation.md): absolute token-capacity estimation rejected after adversarial investigation — the upstream quota is credit-denominated and mix-dependent, large plans are quantization-bound, and ADR 0001 forbids invented budgets; percent equalization already routes optimally without it.
 
 ## Process
 
