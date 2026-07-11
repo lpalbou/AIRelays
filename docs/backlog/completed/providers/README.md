@@ -12,6 +12,7 @@ These completed items record the initial provider-runtime expansion that turned 
 
 - [0001_provider_runtime_registry_for_subscription_relays.md](0001_provider_runtime_registry_for_subscription_relays.md): introduced provider-scoped routing, model metadata, and readiness reporting.
 - [0010_experimental_claude_subscription_cli_adapter.md](0010_experimental_claude_subscription_cli_adapter.md): added the first local-only experimental Claude text runtime with explicit limits and guardrails.
+- [0011_claude_runtime_mainline_graduation.md](0011_claude_runtime_mainline_graduation.md): sampling-parameter adaptation, merge to mainline, label removal, personal-use disclaimer, and the 0.4.0 release.
 
 ## Related Material
 

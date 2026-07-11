@@ -2,19 +2,19 @@
 
 ## Summary
 
-AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The initial provider-runtime expansion is now complete: AIRelays serves the ChatGPT subscription path as the primary runtime and a constrained experimental Claude adapter as a second local runtime.
+AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provider-runtime expansion is complete and released: the ChatGPT subscription path is the primary runtime (with balanced multi-account routing) and the Claude runtime is a first-class local adapter as of 0.4.0. Open work is limited to proposed hardening follow-ups.
 
 ## Counts
 
 - Planned: 0
-- Proposed: 0
-- Completed: 2
+- Proposed: 3
+- Completed: 4
 - Deprecated: 0
 - Recurrent: 0
 
 ## Priority
 
-No active planned backlog items are open in the provider-runtime track.
+No committed planned items. Of the proposed items, 0013 (usage-probe caching/single-flight) has the highest expected value: it protects upstream rate budgets and makes proactive capacity checks affordable.
 
 ## Planned Tracks
 
@@ -24,16 +24,29 @@ No active planned tracks.
 
 No active planned items.
 
+## Proposed Work
+
+- [Multi-account pool](proposed/accounts/README.md)
+  - [0013_openai_usage_probe_caching_and_single_flight.md](proposed/accounts/0013_openai_usage_probe_caching_and_single_flight.md)
+  - [0014_wall_clock_bench_expiry_across_system_sleep.md](proposed/accounts/0014_wall_clock_bench_expiry_across_system_sleep.md)
+- [Provider runtimes](proposed/providers/README.md)
+  - [0015_claude_token_shape_validation_on_set_token.md](proposed/providers/0015_claude_token_shape_validation_on_set_token.md)
+
 ## Completed Work
 
 - [Provider runtimes](completed/providers/README.md)
   - [0001_provider_runtime_registry_for_subscription_relays.md](completed/providers/0001_provider_runtime_registry_for_subscription_relays.md)
   - [0010_experimental_claude_subscription_cli_adapter.md](completed/providers/0010_experimental_claude_subscription_cli_adapter.md)
+  - [0011_claude_runtime_mainline_graduation.md](completed/providers/0011_claude_runtime_mainline_graduation.md)
+- [Multi-account pool](completed/accounts/README.md)
+  - [0012_balanced_multi_account_routing_and_pool_hardening.md](completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening.md)
 
 | ID | Item | Original Path | Final Path | Completed | Outcome | Notes | Validation |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 0001 | Provider runtime registry for subscription relays | `docs/backlog/planned/providers/0001_provider_runtime_registry_for_subscription_relays.md` | `docs/backlog/completed/providers/0001_provider_runtime_registry_for_subscription_relays.md` | 2026-06-21 | Completed | Added provider runtime registry, model metadata, and provider-aware readiness. | `pytest -q`; `python -m compileall src tests`; `mkdocs build -q`; live `/v1/models` and `/v1/relay/status` checks |
 | 0010 | Experimental Claude subscription CLI adapter | `docs/backlog/planned/providers/0010_experimental_claude_subscription_cli_adapter.md` | `docs/backlog/completed/providers/0010_experimental_claude_subscription_cli_adapter.md` | 2026-06-21 | Completed | Added local-only experimental Claude text runtime with explicit guardrails and docs. | `pytest -q`; `python -m compileall src tests`; `mkdocs build -q`; live Claude and OpenAI request smoke checks |
+| 0011 | Claude runtime mainline graduation | (worked directly; recorded post-completion) | `docs/backlog/completed/providers/0011_claude_runtime_mainline_graduation.md` | 2026-07-10 | Completed | Sampling adaptation, merge to main (PR #1), label removal, personal-use disclaimer, 0.4.0 release with desktop installers. | `pytest -q`; live per-model verification 13/13; release workflow green (PyPI, GitHub Release, docs) |
+| 0012 | Balanced multi-account routing and pool hardening | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening.md` | 2026-07-11 | Completed | Round-robin default, evidence-gated benching, failover classification, launch-time warm-up; desktop exposes the balance setting. | `pytest -q` (165); live balanced-selection, failover, refresh, and warm-start checks against real accounts |
 
 ## Deprecated Work
 
@@ -42,6 +55,7 @@ No deprecated backlog items yet.
 ## Process
 
 - Add new planned work under `docs/backlog/planned/` with the next global numeric prefix.
+- Keep uncertain follow-ups under `docs/backlog/proposed/`; promote to planned only with evidence.
 - Move finished work to `docs/backlog/completed/` with its completion report and validation.
 - Move superseded or rejected work to `docs/backlog/deprecated/` with the reason.
 - Re-check related ADRs before implementing boundary or policy changes.

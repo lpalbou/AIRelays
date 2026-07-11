@@ -12,6 +12,15 @@ Use the AIRelays relay token from `airelays init`, `airelays token show`, or `ai
 
 No. AIRelays is an independent third-party project.
 
+## How are requests spread across my OpenAI accounts?
+
+With more than one enrolled account, the relay balances requests across
+every account with capacity that serves the requested model (the default,
+`balance = "round_robin"`). An account that reaches its usage limit is
+benched until its window resets and rejoins rotation automatically. Set
+`[providers.openai] balance = "ordered"` to drain the first account before
+touching the next instead. See [Configuration](configuration.md).
+
 ## Can I disable relay auth?
 
 Yes. Open local relay mode applies to all enabled providers, including the Claude runtime.

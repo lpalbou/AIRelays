@@ -4,8 +4,27 @@
 
 AIRelays is an OpenAI-shaped edge over provider-specific local runtimes.
 
-- The default runtime uses the ChatGPT Codex subscription backend.
+- The default runtime uses the ChatGPT Codex subscription backend and
+  balances requests across every enrolled OpenAI account with capacity.
 - The Claude runtime uses isolated local `claude -p` subprocesses.
+
+```mermaid
+flowchart LR
+    Client["OpenAI-compatible client"] -->|"bearer token"| Edge
+
+    subgraph Relay["AIRelays (local)"]
+        Edge["FastAPI edge\nauth · rate limits · traffic log"] --> Registry["Provider registry\nmodel id → runtime"]
+        Registry -->|"other model ids"| Pool["OpenAI account pool\nbalanced selection · benching · failover"]
+        Registry -->|"claude:* model ids"| ClaudeRT["Claude runtime\nvalidation · text transcript"]
+        Pool --> B1["Backend adapter\naccount 1"]
+        Pool --> B2["Backend adapter\naccount N"]
+    end
+
+    B1 --> Upstream["ChatGPT subscription backend"]
+    B2 --> Upstream
+    ClaudeRT --> CLI["local claude CLI\n(claude -p subprocess)"]
+    CLI --> Anthropic["Claude subscription"]
+```
 
 ## Request Flow
 
@@ -13,8 +32,28 @@ AIRelays is an OpenAI-shaped edge over provider-specific local runtimes.
 2. Middleware enforces relay auth and local abuse controls.
 3. AIRelays resolves the request model id to a provider runtime.
 4. Claude-specific validation and invocation stay inside the Claude runtime, while the OpenAI runtime currently uses shared request/response transforms plus the OpenAI backend adapter.
-5. The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope.
-6. AIRelays logs the request, runtime selection, and result.
+5. On the OpenAI runtime, the account pool picks the account: conversation affinity first, then the least-recently-selected account with capacity that serves the requested model (`balance = "round_robin"`, the default), or the first such account (`"ordered"`). Account-scoped failures (usage limits, dead credentials, transport errors) bench the account until it recovers and fail over to the next one — only before the first byte reaches the client.
+6. The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope.
+7. AIRelays logs the request, runtime selection, account selection, and result.
+
+## Account Pool Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Probing: relay starts (2+ accounts)
+    Probing --> Serving: usage + model catalogs fetched
+    Serving --> Benched: usage limit / dead credentials / transport failure
+    Benched --> Serving: window reset reached, or a fresh usage probe shows capacity
+    note right of Benched
+        Releases are evidence-gated:
+        only a usage snapshot newer than
+        the bench can lift it early.
+    end note
+```
+
+At launch, a multi-account pool probes each account's usage and model
+catalog in the background, so accounts already at their limit are benched
+and model-aware balancing works from the first request.
 
 ## Main Components
 
@@ -37,9 +76,17 @@ AIRelays is an OpenAI-shaped edge over provider-specific local runtimes.
 - browser and device login
 - token refresh
 
+### `airelays.accounts`
+
+- multi-account discovery and storage slots
+- balanced account selection (round-robin default, ordered opt-in)
+- usage-limit benching with evidence-gated release
+- account failover and launch-time capacity/model warm-up
+
 ### `airelays.backend`
 
 - OpenAI runtime HTTP calls to the verified ChatGPT backend
+- structured errors for upstream HTTP and transport failures
 
 ### `airelays.providers`
 
