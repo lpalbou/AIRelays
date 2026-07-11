@@ -1588,6 +1588,12 @@ class ProviderRegistry:
             openai_status["ready_for_requests"] = openai_status["ready_for_requests"] or any(
                 account.get("ready_for_requests") for account in openai_status["accounts"]
             )
+        elif self._account_pool is not None and self._account_pool.size == 1:
+            # Single-account installs get no accounts array, but the token
+            # breakdown behind the usage bars must not vanish with it.
+            statuses = self._account_pool.account_statuses()
+            if statuses and "window_tokens" in statuses[0]:
+                openai_status["window_tokens"] = statuses[0]["window_tokens"]
         providers["openai"] = openai_status
         if self._claude is not None:
             providers["claude"] = self._claude.status()

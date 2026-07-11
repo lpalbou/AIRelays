@@ -960,8 +960,7 @@ function accountBlock(account, index, total, balance) {
     err.title = usageEntry.error;
     block.appendChild(err);
   }
-  const detail = windowTokensDetail(account.window_tokens);
-  if (detail) block.appendChild(detail);
+  block.appendChild(windowTokensDetail(account.window_tokens));
   return block;
 }
 
@@ -975,9 +974,10 @@ function formatTokens(n) {
 
 // Ground truth behind the usage bars: what this relay served on the account
 // during the current 5h window, per model — revealed on hover of "more".
+// Every account gets the affordance; without data the panel says so
+// instead of the trigger silently missing.
 function windowTokensDetail(windowTokens) {
-  const models = windowTokens?.models;
-  if (!Array.isArray(models) || models.length === 0) return null;
+  const models = Array.isArray(windowTokens?.models) ? windowTokens.models : [];
   const wrap = document.createElement("div");
   wrap.className = "account-more";
   const trigger = document.createElement("span");
@@ -989,6 +989,14 @@ function windowTokensDetail(windowTokens) {
   title.className = "account-more-title";
   title.textContent = "This 5h window, via this relay";
   panel.appendChild(title);
+  if (models.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "account-more-note";
+    empty.textContent = "No requests served through AIRelays on this account in the current window yet.";
+    panel.appendChild(empty);
+    wrap.append(trigger, panel);
+    return wrap;
+  }
   const table = document.createElement("table");
   table.className = "account-more-table";
   const header = document.createElement("tr");
@@ -1050,7 +1058,7 @@ function renderAccounts(state) {
   const accounts = Array.isArray(openai?.accounts) && openai.accounts.length > 0
     ? openai.accounts
     : openai?.enabled && openai?.email
-      ? [{ email: openai.email, plan_type: openai.plan_type, ready_for_requests: openai.ready_for_requests, limited: false }]
+      ? [{ email: openai.email, plan_type: openai.plan_type, ready_for_requests: openai.ready_for_requests, limited: false, window_tokens: openai.window_tokens }]
       : [];
 
   if (openai?.enabled && accounts.length === 0) {
