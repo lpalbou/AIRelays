@@ -758,6 +758,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#proposed-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proposed Work
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#completed-work" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -812,26 +823,37 @@
 
 <h1 id="backlog-overview">Backlog Overview<a class="headerlink" href="#backlog-overview" title="Permanent link">&para;</a></h1>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The initial provider-runtime expansion is now complete: AIRelays serves the ChatGPT subscription path as the primary runtime and a constrained experimental Claude adapter as a second local runtime.</p>
+<p>AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provider-runtime expansion is complete and released: the ChatGPT subscription path is the primary runtime (with balanced multi-account routing) and the Claude runtime is a first-class local adapter as of 0.4.0. Open work is limited to proposed hardening follow-ups.</p>
 <h2 id="counts">Counts<a class="headerlink" href="#counts" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Planned: 0</li>
-<li>Proposed: 0</li>
-<li>Completed: 2</li>
+<li>Proposed: 3</li>
+<li>Completed: 4</li>
 <li>Deprecated: 0</li>
 <li>Recurrent: 0</li>
 </ul>
 <h2 id="priority">Priority<a class="headerlink" href="#priority" title="Permanent link">&para;</a></h2>
-<p>No active planned backlog items are open in the provider-runtime track.</p>
+<p>No committed planned items. Of the proposed items, 0013 (usage-probe caching/single-flight) has the highest expected value: it protects upstream rate budgets and makes proactive capacity checks affordable.</p>
 <h2 id="planned-tracks">Planned Tracks<a class="headerlink" href="#planned-tracks" title="Permanent link">&para;</a></h2>
 <p>No active planned tracks.</p>
 <h2 id="planned-items">Planned Items<a class="headerlink" href="#planned-items" title="Permanent link">&para;</a></h2>
 <p>No active planned items.</p>
+<h2 id="proposed-work">Proposed Work<a class="headerlink" href="#proposed-work" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../proposed/accounts/">Multi-account pool</a></li>
+<li><a href="../proposed/accounts/0013_openai_usage_probe_caching_and_single_flight/">0013_openai_usage_probe_caching_and_single_flight.md</a></li>
+<li><a href="../proposed/accounts/0014_wall_clock_bench_expiry_across_system_sleep/">0014_wall_clock_bench_expiry_across_system_sleep.md</a></li>
+<li><a href="../proposed/providers/">Provider runtimes</a></li>
+<li><a href="../proposed/providers/0015_claude_token_shape_validation_on_set_token/">0015_claude_token_shape_validation_on_set_token.md</a></li>
+</ul>
 <h2 id="completed-work">Completed Work<a class="headerlink" href="#completed-work" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../completed/providers/">Provider runtimes</a></li>
 <li><a href="../completed/providers/0001_provider_runtime_registry_for_subscription_relays/">0001_provider_runtime_registry_for_subscription_relays.md</a></li>
 <li><a href="../completed/providers/0010_experimental_claude_subscription_cli_adapter/">0010_experimental_claude_subscription_cli_adapter.md</a></li>
+<li><a href="../completed/providers/0011_claude_runtime_mainline_graduation/">0011_claude_runtime_mainline_graduation.md</a></li>
+<li><a href="../completed/accounts/">Multi-account pool</a></li>
+<li><a href="../completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening/">0012_balanced_multi_account_routing_and_pool_hardening.md</a></li>
 </ul>
 <table>
 <thead>
@@ -867,6 +889,26 @@
 <td>Added local-only experimental Claude text runtime with explicit guardrails and docs.</td>
 <td><code>pytest -q</code>; <code>python -m compileall src tests</code>; <code>mkdocs build -q</code>; live Claude and OpenAI request smoke checks</td>
 </tr>
+<tr>
+<td>0011</td>
+<td>Claude runtime mainline graduation</td>
+<td>(worked directly; recorded post-completion)</td>
+<td><code>docs/backlog/completed/providers/0011_claude_runtime_mainline_graduation.md</code></td>
+<td>2026-07-10</td>
+<td>Completed</td>
+<td>Sampling adaptation, merge to main (PR #1), label removal, personal-use disclaimer, 0.4.0 release with desktop installers.</td>
+<td><code>pytest -q</code>; live per-model verification 13/13; release workflow green (PyPI, GitHub Release, docs)</td>
+</tr>
+<tr>
+<td>0012</td>
+<td>Balanced multi-account routing and pool hardening</td>
+<td>(worked directly; recorded post-completion)</td>
+<td><code>docs/backlog/completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening.md</code></td>
+<td>2026-07-11</td>
+<td>Completed</td>
+<td>Round-robin default, evidence-gated benching, failover classification, launch-time warm-up; desktop exposes the balance setting.</td>
+<td><code>pytest -q</code> (165); live balanced-selection, failover, refresh, and warm-start checks against real accounts</td>
+</tr>
 </tbody>
 </table>
 <h2 id="deprecated-work">Deprecated Work<a class="headerlink" href="#deprecated-work" title="Permanent link">&para;</a></h2>
@@ -874,6 +916,7 @@
 <h2 id="process">Process<a class="headerlink" href="#process" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Add new planned work under <code>docs/backlog/planned/</code> with the next global numeric prefix.</li>
+<li>Keep uncertain follow-ups under <code>docs/backlog/proposed/</code>; promote to planned only with evidence.</li>
 <li>Move finished work to <code>docs/backlog/completed/</code> with its completion report and validation.</li>
 <li>Move superseded or rejected work to <code>docs/backlog/deprecated/</code> with the reason.</li>
 <li>Re-check related ADRs before implementing boundary or policy changes.</li>

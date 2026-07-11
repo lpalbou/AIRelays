@@ -468,6 +468,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#account-pool-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Account Pool Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#main-components" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -506,6 +517,17 @@
     <span class="md-ellipsis">
       
         airelays.auth
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#airelaysaccounts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        airelays.accounts
       
     </span>
   </a>
@@ -925,6 +947,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#account-pool-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Account Pool Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#main-components" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -963,6 +996,17 @@
     <span class="md-ellipsis">
       
         airelays.auth
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#airelaysaccounts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        airelays.accounts
       
     </span>
   </a>
@@ -1075,18 +1119,51 @@
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p>AIRelays is an OpenAI-shaped edge over provider-specific local runtimes.</p>
 <ul>
-<li>The default runtime uses the ChatGPT Codex subscription backend.</li>
+<li>The default runtime uses the ChatGPT Codex subscription backend and
+  balances requests across every enrolled OpenAI account with capacity.</li>
 <li>The Claude runtime uses isolated local <code>claude -p</code> subprocesses.</li>
 </ul>
+<div class="highlight"><pre><span></span><code>flowchart LR
+    Client[&quot;OpenAI-compatible client&quot;] --&gt;|&quot;bearer token&quot;| Edge
+
+    subgraph Relay[&quot;AIRelays (local)&quot;]
+        Edge[&quot;FastAPI edge\nauth · rate limits · traffic log&quot;] --&gt; Registry[&quot;Provider registry\nmodel id → runtime&quot;]
+        Registry --&gt;|&quot;other model ids&quot;| Pool[&quot;OpenAI account pool\nbalanced selection · benching · failover&quot;]
+        Registry --&gt;|&quot;claude:* model ids&quot;| ClaudeRT[&quot;Claude runtime\nvalidation · text transcript&quot;]
+        Pool --&gt; B1[&quot;Backend adapter\naccount 1&quot;]
+        Pool --&gt; B2[&quot;Backend adapter\naccount N&quot;]
+    end
+
+    B1 --&gt; Upstream[&quot;ChatGPT subscription backend&quot;]
+    B2 --&gt; Upstream
+    ClaudeRT --&gt; CLI[&quot;local claude CLI\n(claude -p subprocess)&quot;]
+    CLI --&gt; Anthropic[&quot;Claude subscription&quot;]
+</code></pre></div>
 <h2 id="request-flow">Request Flow<a class="headerlink" href="#request-flow" title="Permanent link">&para;</a></h2>
 <ol>
 <li>FastAPI receives an OpenAI-shaped request.</li>
 <li>Middleware enforces relay auth and local abuse controls.</li>
 <li>AIRelays resolves the request model id to a provider runtime.</li>
 <li>Claude-specific validation and invocation stay inside the Claude runtime, while the OpenAI runtime currently uses shared request/response transforms plus the OpenAI backend adapter.</li>
+<li>On the OpenAI runtime, the account pool picks the account: conversation affinity first, then the least-recently-selected account with capacity that serves the requested model (<code>balance = "round_robin"</code>, the default), or the first such account (<code>"ordered"</code>). Account-scoped failures (usage limits, dead credentials, transport errors) bench the account until it recovers and fail over to the next one — only before the first byte reaches the client.</li>
 <li>The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope.</li>
-<li>AIRelays logs the request, runtime selection, and result.</li>
+<li>AIRelays logs the request, runtime selection, account selection, and result.</li>
 </ol>
+<h2 id="account-pool-lifecycle">Account Pool Lifecycle<a class="headerlink" href="#account-pool-lifecycle" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>stateDiagram-v2
+    [*] --&gt; Probing: relay starts (2+ accounts)
+    Probing --&gt; Serving: usage + model catalogs fetched
+    Serving --&gt; Benched: usage limit / dead credentials / transport failure
+    Benched --&gt; Serving: window reset reached, or a fresh usage probe shows capacity
+    note right of Benched
+        Releases are evidence-gated:
+        only a usage snapshot newer than
+        the bench can lift it early.
+    end note
+</code></pre></div>
+<p>At launch, a multi-account pool probes each account's usage and model
+catalog in the background, so accounts already at their limit are benched
+and model-aware balancing works from the first request.</p>
 <h2 id="main-components">Main Components<a class="headerlink" href="#main-components" title="Permanent link">&para;</a></h2>
 <h3 id="airelaysconfig"><code>airelays.config</code><a class="headerlink" href="#airelaysconfig" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1107,9 +1184,17 @@
 <li>browser and device login</li>
 <li>token refresh</li>
 </ul>
+<h3 id="airelaysaccounts"><code>airelays.accounts</code><a class="headerlink" href="#airelaysaccounts" title="Permanent link">&para;</a></h3>
+<ul>
+<li>multi-account discovery and storage slots</li>
+<li>balanced account selection (round-robin default, ordered opt-in)</li>
+<li>usage-limit benching with evidence-gated release</li>
+<li>account failover and launch-time capacity/model warm-up</li>
+</ul>
 <h3 id="airelaysbackend"><code>airelays.backend</code><a class="headerlink" href="#airelaysbackend" title="Permanent link">&para;</a></h3>
 <ul>
 <li>OpenAI runtime HTTP calls to the verified ChatGPT backend</li>
+<li>structured errors for upstream HTTP and transport failures</li>
 </ul>
 <h3 id="airelaysproviders"><code>airelays.providers</code><a class="headerlink" href="#airelaysproviders" title="Permanent link">&para;</a></h3>
 <ul>

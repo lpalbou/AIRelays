@@ -2,86 +2,118 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://www.lpalbou.info/AIRelays/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/api/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/architecture/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/configuration/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/disclaimer/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/docs-index/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/faq/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/getting-started/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/security/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/subscription-status/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/troubleshooting/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/adr/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/adr/0001-no-silent-degradation-truncation-or-budget-invention/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/adr/0002-chatgpt-subscription-backend-compatibility-boundary/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/adr/0003-local-config-and-default-deny-relay-security/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/adr/0004-provider-runtime-boundary-and-experimental-local-adapters/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/backlog/overview/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/completed/accounts/</loc>
+         <lastmod>2026-07-11</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening/</loc>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/backlog/completed/providers/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/backlog/completed/providers/0001_provider_runtime_registry_for_subscription_relays/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/backlog/completed/providers/0010_experimental_claude_subscription_cli_adapter/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/completed/providers/0011_claude_runtime_mainline_graduation/</loc>
+         <lastmod>2026-07-11</lastmod>
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/backlog/planned/providers/</loc>
-         <lastmod>2026-07-10</lastmod>
+         <lastmod>2026-07-11</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/proposed/accounts/</loc>
+         <lastmod>2026-07-11</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/proposed/accounts/0013_openai_usage_probe_caching_and_single_flight/</loc>
+         <lastmod>2026-07-11</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/proposed/accounts/0014_wall_clock_bench_expiry_across_system_sleep/</loc>
+         <lastmod>2026-07-11</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/proposed/providers/</loc>
+         <lastmod>2026-07-11</lastmod>
+    </url>
+    <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/proposed/providers/0015_claude_token_shape_validation_on_set_token/</loc>
+         <lastmod>2026-07-11</lastmod>
     </url>
 </urlset>

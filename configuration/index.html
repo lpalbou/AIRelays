@@ -947,6 +947,12 @@
 <span class="k">[providers.openai]</span>
 <span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="n">models_cache_ttl_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">300.0</span>
+<span class="c1"># Multi-account routing: &quot;round_robin&quot; (default) balances requests across</span>
+<span class="c1"># accounts with capacity; &quot;ordered&quot; drains the first account first.</span>
+<span class="n">balance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;round_robin&quot;</span>
+<span class="c1"># Fallback bench duration (seconds) when a limited account&#39;s reset time is</span>
+<span class="c1"># unknown; upstream-reported reset times are used when available.</span>
+<span class="n">account_cooldown_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">300</span>
 
 <span class="k">[providers.claude]</span>
 <span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
@@ -977,6 +983,8 @@
 <li><code>AIRELAYS_LOG_STREAM_LINES</code></li>
 <li><code>AIRELAYS_ENABLE_OPENAI</code></li>
 <li><code>AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS</code></li>
+<li><code>AIRELAYS_OPENAI_BALANCE</code> (<code>round_robin</code> default, or <code>ordered</code>)</li>
+<li><code>AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS</code></li>
 <li><code>AIRELAYS_ENABLE_CLAUDE</code> (legacy <code>AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL</code> is still honored)</li>
 <li><code>AIRELAYS_CLAUDE_BIN</code></li>
 <li><code>AIRELAYS_CLAUDE_TIMEOUT_SECONDS</code></li>
