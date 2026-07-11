@@ -53,6 +53,9 @@ pub struct AppSettings {
     /// (relay default); "round_robin" sends equal request counts;
     /// "ordered" drains the first account first.
     pub openai_balance: String,
+    /// Extra OpenAI model ids to advertise beyond the upstream catalog
+    /// (which lags what the backend actually serves), comma-separated.
+    pub openai_extra_models_csv: String,
     // The serde alias keeps settings files written while the Claude runtime
     // carried the "experimental" label loading unchanged.
     #[serde(alias = "enableClaudeExperimental")]
@@ -101,6 +104,7 @@ impl Default for AppSettings {
             enable_openai_provider: true,
             models_cache_ttl_seconds: 300.0,
             openai_balance: "balanced".into(),
+            openai_extra_models_csv: "gpt-5.6-sol, gpt-5.6-terra".into(),
             enable_claude: true,
             claude_bin: "claude".into(),
             claude_timeout_seconds: 600.0,
@@ -165,8 +169,15 @@ impl AppSettings {
     }
 
     pub fn claude_models(&self) -> Vec<String> {
-        self.claude_models_csv
-            .split(',')
+        Self::csv_models(&self.claude_models_csv)
+    }
+
+    pub fn openai_extra_models(&self) -> Vec<String> {
+        Self::csv_models(&self.openai_extra_models_csv)
+    }
+
+    fn csv_models(csv: &str) -> Vec<String> {
+        csv.split(',')
             .map(|m| m.trim().to_string())
             .filter(|m| !m.is_empty())
             .collect()
@@ -235,6 +246,7 @@ impl AppSettings {
                     enabled: self.enable_openai_provider,
                     models_cache_ttl_seconds: self.models_cache_ttl_seconds,
                     balance: &self.openai_balance,
+                    extra_models: self.openai_extra_models(),
                 },
                 claude: ClaudeSection {
                     enabled: self.claude_effectively_enabled(),
@@ -323,6 +335,7 @@ struct OpenAiSection<'a> {
     enabled: bool,
     models_cache_ttl_seconds: f64,
     balance: &'a str,
+    extra_models: Vec<String>,
 }
 
 #[derive(Serialize)]

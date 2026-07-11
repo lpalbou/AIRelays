@@ -30,6 +30,7 @@ const settings = {
   enableOpenaiProvider: true,
   modelsCacheTtlSeconds: 300,
   openaiBalance: "balanced",
+  openaiExtraModelsCsv: "gpt-5.6-sol, gpt-5.6-terra",
   enableClaude: true,
   claudeBin: "claude",
   claudeTimeoutSeconds: 600,

@@ -24,6 +24,14 @@ DEFAULT_CLAUDE_MODELS = (
     "claude:haiku",
     "claude:fable",
 )
+# Model ids the upstream serves but does not (yet) list in its catalog
+# endpoint; advertising them in /v1/models makes them discoverable by
+# clients that pick from the list. Requests for any unlisted id still pass
+# through regardless — the upstream stays the final authority.
+DEFAULT_OPENAI_EXTRA_MODELS = (
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+)
 
 
 def _env(*names: str) -> str | None:
@@ -162,6 +170,9 @@ class Settings:
     # percentage of each plan's capacity; "round_robin" sends strictly equal
     # request counts; "ordered" drains the first account before the next.
     openai_balance: str = "balanced"
+    # Extra OpenAI model ids to advertise in /v1/models beyond the upstream
+    # catalog (which lags what the backend actually serves).
+    openai_extra_models: tuple[str, ...] = DEFAULT_OPENAI_EXTRA_MODELS
     openai_account_cooldown_seconds: int = 300
     enable_claude: bool = True
     claude_bin: str = "claude"
@@ -419,6 +430,11 @@ class Settings:
                 or _cfg(payload, "providers", "claude", "models"),
                 DEFAULT_CLAUDE_MODELS,
             ),
+            openai_extra_models=_str_list(
+                _env("AIRELAYS_OPENAI_EXTRA_MODELS")
+                or _cfg(payload, "providers", "openai", "extra_models"),
+                DEFAULT_OPENAI_EXTRA_MODELS,
+            ),
         )
 
     def ensure_directories(self) -> None:
@@ -574,6 +590,7 @@ enabled = {str(self.enable_openai_provider).lower()}
 models_cache_ttl_seconds = {self.models_cache_ttl_seconds}
 balance = "{self.openai_balance}"
 account_cooldown_seconds = {self.openai_account_cooldown_seconds}
+extra_models = [{", ".join(f'"{model}"' for model in self.openai_extra_models)}]
 
 [providers.claude]
 enabled = {str(self.enable_claude).lower()}
@@ -622,6 +639,7 @@ models = [{", ".join(f'"{model}"' for model in self.claude_models)}]
                     "models_cache_ttl_seconds": self.models_cache_ttl_seconds,
                     "balance": self.openai_balance,
                     "account_cooldown_seconds": self.openai_account_cooldown_seconds,
+                    "extra_models": list(self.openai_extra_models),
                 },
                 "claude": {
                     "enabled": self.enable_claude,

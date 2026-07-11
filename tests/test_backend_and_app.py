@@ -1023,6 +1023,29 @@ def test_relay_status_reports_models_cache_disabled_with_openai_provider_disable
     assert cache["state"] == "provider_disabled"
 
 
+def test_models_route_advertises_configured_extra_models_with_dedupe(tmp_path) -> None:
+    """The upstream catalog lags what the backend serves; configured extra
+    ids appear in /v1/models exactly once even when the catalog catches up."""
+    settings = make_settings(
+        tmp_path,
+        openai_extra_models=("gpt-5.6-sol", "gpt-5.5"),
+    )
+    app = create_app(settings)
+
+    async def fake_list_models(request_id):
+        del request_id
+        return {"models": [{"slug": "gpt-5.5"}, {"slug": "gpt-5.4"}]}
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        response = client.get("/v1/models")
+
+    assert response.status_code == 200
+    ids = [item["id"] for item in response.json()["data"] if not item["id"].startswith("claude:")]
+    assert "gpt-5.6-sol" in ids
+    assert ids.count("gpt-5.5") == 1  # deduped against the catalog
+
+
 def test_models_route_returns_claude_models_when_openai_auth_is_missing(tmp_path) -> None:
     settings = make_settings(
         tmp_path,

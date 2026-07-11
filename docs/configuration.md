@@ -71,6 +71,10 @@ models_cache_ttl_seconds = 300.0
 # percentage of each plan's capacity; "round_robin" sends equal request
 # counts; "ordered" drains the first account first.
 balance = "balanced"
+# Extra model ids to advertise in /v1/models beyond the upstream catalog,
+# which lags what the backend actually serves (requests for unlisted ids
+# pass through regardless; the upstream stays the final authority).
+extra_models = ["gpt-5.6-sol", "gpt-5.6-terra"]
 # Fallback bench duration (seconds) when a limited account's reset time is
 # unknown; upstream-reported reset times are used when available.
 account_cooldown_seconds = 300
@@ -106,6 +110,7 @@ models = ["claude:sonnet", "claude:opus", "claude:haiku", "claude:fable"]
 - `AIRELAYS_ENABLE_OPENAI`
 - `AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`
 - `AIRELAYS_OPENAI_BALANCE` (`balanced` default, `round_robin`, or `ordered`)
+- `AIRELAYS_OPENAI_EXTRA_MODELS` (comma-separated ids advertised beyond the upstream catalog)
 - `AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS`
 - `AIRELAYS_ENABLE_CLAUDE` (legacy `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL` is still honored)
 - `AIRELAYS_CLAUDE_BIN`

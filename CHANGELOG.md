@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 ### Added
 
+- Configurable extra OpenAI models: `[providers.openai] extra_models` / `AIRELAYS_OPENAI_EXTRA_MODELS` advertises model ids the upstream serves but does not list in its catalog endpoint. Verified live and shipped as defaults: `gpt-5.6-sol` and `gpt-5.6-terra`. Extras are deduplicated if the catalog catches up, only extend a successfully fetched catalog (they never mask an upstream auth error), and unlisted ids continue to pass through to the upstream regardless. The desktop Settings expose the list.
 - Accounts card token breakdown: each OpenAI account row gains a "more" hover showing, for the current 5h window, the input/output tokens the relay served per model plus overall totals — the ground truth behind the usage bars. Counts cover traffic through AIRelays only (usage from other apps on the same account is not included, and the panel says so); the tally resets when the window rolls over, survives relay restarts, and is exposed as `window_tokens` on the account status payload.
 
 ### Changed

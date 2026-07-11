@@ -75,6 +75,15 @@ def test_openai_balance_is_normalized_and_validated(tmp_path, monkeypatch) -> No
         Settings.from_sources(tmp_path / "missing.toml")
 
 
+def test_openai_extra_models_default_and_override(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("AIRELAYS_OPENAI_EXTRA_MODELS", raising=False)
+    loaded = Settings.from_sources(tmp_path / "missing.toml")
+    assert "gpt-5.6-sol" in loaded.openai_extra_models
+    monkeypatch.setenv("AIRELAYS_OPENAI_EXTRA_MODELS", "my-model-a, my-model-b")
+    loaded = Settings.from_sources(tmp_path / "missing.toml")
+    assert loaded.openai_extra_models == ("my-model-a", "my-model-b")
+
+
 def test_claude_is_enabled_by_default(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "missing.toml"
     monkeypatch.delenv("AIRELAYS_ENABLE_CLAUDE", raising=False)

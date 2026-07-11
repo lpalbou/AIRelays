@@ -1416,6 +1416,18 @@ class ProviderRegistry:
                             data.append(_openai_model_record(slug).as_wire())
             except Exception as exc:  # noqa: BLE001
                 openai_error = exc
+            # The upstream catalog lags what the backend actually serves
+            # (verified live: ids like gpt-5.6-sol answer requests while the
+            # catalog omits them). Configured extra ids are advertised so
+            # list-driven clients can discover them; deduped in case the
+            # catalog catches up later. Only on a successful catalog fetch —
+            # extras extend a working runtime, they must never mask an
+            # upstream auth or availability error.
+            if openai_error is None:
+                listed = {item["id"] for item in data}
+                for model_id in self._settings.openai_extra_models:
+                    if model_id and model_id not in listed:
+                        data.append(_openai_model_record(model_id).as_wire())
         if self._claude is not None:
             data.extend(self._claude.list_models())
         if data:
