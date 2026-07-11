@@ -1244,7 +1244,7 @@ def _print_accounts_summary(payload: dict[str, object]) -> None:
         position = entry.get("position")
         label = entry.get("email") or entry.get("slug")
         heading = f"{position}. {label}" if multi else str(label)
-        if multi and position == 1:
+        if multi and position == 1 and payload.get("balance") == "ordered":
             heading += "  (used first)"
         _print_section(heading)
         _print_field("Plan", entry.get("plan"))

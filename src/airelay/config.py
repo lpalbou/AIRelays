@@ -70,6 +70,20 @@ def _cfg(payload: dict[str, Any], *path: str) -> Any:
     return current
 
 
+def _normalized_balance(value: Any) -> str:
+    """Balancing strategy, normalized and validated. A typo must fail loudly
+    at startup rather than silently selecting a different routing policy."""
+    if value is None:
+        return "round_robin"
+    text = str(value).strip().lower().replace("-", "_")
+    if text in {"round_robin", "ordered"}:
+        return text
+    raise ValueError(
+        f"Invalid [providers.openai] balance value {value!r}: "
+        "use \"round_robin\" or \"ordered\"."
+    )
+
+
 def _path(value: Any, default: Path) -> Path:
     if value is None:
         return default.expanduser()
@@ -143,10 +157,10 @@ class Settings:
     log_stream_lines: bool = False
     enable_openai_provider: bool = True
     models_cache_ttl_seconds: float = 300.0
-    # Multiple own accounts: "ordered" uses the first account until it hits
-    # its usage limit, then continues with the next; "round_robin" spreads
-    # requests evenly across healthy accounts.
-    openai_balance: str = "ordered"
+    # Multiple own accounts: "round_robin" (default) spreads requests across
+    # healthy accounts so charge is always balanced; "ordered" uses the first
+    # account until it hits its usage limit, then continues with the next.
+    openai_balance: str = "round_robin"
     openai_account_cooldown_seconds: int = 300
     enable_claude: bool = True
     claude_bin: str = "claude"
@@ -349,10 +363,9 @@ class Settings:
                 or _cfg(payload, "providers", "openai", "models_cache_ttl_seconds"),
                 300.0,
             ),
-            openai_balance=str(
+            openai_balance=_normalized_balance(
                 _env("AIRELAYS_OPENAI_BALANCE")
                 or _cfg(payload, "providers", "openai", "balance")
-                or "ordered"
             ),
             openai_account_cooldown_seconds=_int(
                 _env("AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS")

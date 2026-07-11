@@ -183,7 +183,16 @@ class _PooledAccount:
     manager: AuthManager
     backend: ChatGptCodexBackend
     limited_until: float = 0.0
+    # When the bench evidence was observed (monotonic). Usage-driven bench
+    # release compares against the probe's start time so a stale snapshot
+    # can never erase a bench placed after the snapshot was taken.
+    limited_since: float = 0.0
     last_error: str | None = None
+    # Balanced selection state: least-recently-selected wins. A plain
+    # round-robin counter indexes a list whose membership changes between
+    # calls (health and model filters), which starves accounts; a per-account
+    # timestamp is fair under any churn.
+    last_selected_at: float = 0.0
     # Cached lowercase model slugs this account exposes, with fetch time.
     models: frozenset[str] = field(default_factory=frozenset)
     models_fetched_at: float = 0.0
@@ -214,9 +223,16 @@ class OpenAiAccountPool:
         self._settings = settings
         self._traffic = traffic
         self._accounts: list[_PooledAccount] = []
-        self._rr_next = 0
         self._sticky: dict[str, str] = {}
         self._sticky_cap = 5000
+        # Bench state of accounts that briefly left the pool (transient
+        # keyring/storage read failures make a slot vanish and reappear);
+        # without this, every flap would launder an active bench.
+        self._bench_memory: dict[str, tuple[str | None, float, float, str | None]] = {}
+        # Backends whose account was dropped by reconciliation; closed on
+        # shutdown (or immediately when an event loop is available) instead
+        # of leaking their connection pools.
+        self._retired_backends: list[ChatGptCodexBackend] = []
         # Set when the pool owns discovery (production); None when the caller
         # supplied fixed accounts (tests), which disables live reload.
         self._discoverable = accounts is None
@@ -280,16 +296,39 @@ class OpenAiAccountPool:
 
         existing = {account.slot.slug: account for account in self._accounts}
         reconciled: list[_PooledAccount] = []
+        kept: set[str] = set()
         for slot in slots:
             current = existing.get(slot.slug)
             if current is not None and current.slot.account_id == slot.account_id:
                 current.slot = slot  # refresh email/plan/auth metadata
                 reconciled.append(current)
+                kept.add(slot.slug)
             else:
-                reconciled.append(self._make_pooled(slot))
-        # Retired accounts simply drop out; their httpx clients are closed on
-        # app shutdown via close(), and abandoning them here avoids racing an
-        # in-flight request that still holds a reference.
+                fresh = self._make_pooled(slot)
+                # A slot that flapped out and back (transient storage read
+                # failure) must not return with its bench laundered.
+                remembered = self._bench_memory.pop(slot.slug, None)
+                if remembered is not None:
+                    account_id, limited_until, limited_since, last_error = remembered
+                    if account_id == slot.account_id and limited_until > time.monotonic():
+                        fresh.limited_until = limited_until
+                        fresh.limited_since = limited_since
+                        fresh.last_error = last_error
+                reconciled.append(fresh)
+        for slug, account in existing.items():
+            if slug in kept:
+                continue
+            if account.limited_until > time.monotonic():
+                self._bench_memory[slug] = (
+                    account.slot.account_id,
+                    account.limited_until,
+                    account.limited_since,
+                    account.last_error,
+                )
+                # Bounded: drop the oldest memory once past a sane cap.
+                while len(self._bench_memory) > 64:
+                    self._bench_memory.pop(next(iter(self._bench_memory)))
+            self._retire_backend(account.backend)
         self._accounts = reconciled
         self._last_signature = signature
         self._traffic.write(
@@ -299,6 +338,17 @@ class OpenAiAccountPool:
             }
         )
         return True
+
+    def _retire_backend(self, backend: ChatGptCodexBackend) -> None:
+        """Closes a dropped account's HTTP client. Immediate when an event
+        loop is running; otherwise deferred to close() so the connections
+        are never simply abandoned."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._retired_backends.append(backend)
+            return
+        loop.create_task(backend.close())
 
     # ----- introspection -----
 
@@ -339,27 +389,37 @@ class OpenAiAccountPool:
     def manager_for_primary(self) -> AuthManager:
         return self.primary().manager
 
-    def clear_cooldowns(self) -> None:
-        """Forgets every bench so all accounts are immediately eligible
-        again. Used by the manual hard-refresh; genuinely-limited accounts
-        are re-benched by the following usage re-probe."""
-        for account in self._accounts:
-            account.limited_until = 0.0
-            account.last_error = None
-
     async def hard_refresh(self, request_id: str) -> list[dict[str, Any]]:
-        """Manual override: reload accounts, clear all benches, then re-probe
-        usage so only genuinely-exhausted accounts stay benched. Returns the
-        resulting per-account status."""
+        """Manual capacity re-check. Every bench release is evidence-gated:
+        an account leaves its bench only when a fresh, successful usage probe
+        shows capacity (_bench_from_usage handles both directions). Benches
+        are never cleared up front — the previous clear-first design opened a
+        window in which live traffic hit a known-exhausted account and earned
+        a fresh 429 before the re-probe landed."""
         self.refresh_if_changed()
-        self.clear_cooldowns()
-        # Re-probe usage; _bench_from_usage re-benches the truly-limited and
-        # leaves the rest available. A probe failure leaves the account
-        # available, which is the intended "just in case" bias.
+        before = {
+            account.slot.slug: account.is_limited(time.monotonic())
+            for account in self._accounts
+        }
         try:
             await self.subscription_statuses(request_id)
         except Exception:  # noqa: BLE001
             pass
+        now = time.monotonic()
+        self._traffic.write(
+            {
+                "request_id": request_id,
+                "phase": "accounts_refresh",
+                "accounts": [
+                    {
+                        "account": account.slot.slug,
+                        "was_limited": before.get(account.slot.slug, False),
+                        "limited": account.is_limited(now),
+                    }
+                    for account in self._accounts
+                ],
+            }
+        )
         return self.account_statuses()
 
     # ----- selection -----
@@ -384,6 +444,9 @@ class OpenAiAccountPool:
                     and not account.is_limited(now)
                     and self._model_supported(account, model)
                 ):
+                    # Sticky traffic counts as selection, or the balanced
+                    # picker would see this account as idle and pile on.
+                    account.last_selected_at = now
                     return account
         healthy = self._healthy(now)
         # Prefer accounts that support the requested model.
@@ -392,25 +455,53 @@ class OpenAiAccountPool:
         if not pick_from:
             # Every account is cooling down; least-recently-limited first.
             return min(self._accounts, key=lambda account: account.limited_until)
-        if self._settings.openai_balance == "round_robin":
-            chosen = pick_from[self._rr_next % len(pick_from)]
-            self._rr_next += 1
-        else:  # ordered spillover (default)
-            chosen = pick_from[0]
+        if self._settings.openai_balance == "ordered":
+            chosen = pick_from[0]  # opt-in spillover: first healthy account
+        else:  # round_robin (default): least-recently-selected is fair
+            # under membership churn, unlike a shared modulo counter over a
+            # list whose contents change between calls.
+            chosen = min(pick_from, key=lambda account: account.last_selected_at)
+        chosen.last_selected_at = now
         if session_id:
-            if len(self._sticky) >= self._sticky_cap:
-                self._sticky.clear()
-            self._sticky[session_id] = chosen.slot.slug
+            self._pin(session_id, chosen.slot.slug)
         return chosen
 
+    def _pin(self, session_id: str, slug: str) -> None:
+        # Evict oldest affinities instead of wiping the whole map: a full
+        # clear would flip every active conversation to a different account
+        # at once, defeating upstream prompt caching en masse.
+        self._sticky.pop(session_id, None)
+        while len(self._sticky) >= self._sticky_cap:
+            self._sticky.pop(next(iter(self._sticky)))
+        self._sticky[session_id] = slug
+
     # ----- failure classification -----
+
+    @staticmethod
+    def _structured_error_type(detail: str) -> str | None:
+        """The upstream error `type` when the body is the structured JSON
+        error shape; None otherwise. Substring scanning of arbitrary bodies
+        is not safe here — a 400 whose body merely echoes request content
+        containing a marker string must never bench the pool."""
+        try:
+            payload = json.loads(detail)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        error = payload.get("error")
+        if isinstance(error, dict) and isinstance(error.get("type"), str):
+            return error["type"]
+        return None
 
     def _cooldown_seconds(self, error: BackendError) -> float | None:
         """Returns the cooldown when the error should trigger failover."""
         detail = error.detail or ""
-        limit_hit = any(marker in detail for marker in USAGE_LIMIT_MARKERS)
-        if not limit_hit and error.status_code != RETRIABLE_STATUS_EXACT and error.status_code < RETRIABLE_STATUS_MIN:
-            return None
+        error_type = self._structured_error_type(detail)
+        limit_hit = error_type in USAGE_LIMIT_MARKERS or (
+            error.status_code == RETRIABLE_STATUS_EXACT
+            and any(marker in detail for marker in USAGE_LIMIT_MARKERS)
+        )
         if limit_hit or error.status_code == RETRIABLE_STATUS_EXACT:
             try:
                 payload = json.loads(detail)
@@ -420,12 +511,35 @@ class OpenAiAccountPool:
             except (json.JSONDecodeError, AttributeError):
                 pass
             return float(self._settings.openai_account_cooldown_seconds)
-        # Transient 5xx: short cooldown so one bad gateway response does not
-        # bench an account for minutes.
-        return min(30.0, float(self._settings.openai_account_cooldown_seconds))
+        if error.status_code == 401:
+            # One account's credentials are dead (the backend already spent
+            # its refresh retry). Other accounts can still serve; recovery
+            # needs user action, so bench for the full cooldown.
+            return float(self._settings.openai_account_cooldown_seconds)
+        if error.status_code >= RETRIABLE_STATUS_MIN:
+            # Transient 5xx: short cooldown so one bad gateway response does
+            # not bench an account for minutes.
+            return min(30.0, float(self._settings.openai_account_cooldown_seconds))
+        # Client errors (400/403/404/422...) would fail identically on the
+        # next account; failing over would just mask the real problem.
+        return None
+
+    def _failover_cooldown(self, error: Exception) -> float | None:
+        """Cooldown for any exception the attempt loop may see. Transport
+        and auth failures are account-scoped problems: the next account gets
+        its chance instead of the client eating the error."""
+        if isinstance(error, BackendError):
+            return self._cooldown_seconds(error)
+        if isinstance(error, AuthenticationError):
+            return float(self._settings.openai_account_cooldown_seconds)
+        return None
 
     def _mark_limited(self, account: _PooledAccount, seconds: float, reason: str) -> None:
-        account.limited_until = time.monotonic() + seconds
+        now = time.monotonic()
+        # Extend-only: a short transient-error cooldown must never truncate
+        # an authoritative multi-hour usage bench.
+        account.limited_until = max(account.limited_until, now + seconds)
+        account.limited_since = now
         account.last_error = reason
 
     def _log_failover(
@@ -455,7 +569,14 @@ class OpenAiAccountPool:
         self, session_id: str | None, model: str | None = None
     ) -> list[_PooledAccount]:
         first = self._select(session_id, model)
-        rest = [account for account in self._accounts if account is not first]
+        now = time.monotonic()
+        # Fallbacks in health order: healthy accounts before benched ones
+        # (a known-benched account would waste a guaranteed-429 round trip),
+        # benched ones by earliest recovery.
+        rest = sorted(
+            (account for account in self._accounts if account is not first),
+            key=lambda account: (account.is_limited(now), account.limited_until),
+        )
         ordered = [first, *rest]
         # Prefer accounts that support the model; keep the rest as last-ditch
         # fallbacks so a request is never dropped purely on a stale cache.
@@ -463,7 +584,10 @@ class OpenAiAccountPool:
         unsupported = [a for a in ordered if not self._model_supported(a, model)]
         return supported + unsupported if supported else ordered
 
-    def _log_selection(self, request_id: str, account: _PooledAccount) -> None:
+    def _log_selection(self, request_id: str, account: _PooledAccount, attempt: int) -> None:
+        # `attempt` disambiguates served traffic from failover retries: a
+        # failed-over request writes one record per attempt, so counting
+        # attempt-0 records is what measures the selection distribution.
         if len(self._accounts) > 1:
             self._traffic.write(
                 {
@@ -471,12 +595,13 @@ class OpenAiAccountPool:
                     "phase": "account_selected",
                     "account_id": account.slot.account_id,
                     "account": account.slot.slug,
+                    "attempt": attempt,
                 }
             )
 
     def _repin(self, session_id: str | None, account: _PooledAccount) -> None:
         if session_id:
-            self._sticky[session_id] = account.slot.slug
+            self._pin(session_id, account.slot.slug)
 
     # ----- backend surface consumed by app.py -----
 
@@ -488,22 +613,28 @@ class OpenAiAccountPool:
         attempts = self._attempt_order(session_id, model)
         last_error: Exception | None = None
         for index, account in enumerate(attempts):
-            self._log_selection(request_id, account)
+            self._log_selection(request_id, account, index)
             try:
                 result = await account.backend.collect_response(payload, request_id, session_id)
                 self._repin(session_id, account)
                 return result
-            except BackendError as error:
-                cooldown = self._cooldown_seconds(error)
-                if cooldown is None or index == len(attempts) - 1:
+            except (BackendError, AuthenticationError) as error:
+                cooldown = self._failover_cooldown(error)
+                if cooldown is None:
                     raise self._final_error(error) from error
-                self._mark_limited(account, cooldown, error.detail[:200])
+                # Bench on every failing attempt, including the last one:
+                # otherwise an exhausted final account is re-selected as
+                # "healthy" by every subsequent request and hammered with
+                # guaranteed 429s.
+                self._mark_limited(account, cooldown, self._error_reason(error))
+                if index == len(attempts) - 1:
+                    raise self._final_error(error) from error
                 self._log_failover(
                     request_id,
                     _FailoverDecision(
                         from_account=account.slot.slug,
                         to_account=attempts[index + 1].slot.slug,
-                        reason=f"status {error.status_code}",
+                        reason=self._error_reason(error),
                     ),
                     cooldown,
                 )
@@ -517,7 +648,7 @@ class OpenAiAccountPool:
         model = payload.get("model") if isinstance(payload, dict) else None
         attempts = self._attempt_order(session_id, model)
         for index, account in enumerate(attempts):
-            self._log_selection(request_id, account)
+            self._log_selection(request_id, account, index)
             stream = account.backend.stream_response_events(payload, request_id, session_id)
             started = False
             try:
@@ -527,22 +658,30 @@ class OpenAiAccountPool:
                         self._repin(session_id, account)
                     yield event
                 return
-            except BackendError as error:
+            except (BackendError, AuthenticationError) as error:
                 # Failover is only honest before the first byte reached the
                 # client; afterwards the stream must die visibly.
-                cooldown = self._cooldown_seconds(error)
-                if started or cooldown is None or index == len(attempts) - 1:
+                cooldown = self._failover_cooldown(error)
+                if cooldown is None or started:
                     raise self._final_error(error) from error
-                self._mark_limited(account, cooldown, error.detail[:200])
+                self._mark_limited(account, cooldown, self._error_reason(error))
+                if index == len(attempts) - 1:
+                    raise self._final_error(error) from error
                 self._log_failover(
                     request_id,
                     _FailoverDecision(
                         from_account=account.slot.slug,
                         to_account=attempts[index + 1].slot.slug,
-                        reason=f"status {error.status_code}",
+                        reason=self._error_reason(error),
                     ),
                     cooldown,
                 )
+
+    @staticmethod
+    def _error_reason(error: Exception) -> str:
+        if isinstance(error, BackendError):
+            return f"status {error.status_code}: {error.detail[:160]}"
+        return f"auth: {str(error)[:160]}"
 
     async def _account_models(self, account: _PooledAccount, request_id: str) -> frozenset[str]:
         """Cached per-account model slugs, refreshed on the same TTL as the
@@ -615,55 +754,75 @@ class OpenAiAccountPool:
                 "slug": account.slot.slug,
                 "email": account.slot.email,
             }
+            probe_started = time.monotonic()
             try:
                 usage = await account.backend.get_subscription_status(request_id)
                 entry["payload"] = usage
-                self._bench_from_usage(account, usage)
+                self._bench_from_usage(account, usage, probe_started)
             except (BackendError, AuthenticationError) as error:
                 entry["error"] = str(error)
             results.append(entry)
         return results
 
-    def _bench_from_usage(self, account: _PooledAccount, usage: dict[str, Any]) -> None:
+    def _bench_from_usage(
+        self, account: _PooledAccount, usage: dict[str, Any], probe_started: float
+    ) -> None:
         """Proactively cools down an account whose upstream usage already
-        reports a reached limit, using the soonest window reset as the
-        cooldown so the account returns to rotation exactly when it recovers."""
+        reports a reached limit, and releases a benched account when a fresh
+        probe shows capacity. ``probe_started`` gates the release: a snapshot
+        fetched before the bench was placed carries no evidence about it (the
+        429 may have happened after the snapshot), so it must not erase it."""
         if not isinstance(usage, dict):
             return
+        # Every reached-limit signal the payload carries: the nullable
+        # reached-type object, the explicit booleans, and the window math.
+        # Relying on a single undocumented field is one upstream tweak away
+        # from releasing an exhausted account back into rotation.
         reached = bool(usage.get("rate_limit_reached_type"))
-        resets: list[int] = []
         rate = usage.get("rate_limit")
         windows = []
         if isinstance(rate, dict):
+            if rate.get("limit_reached") is True or rate.get("allowed") is False:
+                reached = True
             windows = [rate.get("primary_window"), rate.get("secondary_window")]
+        resets: list[int] = []
         for window in windows:
             if not isinstance(window, dict):
                 continue
             used = window.get("used_percent")
             if isinstance(used, (int, float)) and used >= 100:
                 reached = True
-                secs = window.get("reset_after_seconds") or window.get("resets_in_seconds")
+                secs = window.get("reset_after_seconds")
+                if not isinstance(secs, (int, float)) or secs <= 0:
+                    secs = window.get("resets_in_seconds")
                 if isinstance(secs, (int, float)) and secs > 0:
                     resets.append(int(secs))
         now = time.monotonic()
         if not reached:
             # Authoritative recovery signal: usage says there is capacity, so
-            # release any bench immediately rather than waiting out an
-            # over-long estimate. This is what returns an account to rotation
-            # the moment its budget is back.
-            if account.limited_until > now:
+            # release any bench rather than waiting out an over-long
+            # estimate — but only when the snapshot is fresher than the
+            # bench evidence.
+            if account.limited_until > now and probe_started > account.limited_since:
                 account.limited_until = 0.0
                 account.last_error = None
             return
-        cooldown = float(min(resets)) if resets else float(self._settings.openai_account_cooldown_seconds)
+        # The account cannot serve until every exhausted window has reset:
+        # with a maxed 5h window AND a maxed weekly window, using the shorter
+        # reset would re-bench-flap every five hours for days.
+        cooldown = float(max(resets)) if resets else float(self._settings.openai_account_cooldown_seconds)
         # Only extend, never shorten, an existing bench.
         if account.limited_until < now + cooldown:
             account.limited_until = now + cooldown
+            account.limited_since = now
             account.last_error = "usage limit reached (from usage report)"
 
     async def close(self) -> None:
         for account in self._accounts:
             await account.backend.close()
+        retired, self._retired_backends = self._retired_backends, []
+        for backend in retired:
+            await backend.close()
 
     def _final_error(self, error: Exception) -> Exception:
         if (
@@ -672,14 +831,16 @@ class OpenAiAccountPool:
             and self._cooldown_seconds(error) is not None
         ):
             now = time.monotonic()
-            waits = [max(0.0, account.limited_until - now) for account in self._accounts]
-            earliest = min(waits) if waits else 0.0
-            names = len(self._accounts)
-            return BackendError(
-                error.status_code,
-                f"All {names} OpenAI accounts are unavailable "
-                f"(earliest retry in {int(earliest) or '?'}s). Last error: {error.detail[:300]}",
-            )
+            # Only claim "all unavailable" when it is true.
+            if all(account.is_limited(now) for account in self._accounts):
+                earliest = min(account.limited_until - now for account in self._accounts)
+                names = len(self._accounts)
+                return BackendError(
+                    error.status_code,
+                    f"All {names} OpenAI accounts are at their limits "
+                    f"(earliest retry in {max(1, int(earliest))}s). "
+                    f"Last error: {error.detail[:300]}",
+                )
         return error
 
 

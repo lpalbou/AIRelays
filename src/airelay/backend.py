@@ -122,66 +122,73 @@ class ChatGptCodexBackend:
             if session_id:
                 headers["session_id"] = session_id
 
-            async with self._client.stream(
-                "POST",
-                f"{self._settings.upstream_base_url}/responses",
-                content=body,
-                headers=headers,
-            ) as response:
-                if response.status_code == 401 and not retried:
-                    retried = True
-                    await self._auth_manager.refresh_tokens()
-                    continue
-                if response.status_code >= 400:
-                    text = await response.aread()
-                    self._traffic.write(
-                        {
-                            "request_id": request_id,
-                            "phase": "upstream_response_error",
-                            "status_code": response.status_code,
-                            "body": snapshot_body(
-                                response.headers.get("content-type"), text
-                            ),
-                        }
-                    )
-                    raise BackendError(response.status_code, text.decode("utf-8", errors="replace"))
-
-                event_name = "message"
-                data_lines: list[str] = []
-                # Per-line logging is opt-in (config [logging] stream_lines):
-                # a single streamed response is hundreds of lines, which
-                # bloats the traffic log ~50x under load and evicts real
-                # request records from every log reader's window. Summary
-                # records (upstream_request/usage/response, errors) are
-                # always written regardless.
-                log_lines = self._settings.log_stream_lines
-                async for raw_line in response.aiter_lines():
-                    if log_lines:
+            try:
+                async with self._client.stream(
+                    "POST",
+                    f"{self._settings.upstream_base_url}/responses",
+                    content=body,
+                    headers=headers,
+                ) as response:
+                    if response.status_code == 401 and not retried:
+                        retried = True
+                        await self._auth_manager.refresh_tokens()
+                        continue
+                    if response.status_code >= 400:
+                        text = await response.aread()
                         self._traffic.write(
                             {
                                 "request_id": request_id,
-                                "phase": "upstream_stream_line",
-                                "line": raw_line,
+                                "phase": "upstream_response_error",
+                                "status_code": response.status_code,
+                                "body": snapshot_body(
+                                    response.headers.get("content-type"), text
+                                ),
                             }
                         )
-                    if raw_line == "":
-                        if data_lines:
-                            event = SSEEvent(event=event_name, data="\n".join(data_lines))
-                            self._log_stream_summary(request_id, event)
-                            yield event
-                        event_name = "message"
-                        data_lines = []
-                        continue
-                    if raw_line.startswith("event:"):
-                        event_name = raw_line.removeprefix("event:").strip()
-                        continue
-                    if raw_line.startswith("data:"):
-                        data_lines.append(raw_line.removeprefix("data:").lstrip())
-                if data_lines:
-                    event = SSEEvent(event=event_name, data="\n".join(data_lines))
-                    self._log_stream_summary(request_id, event)
-                    yield event
-                return
+                        raise BackendError(response.status_code, text.decode("utf-8", errors="replace"))
+
+                    event_name = "message"
+                    data_lines: list[str] = []
+                    # Per-line logging is opt-in (config [logging] stream_lines):
+                    # a single streamed response is hundreds of lines, which
+                    # bloats the traffic log ~50x under load and evicts real
+                    # request records from every log reader's window. Summary
+                    # records (upstream_request/usage/response, errors) are
+                    # always written regardless.
+                    log_lines = self._settings.log_stream_lines
+                    async for raw_line in response.aiter_lines():
+                        if log_lines:
+                            self._traffic.write(
+                                {
+                                    "request_id": request_id,
+                                    "phase": "upstream_stream_line",
+                                    "line": raw_line,
+                                }
+                            )
+                        if raw_line == "":
+                            if data_lines:
+                                event = SSEEvent(event=event_name, data="\n".join(data_lines))
+                                self._log_stream_summary(request_id, event)
+                                yield event
+                            event_name = "message"
+                            data_lines = []
+                            continue
+                        if raw_line.startswith("event:"):
+                            event_name = raw_line.removeprefix("event:").strip()
+                            continue
+                        if raw_line.startswith("data:"):
+                            data_lines.append(raw_line.removeprefix("data:").lstrip())
+                    if data_lines:
+                        event = SSEEvent(event=event_name, data="\n".join(data_lines))
+                        self._log_stream_summary(request_id, event)
+                        yield event
+                    return
+            except httpx.HTTPError as exc:
+                # Transport failures (DNS, connect, TLS, timeouts) become
+                # structured 502s so the account pool can classify them and
+                # fail over to another account instead of surfacing a raw
+                # exception to the client.
+                raise BackendError(502, f"Upstream connection failed: {exc}") from exc
 
     def _log_stream_summary(self, request_id: str, event: SSEEvent) -> None:
         if event.event != "response.completed":
@@ -230,7 +237,10 @@ class ChatGptCodexBackend:
             url = f"{root_url}{path}"
             if body is not None:
                 headers["Content-Type"] = "application/json"
-            response = await self._client.request(method, url, json=body, headers=headers)
+            try:
+                response = await self._client.request(method, url, json=body, headers=headers)
+            except httpx.HTTPError as exc:
+                raise BackendError(502, f"Upstream connection failed: {exc}") from exc
             if response.status_code == 401 and not retried:
                 retried = True
                 await self._auth_manager.refresh_tokens()

@@ -299,7 +299,62 @@ async def test_client_errors_do_not_fail_over(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_marker_text_in_a_client_error_body_does_not_bench(tmp_path: Path) -> None:
+    """A 400 whose body merely echoes a marker string (e.g. request content
+    quoting 'usage_limit_reached') must not be classified as a limit: one
+    poison request could otherwise bench the entire pool."""
+    import time
+    settings = _settings(tmp_path)
+    a = FakeBackend("a", fail_with=BackendError(400, "echo: usage_limit_reached in prompt"))
+    b = FakeBackend("b")
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    with pytest.raises(BackendError):
+        await pool.collect_response({}, "req", None)
+    assert not pool._accounts[0].is_limited(time.monotonic())
+    assert b.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_dead_credentials_fail_over_to_the_next_account(tmp_path: Path) -> None:
+    """One account's expired/broken auth must not kill the request while a
+    healthy account sits ready."""
+    from airelay.auth import AuthenticationError
+
+    settings = _settings(tmp_path)
+    a = FakeBackend("a", fail_with=AuthenticationError("token refresh failed"))
+    b = FakeBackend("b")
+    traffic = RecordingTraffic()
+    pool = _pool(settings, [a, b], traffic)
+    result = await pool.collect_response({}, "req", None)
+    assert result["served_by"] == "b"
+    assert "account_failover" in traffic.phases()
+
+
+@pytest.mark.asyncio
+async def test_persistent_401_fails_over(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    a = FakeBackend("a", fail_with=BackendError(401, "invalid token"))
+    b = FakeBackend("b")
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    result = await pool.collect_response({}, "req", None)
+    assert result["served_by"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_transport_errors_fail_over(tmp_path: Path) -> None:
+    """The backend wraps connect/timeout failures as BackendError(502); the
+    pool must treat them as account-scoped and try the next account."""
+    settings = _settings(tmp_path)
+    a = FakeBackend("a", fail_with=BackendError(502, "Upstream connection failed: timeout"))
+    b = FakeBackend("b")
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    result = await pool.collect_response({}, "req", None)
+    assert result["served_by"] == "b"
+
+
+@pytest.mark.asyncio
 async def test_all_accounts_limited_reports_actionable_error(tmp_path: Path) -> None:
+    import time
     settings = _settings(tmp_path)
     a = FakeBackend("a", fail_with=_usage_limit_error())
     b = FakeBackend("b", fail_with=_usage_limit_error())
@@ -307,6 +362,41 @@ async def test_all_accounts_limited_reports_actionable_error(tmp_path: Path) -> 
     with pytest.raises(BackendError) as excinfo:
         await pool.collect_response({}, "req", None)
     assert "2 OpenAI accounts" in excinfo.value.detail
+    # The last attempt is benched too: an exhausted final account must not be
+    # re-selected as "healthy" and hammered by every subsequent request.
+    now = time.monotonic()
+    assert all(account.is_limited(now) for account in pool._accounts)
+
+
+@pytest.mark.asyncio
+async def test_default_balance_spreads_load_across_accounts(tmp_path: Path) -> None:
+    """The out-of-the-box configuration must balance charge across available
+    accounts — no config key required."""
+    settings = _settings(tmp_path)
+    assert settings.openai_balance == "round_robin"
+    a, b = FakeBackend("a"), FakeBackend("b")
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    for _ in range(6):
+        await pool.collect_response({}, "req", None)
+    assert (a.calls, b.calls) == (3, 3)
+
+
+@pytest.mark.asyncio
+async def test_balanced_selection_stays_fair_under_membership_churn(tmp_path: Path) -> None:
+    """Least-recently-selected must not starve an account when the healthy
+    set changes between calls (the failure mode of a shared modulo counter)."""
+    import time
+    settings = _settings(tmp_path)
+    a, b = FakeBackend("a"), FakeBackend("b")
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    # Bench b briefly; traffic flows to a.
+    pool._mark_limited(pool._accounts[1], 0.05, "blip")
+    await pool.collect_response({}, "req1", None)
+    await pool.collect_response({}, "req2", None)
+    time.sleep(0.06)  # b recovers
+    # b is now the least-recently-selected and must be picked next.
+    await pool.collect_response({}, "req3", None)
+    assert b.calls == 1
 
 
 @pytest.mark.asyncio
@@ -374,6 +464,7 @@ def test_bench_from_usage_proactively_cools_a_maxed_account(tmp_path: Path) -> N
                 "secondary_window": {"used_percent": 100, "reset_after_seconds": 3600},
             },
         },
+        time.monotonic(),
     )
     assert account.is_limited(time.monotonic())
     # Cooldown tracks the window reset (~1h), not the default.
@@ -389,8 +480,141 @@ def test_bench_from_usage_ignores_healthy_account(tmp_path: Path) -> None:
     pool._bench_from_usage(
         account,
         {"rate_limit": {"primary_window": {"used_percent": 42, "reset_after_seconds": 100}}},
+        time.monotonic(),
     )
     assert not account.is_limited(time.monotonic())
+
+
+def test_bench_from_usage_reads_explicit_reached_booleans(tmp_path: Path) -> None:
+    """The payload's `limit_reached`/`allowed` booleans must bench even when
+    the nullable reached-type field is absent and no window shows 100%."""
+    import time
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+    pool = _pool(settings, [a], RecordingTraffic())
+    account = pool._accounts[0]
+    pool._bench_from_usage(
+        account,
+        {"rate_limit": {"limit_reached": True, "primary_window": {"used_percent": 99}}},
+        time.monotonic(),
+    )
+    assert account.is_limited(time.monotonic())
+
+
+def test_bench_from_usage_waits_for_longest_exhausted_window(tmp_path: Path) -> None:
+    """With the 5h AND the weekly window exhausted, the bench must cover the
+    longest reset — the shorter one would re-bench-flap every window cycle."""
+    import time
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+    pool = _pool(settings, [a], RecordingTraffic())
+    account = pool._accounts[0]
+    pool._bench_from_usage(
+        account,
+        {
+            "rate_limit": {
+                "primary_window": {"used_percent": 100, "reset_after_seconds": 3600},
+                "secondary_window": {"used_percent": 100, "reset_after_seconds": 86400},
+            },
+        },
+        time.monotonic(),
+    )
+    remaining = account.limited_until - time.monotonic()
+    assert 80000 < remaining <= 86400
+
+
+def test_stale_usage_snapshot_cannot_release_a_newer_bench(tmp_path: Path) -> None:
+    """A usage probe that started before a 429 benched the account carries no
+    evidence about that bench and must not erase it."""
+    import time
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+    pool = _pool(settings, [a], RecordingTraffic())
+    account = pool._accounts[0]
+    probe_started = time.monotonic()
+    pool._mark_limited(account, 3600, "status 429")  # bench lands after the probe began
+    pool._bench_from_usage(
+        account,
+        {"rate_limit": {"primary_window": {"used_percent": 12}}},
+        probe_started,
+    )
+    assert account.is_limited(time.monotonic())
+    # A probe that started after the bench is authoritative and releases it.
+    pool._bench_from_usage(
+        account,
+        {"rate_limit": {"primary_window": {"used_percent": 12}}},
+        time.monotonic(),
+    )
+    assert not account.is_limited(time.monotonic())
+
+
+def test_mark_limited_never_shortens_an_existing_bench(tmp_path: Path) -> None:
+    import time
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+    pool = _pool(settings, [a], RecordingTraffic())
+    account = pool._accounts[0]
+    pool._mark_limited(account, 7200, "usage limit")
+    long_until = account.limited_until
+    pool._mark_limited(account, 30, "transient 5xx")
+    assert account.limited_until == long_until
+
+
+@pytest.mark.asyncio
+async def test_hard_refresh_keeps_bench_when_usage_confirms_the_limit(tmp_path: Path) -> None:
+    """The refresh action must never open a window in which live traffic can
+    hit a known-exhausted account: releases are evidence-gated."""
+    import time
+    settings = _settings(tmp_path)
+    a, b = FakeBackend("a"), FakeBackend("b")
+
+    async def maxed_usage(request_id):
+        return {"rate_limit": {"limit_reached": True, "primary_window": {"used_percent": 100, "reset_after_seconds": 900}}}
+
+    a.get_subscription_status = maxed_usage  # type: ignore[assignment]
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    pool._mark_limited(pool._accounts[0], 3600, "status 429")
+
+    await pool.hard_refresh("req")
+
+    assert pool._accounts[0].is_limited(time.monotonic())
+    assert not pool._accounts[1].is_limited(time.monotonic())
+
+
+@pytest.mark.asyncio
+async def test_hard_refresh_keeps_bench_when_probe_fails(tmp_path: Path) -> None:
+    import time
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+
+    async def broken_usage(request_id):
+        raise BackendError(502, "usage endpoint down")
+
+    a.get_subscription_status = broken_usage  # type: ignore[assignment]
+    pool = _pool(settings, [a], RecordingTraffic())
+    pool._mark_limited(pool._accounts[0], 3600, "status 429")
+
+    await pool.hard_refresh("req")
+
+    assert pool._accounts[0].is_limited(time.monotonic())
+
+
+@pytest.mark.asyncio
+async def test_hard_refresh_releases_bench_when_usage_shows_capacity(tmp_path: Path) -> None:
+    import time
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+
+    async def healthy_usage(request_id):
+        return {"rate_limit": {"primary_window": {"used_percent": 12}}}
+
+    a.get_subscription_status = healthy_usage  # type: ignore[assignment]
+    pool = _pool(settings, [a], RecordingTraffic())
+    pool._mark_limited(pool._accounts[0], 3600, "status 429")
+
+    await pool.hard_refresh("req")
+
+    assert not pool._accounts[0].is_limited(time.monotonic())
 
 
 @pytest.mark.asyncio

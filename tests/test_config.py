@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from airelay.config import Settings
 
 
@@ -52,6 +54,23 @@ def test_env_overrides_config_file(tmp_path, monkeypatch) -> None:
 
     assert loaded.port == 7777
     assert loaded.models_cache_ttl_seconds == 17.5
+
+
+def test_openai_balance_defaults_to_round_robin(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("AIRELAYS_OPENAI_BALANCE", raising=False)
+    loaded = Settings.from_sources(tmp_path / "missing.toml")
+    assert loaded.openai_balance == "round_robin"
+
+
+def test_openai_balance_is_normalized_and_validated(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AIRELAYS_OPENAI_BALANCE", " Round-Robin ")
+    assert Settings.from_sources(tmp_path / "missing.toml").openai_balance == "round_robin"
+    monkeypatch.setenv("AIRELAYS_OPENAI_BALANCE", "ordered")
+    assert Settings.from_sources(tmp_path / "missing.toml").openai_balance == "ordered"
+    # A typo must fail loudly, not silently select a routing policy.
+    monkeypatch.setenv("AIRELAYS_OPENAI_BALANCE", "roundrobin")
+    with pytest.raises(ValueError, match="balance"):
+        Settings.from_sources(tmp_path / "missing.toml")
 
 
 def test_claude_is_enabled_by_default(tmp_path, monkeypatch) -> None:

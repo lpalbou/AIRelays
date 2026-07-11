@@ -882,10 +882,12 @@ function renderEndpoints(state) {
   }
 }
 
-function accountStatusBadge(account, index, total) {
-  // One consolidated badge (precedence): Not ready > Limit > Active > Standby.
+function accountStatusBadge(account, index, total, balance) {
+  // One consolidated badge (precedence): Not ready > Limit > position.
   // A reached quota that resets on schedule is normal operation → amber, not
   // red; red is reserved for real failures (relay down, auth broken).
+  // "Active"/"Standby" only describe reality in ordered mode; balanced mode
+  // serves every healthy account, so they are all simply "Ready".
   const badge = document.createElement("span");
   if (!account.ready_for_requests && !account.limited) {
     badge.className = "badge badge-warn";
@@ -899,12 +901,12 @@ function accountStatusBadge(account, index, total) {
     badge.title = account.limited_for_seconds
       ? `Usage limit reached; back in rotation in ${formatDuration(account.limited_for_seconds)}.`
       : "Usage limit reached.";
-  } else if (index === 0) {
-    badge.className = "badge badge-accent";
-    badge.textContent = total > 1 ? "Active" : "Ready";
+  } else if (balance === "ordered" && total > 1) {
+    badge.className = index === 0 ? "badge badge-accent" : "badge badge-neutral";
+    badge.textContent = index === 0 ? "Active" : "Standby";
   } else {
-    badge.className = "badge badge-neutral";
-    badge.textContent = "Standby";
+    badge.className = "badge badge-accent";
+    badge.textContent = "Ready";
   }
   return badge;
 }
@@ -920,7 +922,7 @@ function signOutButton(email, isLast) {
 }
 
 // One block per account: identity header (fixed grid) + usage bars.
-function accountBlock(account, index, total) {
+function accountBlock(account, index, total, balance) {
   const email = account.email ?? account.slug;
   const block = document.createElement("div");
   block.className = "account-block";
@@ -935,7 +937,7 @@ function accountBlock(account, index, total) {
   const plan = document.createElement("span");
   plan.className = "account-plan";
   plan.textContent = account.plan_type ?? "";
-  head.append(emailEl, plan, accountStatusBadge(account, index, total));
+  head.append(emailEl, plan, accountStatusBadge(account, index, total, balance));
   if (pendingLogout.has(email)) {
     const pending = document.createElement("span");
     pending.className = "account-plan";
@@ -995,14 +997,17 @@ function renderAccounts(state) {
     empty.textContent = "No OpenAI account signed in yet — use Sign in above.";
     container.appendChild(empty);
   }
+  const balance = openai?.balance ?? "round_robin";
   accounts.forEach((account, index) => {
-    container.appendChild(accountBlock(account, index, accounts.length));
+    container.appendChild(accountBlock(account, index, accounts.length, balance));
   });
   if (accounts.length > 1) {
     const caption = document.createElement("p");
     caption.className = "card-caption";
     caption.style.margin = "8px 0 0";
-    caption.textContent = "Requests go to the first account with capacity.";
+    caption.textContent = balance === "ordered"
+      ? "Requests go to the first account with capacity."
+      : "Requests are balanced across accounts with capacity.";
     container.appendChild(caption);
   }
 

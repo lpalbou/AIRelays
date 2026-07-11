@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Multi-account requests are now balanced across accounts with capacity by default (`[providers.openai] balance = "round_robin"`), so charge always spreads instead of draining the first account while others idle. `"ordered"` (first account until its limit) remains available as an opt-in, and the desktop app now writes and exposes the balancing setting (previously the desktop-rendered config could not carry it at all). Balanced selection is least-recently-selected, which stays fair when accounts drop in and out of rotation; conversation affinity is unchanged.
+- `POST /v1/relay/accounts/refresh` (desktop Refresh, `airelays accounts refresh`) no longer clears usage-limit holds before re-checking: releases are evidence-gated on a fresh usage report showing capacity. The previous clear-first design opened a window in which live traffic hit a known-exhausted account and earned an extra 429 (observed in production traffic logs). The refresh action now also writes an `accounts_refresh` traffic record.
+
+### Fixed
+
+- Account failover now covers every account-scoped failure, not just upstream HTTP errors: transport failures (DNS, connect, TLS, timeouts) are surfaced as structured 502s and routed to the next account, dead credentials (including persistent 401 after a token refresh) bench the account and fail over instead of failing the request while a healthy account sits idle.
+- An account at its very last failover attempt is now benched like any other, so an exhausted final account is no longer re-selected and hammered with guaranteed 429s by subsequent requests.
+- Usage-driven benching reads every reached-limit signal the upstream payload carries (`limit_reached`, `allowed`, the nullable reached-type, and per-window percentages) instead of a single undocumented field, benches for the longest exhausted window (a maxed weekly window no longer re-bench-flaps every 5 hours), and a stale usage snapshot can no longer release a bench placed after the snapshot was taken.
+- Usage-limit markers in error bodies are only trusted when structured (or on a real 429), so a client error whose body merely echoes marker text can no longer bench the entire pool.
+- Failover order now tries healthy accounts before benched ones; a transient-error cooldown can no longer truncate a multi-hour usage bench; benches survive transient account-storage read failures instead of being laundered by pool reloads; dropped accounts' HTTP clients are closed instead of leaked; conversation-affinity eviction no longer wipes every affinity at once; "all accounts unavailable" is only reported when it is true, with an accurate earliest-retry time.
+
 ## 0.4.0
 
 ### Added

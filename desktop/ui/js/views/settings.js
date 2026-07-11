@@ -65,6 +65,7 @@ const FIELDS = [
     items: [
       { key: "enableOpenaiProvider", label: "Enable OpenAI provider", kind: "bool" },
       { key: "modelsCacheTtlSeconds", label: "OpenAI models cache TTL (seconds)", kind: "number", min: 0, max: 86400 },
+      { key: "openaiBalance", label: "OpenAI account balancing", kind: "select", options: ["round_robin", "ordered"] },
       { key: "enableClaude", label: "Enable Claude", kind: "bool" },
       { key: "claudeBin", label: "Claude CLI binary", kind: "text" },
       { key: "claudeTimeoutSeconds", label: "Claude timeout (seconds)", kind: "number", min: 1, max: 7200 },

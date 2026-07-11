@@ -64,10 +64,12 @@ percentages, window labels ("5h", "weekly"), and reset times.
 
 ## `POST /v1/relay/accounts/refresh`
 
-Clears usage-limit holds on enrolled OpenAI accounts and re-checks each
-account's capacity immediately, returning the refreshed account list. Use it
-when you know an account has recovered and don't want to wait for the
-scheduled reset. CLI equivalent: `airelays accounts refresh`.
+Re-checks every enrolled OpenAI account's capacity immediately and returns
+the refreshed account list. Releases are evidence-gated: an account's
+usage-limit hold is lifted only when its fresh usage report shows capacity,
+so live traffic can never slip onto a still-exhausted account during the
+re-check. Use it when you know an account has recovered and don't want to
+wait for the scheduled reset. CLI equivalent: `airelays accounts refresh`.
 
 ## `GET /v1/relay/status`
 
