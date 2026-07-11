@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -157,7 +158,19 @@ def create_app(settings: Settings) -> FastAPI:
                 "concurrent_requests_per_ip": settings.concurrent_requests_per_ip,
             }
         )
+        # Launch-time pool warm-up (multi-account only): benches accounts
+        # that are already at their usage limit and fills the per-account
+        # model catalogs, so balancing routes correctly from the first
+        # request instead of relearning capacity by wasting a 429. Runs in
+        # the background — serving never waits on it.
+        warm_task = (
+            asyncio.get_running_loop().create_task(backend.warm_start())
+            if hasattr(backend, "warm_start")
+            else None
+        )
         yield
+        if warm_task is not None and not warm_task.done():
+            warm_task.cancel()
         await backend.close()
 
     app = FastAPI(title=APP_NAME, version=__version__, lifespan=lifespan)

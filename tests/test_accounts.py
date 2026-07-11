@@ -600,6 +600,54 @@ async def test_hard_refresh_keeps_bench_when_probe_fails(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_warm_start_benches_exhausted_accounts_and_learns_models(tmp_path: Path) -> None:
+    """A freshly launched relay must balance correctly from the first
+    request: accounts already at their limit are benched by the startup
+    probe (no wasted 429), and per-account model catalogs are filled so
+    model-aware routing works immediately."""
+    import time
+    settings = _settings(tmp_path)
+    a = _model_backend("a", ["gpt-5.5"])
+    b = _model_backend("b", ["gpt-5.5", "gpt-5-pro"])
+
+    async def maxed_usage(request_id):
+        return {"rate_limit": {"limit_reached": True, "primary_window": {"used_percent": 100, "reset_after_seconds": 1800}}}
+
+    a.get_subscription_status = maxed_usage  # type: ignore[assignment]
+    traffic = RecordingTraffic()
+    pool = _pool(settings, [a, b], traffic)
+
+    await pool.warm_start()
+
+    assert pool._accounts[0].is_limited(time.monotonic())
+    assert not pool._accounts[1].is_limited(time.monotonic())
+    assert pool._accounts[0].models == {"gpt-5.5"}
+    assert pool._accounts[1].models == {"gpt-5.5", "gpt-5-pro"}
+    assert "account_pool_warmed" in traffic.phases()
+    # Live traffic goes straight to the account with capacity.
+    result = await pool.collect_response({"model": "gpt-5.5"}, "req", None)
+    assert result["served_by"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_warm_start_survives_probe_failures(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    a, b = FakeBackend("a"), FakeBackend("b")
+
+    async def broken(request_id):
+        raise BackendError(502, "usage endpoint down")
+
+    a.get_subscription_status = broken  # type: ignore[assignment]
+    a.list_models = broken  # type: ignore[assignment]
+    pool = _pool(settings, [a, b], RecordingTraffic())
+
+    await pool.warm_start()  # must not raise
+
+    result = await pool.collect_response({}, "req", None)
+    assert result["served_by"] in {"a", "b"}
+
+
+@pytest.mark.asyncio
 async def test_hard_refresh_releases_bench_when_usage_shows_capacity(tmp_path: Path) -> None:
     import time
     settings = _settings(tmp_path)

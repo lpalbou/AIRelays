@@ -389,6 +389,45 @@ class OpenAiAccountPool:
     def manager_for_primary(self) -> AuthManager:
         return self.primary().manager
 
+    async def warm_start(self, request_id: str = "startup") -> None:
+        """Launch-time capacity and capability probe, so balancing is correct
+        from the very first request instead of being relearned by failure.
+
+        A fresh process knows nothing: an account exhausted before the
+        restart would receive live traffic and waste a guaranteed 429, and
+        the per-account model catalogs are empty so model-aware routing has
+        nothing to route on. One usage probe per account benches the
+        genuinely-limited ones; one models fetch per account fills the
+        catalogs. Best effort: a probe failure leaves the account available
+        (the reactive 429 path still protects it), and nothing here blocks
+        serving — callers run it as a background task."""
+        if len(self._accounts) < 2:
+            return
+        try:
+            await self.subscription_statuses(request_id)
+        except Exception:  # noqa: BLE001 - startup probing must never crash the relay
+            pass
+        for account in self._accounts:
+            try:
+                await self._account_models(account, request_id)
+            except Exception:  # noqa: BLE001
+                continue
+        now = time.monotonic()
+        self._traffic.write(
+            {
+                "request_id": request_id,
+                "phase": "account_pool_warmed",
+                "accounts": [
+                    {
+                        "account": account.slot.slug,
+                        "limited": account.is_limited(now),
+                        "models_known": len(account.models),
+                    }
+                    for account in self._accounts
+                ],
+            }
+        )
+
     async def hard_refresh(self, request_id: str) -> list[dict[str, Any]]:
         """Manual capacity re-check. Every bench release is evidence-gated:
         an account leaves its bench only when a fresh, successful usage probe

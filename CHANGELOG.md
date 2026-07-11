@@ -5,6 +5,7 @@
 ### Changed
 
 - Multi-account requests are now balanced across accounts with capacity by default (`[providers.openai] balance = "round_robin"`), so charge always spreads instead of draining the first account while others idle. `"ordered"` (first account until its limit) remains available as an opt-in, and the desktop app now writes and exposes the balancing setting (previously the desktop-rendered config could not carry it at all). Balanced selection is least-recently-selected, which stays fair when accounts drop in and out of rotation; conversation affinity is unchanged.
+- Launch-time pool warm-up: a multi-account relay probes each account's usage and model catalog in the background right after startup, benching accounts that are already at their limit and enabling model-aware balancing from the very first request — a fresh process no longer relearns an exhausted account by wasting a request on a guaranteed 429. Logged as an `account_pool_warmed` traffic record.
 - `POST /v1/relay/accounts/refresh` (desktop Refresh, `airelays accounts refresh`) no longer clears usage-limit holds before re-checking: releases are evidence-gated on a fresh usage report showing capacity. The previous clear-first design opened a window in which live traffic hit a known-exhausted account and earned an extra 429 (observed in production traffic logs). The refresh action now also writes an `accounts_refresh` traffic record.
 
 ### Fixed
