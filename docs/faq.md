@@ -14,12 +14,15 @@ No. AIRelays is an independent third-party project.
 
 ## How are requests spread across my OpenAI accounts?
 
-With more than one enrolled account, the relay balances requests across
-every account with capacity that serves the requested model (the default,
-`balance = "round_robin"`). An account that reaches its usage limit is
-benched until its window resets and rejoins rotation automatically. Set
-`[providers.openai] balance = "ordered"` to drain the first account before
-touching the next instead. See [Configuration](configuration.md).
+With more than one enrolled account, the relay routes each request to the
+account with the most remaining short-window quota among those that serve
+the requested model (the default, `balance = "balanced"`), so consumption
+equalizes as a percentage of each plan's own capacity — plans of very
+different sizes deplete proportionally. Usage is probed at launch and
+refreshed in the background; an account that reaches its limit is benched
+until its window resets. Alternatives: `balance = "round_robin"` for
+strictly equal request counts, `balance = "ordered"` to drain the first
+account before the next. See [Configuration](configuration.md).
 
 ## Can I disable relay auth?
 

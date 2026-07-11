@@ -997,7 +997,7 @@ function renderAccounts(state) {
     empty.textContent = "No OpenAI account signed in yet — use Sign in above.";
     container.appendChild(empty);
   }
-  const balance = openai?.balance ?? "round_robin";
+  const balance = openai?.balance ?? "balanced";
   accounts.forEach((account, index) => {
     container.appendChild(accountBlock(account, index, accounts.length, balance));
   });
@@ -1007,7 +1007,9 @@ function renderAccounts(state) {
     caption.style.margin = "8px 0 0";
     caption.textContent = balance === "ordered"
       ? "Requests go to the first account with capacity."
-      : "Requests are balanced across accounts with capacity.";
+      : balance === "round_robin"
+        ? "Requests are spread evenly across accounts with capacity."
+        : "Requests are balanced by remaining capacity across accounts.";
     container.appendChild(caption);
   }
 

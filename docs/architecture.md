@@ -32,7 +32,7 @@ flowchart LR
 2. Middleware enforces relay auth and local abuse controls.
 3. AIRelays resolves the request model id to a provider runtime.
 4. Claude-specific validation and invocation stay inside the Claude runtime, while the OpenAI runtime currently uses shared request/response transforms plus the OpenAI backend adapter.
-5. On the OpenAI runtime, the account pool picks the account: conversation affinity first, then the least-recently-selected account with capacity that serves the requested model (`balance = "round_robin"`, the default), or the first such account (`"ordered"`). Account-scoped failures (usage limits, dead credentials, transport errors) bench the account until it recovers and fail over to the next one — only before the first byte reaches the client.
+5. On the OpenAI runtime, the account pool picks the account: conversation affinity first, then — among accounts with capacity that serve the requested model — the one with the most remaining short-window quota (`balance = "balanced"`, the default), strict rotation (`"round_robin"`), or the first such account (`"ordered"`). Account-scoped failures (usage limits, dead credentials, transport errors) bench the account until it recovers and fail over to the next one — only before the first byte reaches the client.
 6. The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope.
 7. AIRelays logs the request, runtime selection, account selection, and result.
 
@@ -79,8 +79,9 @@ and model-aware balancing works from the first request.
 ### `airelays.accounts`
 
 - multi-account discovery and storage slots
-- balanced account selection (round-robin default, ordered opt-in)
+- balanced account selection (capacity-aware default; round-robin and ordered opt-ins)
 - usage-limit benching with evidence-gated release
+- cached, single-flighted usage probes with a background refresher
 - account failover and launch-time capacity/model warm-up
 
 ### `airelays.backend`

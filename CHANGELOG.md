@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Multi-account balancing is now capacity-aware by default (`balance = "balanced"`): each request routes to the account with the most remaining short-window quota, so consumption equalizes as a percentage of each plan's own capacity — with plans of very different sizes (e.g. Plus + Enterprise), equal request counts drained the small plan many times faster while the large one idled. Usage is probed at launch and refreshed in the background (~12 probes/hour/account), probes are TTL-cached and single-flighted to protect the upstream endpoint, and every probe also feeds proactive limit-benching. `round_robin` (strictly equal request counts) and `ordered` remain available.
 - The running version is now visible everywhere the product presents itself: the desktop window title, tray tooltip, and dashboard sidebar (e.g. "AIRelays 0.6.0"), the relay landing page, and CLI report titles. Each surface reads the version from its component's single canonical source at run time — `airelay.__version__` for the relay (`pyproject.toml` derives from it) and `Cargo.toml` for the desktop app (`tauri.conf.json` inherits it) — so what is displayed can never drift from what is installed. `scripts/set_version.py` bumps every component in one command, and the release workflows enforce agreement before publishing.
 
 ## 0.5.0

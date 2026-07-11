@@ -7,14 +7,14 @@ AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provi
 ## Counts
 
 - Planned: 0
-- Proposed: 3
-- Completed: 4
+- Proposed: 2
+- Completed: 6
 - Deprecated: 0
 - Recurrent: 0
 
 ## Priority
 
-No committed planned items. Of the proposed items, 0013 (usage-probe caching/single-flight) has the highest expected value: it protects upstream rate budgets and makes proactive capacity checks affordable.
+No committed planned items. Remaining proposed items (0014 wall-clock bench expiry, 0015 Claude token shape validation) are low-urgency hardening.
 
 ## Planned Tracks
 
@@ -27,7 +27,6 @@ No active planned items.
 ## Proposed Work
 
 - [Multi-account pool](proposed/accounts/README.md)
-  - [0013_openai_usage_probe_caching_and_single_flight.md](proposed/accounts/0013_openai_usage_probe_caching_and_single_flight.md)
   - [0014_wall_clock_bench_expiry_across_system_sleep.md](proposed/accounts/0014_wall_clock_bench_expiry_across_system_sleep.md)
 - [Provider runtimes](proposed/providers/README.md)
   - [0015_claude_token_shape_validation_on_set_token.md](proposed/providers/0015_claude_token_shape_validation_on_set_token.md)
@@ -40,6 +39,8 @@ No active planned items.
   - [0011_claude_runtime_mainline_graduation.md](completed/providers/0011_claude_runtime_mainline_graduation.md)
 - [Multi-account pool](completed/accounts/README.md)
   - [0012_balanced_multi_account_routing_and_pool_hardening.md](completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening.md)
+  - [0013_openai_usage_probe_caching_and_single_flight.md](completed/accounts/0013_openai_usage_probe_caching_and_single_flight.md)
+  - [0016_capacity_aware_balanced_routing.md](completed/accounts/0016_capacity_aware_balanced_routing.md)
 
 | ID | Item | Original Path | Final Path | Completed | Outcome | Notes | Validation |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -47,6 +48,8 @@ No active planned items.
 | 0010 | Experimental Claude subscription CLI adapter | `docs/backlog/planned/providers/0010_experimental_claude_subscription_cli_adapter.md` | `docs/backlog/completed/providers/0010_experimental_claude_subscription_cli_adapter.md` | 2026-06-21 | Completed | Added local-only experimental Claude text runtime with explicit guardrails and docs. | `pytest -q`; `python -m compileall src tests`; `mkdocs build -q`; live Claude and OpenAI request smoke checks |
 | 0011 | Claude runtime mainline graduation | (worked directly; recorded post-completion) | `docs/backlog/completed/providers/0011_claude_runtime_mainline_graduation.md` | 2026-07-10 | Completed | Sampling adaptation, merge to main (PR #1), label removal, personal-use disclaimer, 0.4.0 release with desktop installers. | `pytest -q`; live per-model verification 13/13; release workflow green (PyPI, GitHub Release, docs) |
 | 0012 | Balanced multi-account routing and pool hardening | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening.md` | 2026-07-11 | Completed | Round-robin default, evidence-gated benching, failover classification, launch-time warm-up; desktop exposes the balance setting. | `pytest -q` (165); live balanced-selection, failover, refresh, and warm-start checks against real accounts |
+| 0013 | OpenAI usage-probe caching and single-flight | `docs/backlog/proposed/accounts/0013_openai_usage_probe_caching_and_single_flight.md` | `docs/backlog/completed/accounts/0013_openai_usage_probe_caching_and_single_flight.md` | 2026-07-11 | Completed | 60s TTL cache, single-flight lock, force-bypass for manual refresh, 300s background refresher feeding proactive benching. | `pytest -q` (168) incl. cache/coalesce tests |
+| 0016 | Capacity-aware balanced routing | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0016_capacity_aware_balanced_routing.md` | 2026-07-11 | Completed | New "balanced" default routes by remaining short-window quota so plans of different sizes deplete proportionally; round_robin/ordered stay as opt-ins. | `pytest -q` (168); log-verified 199/199 request parity motivating the change; live convergence check after install |
 
 ## Deprecated Work
 

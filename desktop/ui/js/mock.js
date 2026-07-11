@@ -29,7 +29,7 @@ const settings = {
   maxTotalUploadBytes: 268435456,
   enableOpenaiProvider: true,
   modelsCacheTtlSeconds: 300,
-  openaiBalance: "round_robin",
+  openaiBalance: "balanced",
   enableClaude: true,
   claudeBin: "claude",
   claudeTimeoutSeconds: 600,
@@ -69,7 +69,7 @@ const state = () => ({
             ready_for_requests: true,
             email: "perso@gmail.com",
             plan_type: "plus",
-            balance: "round_robin",
+            balance: "balanced",
             accounts: [
               { slug: "default", email: "perso@gmail.com", plan_type: "plus", ready_for_requests: true, limited: false },
               { slug: "work-x", email: "work@company.com", plan_type: "enterprise", ready_for_requests: true, limited: true, limited_for_seconds: 7800 },

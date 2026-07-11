@@ -47,6 +47,12 @@ DEFAULT_SLUG = "default"
 RETRIABLE_STATUS_MIN = 500
 RETRIABLE_STATUS_EXACT = 429
 USAGE_LIMIT_MARKERS = ("usage_limit_reached", "rate_limit_reached")
+# Usage probes hit a personal upstream endpoint: cache briefly, coalesce
+# concurrent callers, refresh in the background, and let routing trust the
+# signal for a bounded window before falling back to plain rotation.
+USAGE_CACHE_SECONDS = 60.0
+USAGE_REFRESH_INTERVAL_SECONDS = 300.0
+USAGE_ROUTING_MAX_AGE_SECONDS = 900.0
 
 
 def _accounts_dir(data_dir: Path) -> Path:
@@ -188,11 +194,21 @@ class _PooledAccount:
     # can never erase a bench placed after the snapshot was taken.
     limited_since: float = 0.0
     last_error: str | None = None
-    # Balanced selection state: least-recently-selected wins. A plain
-    # round-robin counter indexes a list whose membership changes between
-    # calls (health and model filters), which starves accounts; a per-account
-    # timestamp is fair under any churn.
+    # Rotation state: least-recently-selected wins. A plain round-robin
+    # counter indexes a list whose membership changes between calls (health
+    # and model filters), which starves accounts; a per-account timestamp is
+    # fair under any churn.
     last_selected_at: float = 0.0
+    # Capacity signal for the balanced strategy: the short-window (5h)
+    # used_percent from the account's last usage probe, and when it was
+    # observed. Plans differ wildly in absolute quota, so equalizing this
+    # percentage is what actually balances charge across accounts.
+    used_percent: float | None = None
+    usage_observed_at: float = 0.0
+    # Cached usage payload (for status consumers) with fetch time; protects
+    # the aggressively personal upstream endpoint from polling storms.
+    usage_payload: dict[str, Any] | None = None
+    usage_fetched_at: float = 0.0
     # Cached lowercase model slugs this account exposes, with fetch time.
     models: frozenset[str] = field(default_factory=frozenset)
     models_fetched_at: float = 0.0
@@ -233,6 +249,9 @@ class OpenAiAccountPool:
         # shutdown (or immediately when an event loop is available) instead
         # of leaking their connection pools.
         self._retired_backends: list[ChatGptCodexBackend] = []
+        # Single-flight for usage probing: concurrent status consumers must
+        # not multiply upstream hits on the rate-limited usage endpoint.
+        self._usage_probe_lock = asyncio.Lock()
         # Set when the pool owns discovery (production); None when the caller
         # supplied fixed accounts (tests), which disables live reload.
         self._discoverable = accounts is None
@@ -404,7 +423,7 @@ class OpenAiAccountPool:
         if len(self._accounts) < 2:
             return
         try:
-            await self.subscription_statuses(request_id)
+            await self.subscription_statuses(request_id, force=True)
         except Exception:  # noqa: BLE001 - startup probing must never crash the relay
             pass
         for account in self._accounts:
@@ -441,7 +460,8 @@ class OpenAiAccountPool:
             for account in self._accounts
         }
         try:
-            await self.subscription_statuses(request_id)
+            # Manual refresh wants fresh evidence, not the TTL cache.
+            await self.subscription_statuses(request_id, force=True)
         except Exception:  # noqa: BLE001
             pass
         now = time.monotonic()
@@ -494,16 +514,42 @@ class OpenAiAccountPool:
         if not pick_from:
             # Every account is cooling down; least-recently-limited first.
             return min(self._accounts, key=lambda account: account.limited_until)
-        if self._settings.openai_balance == "ordered":
+        strategy = self._settings.openai_balance
+        if strategy == "ordered":
             chosen = pick_from[0]  # opt-in spillover: first healthy account
-        else:  # round_robin (default): least-recently-selected is fair
+        elif strategy == "round_robin":
+            # Strict equal request counts: least-recently-selected is fair
             # under membership churn, unlike a shared modulo counter over a
             # list whose contents change between calls.
             chosen = min(pick_from, key=lambda account: account.last_selected_at)
+        else:  # balanced (default): equalize quota consumption
+            chosen = self._pick_balanced(pick_from, now)
         chosen.last_selected_at = now
         if session_id:
             self._pin(session_id, chosen.slot.slug)
         return chosen
+
+    def _pick_balanced(self, pick_from: list[_PooledAccount], now: float) -> _PooledAccount:
+        """Routes to the account with the most remaining short-window quota
+        (lowest used_percent), so consumption equalizes as a percentage of
+        each plan's own capacity — equal request counts would drain a small
+        plan many times faster than a large one. Accounts whose usage signal
+        is missing or stale fall back to least-recently-selected, and win
+        over usage-known accounts only when everything is stale."""
+        fresh = [
+            account
+            for account in pick_from
+            if account.used_percent is not None
+            and now - account.usage_observed_at < USAGE_ROUTING_MAX_AGE_SECONDS
+        ]
+        if fresh:
+            # Integer bucketing avoids ping-pong on sub-percent noise; ties
+            # rotate via least-recently-selected.
+            return min(
+                fresh,
+                key=lambda account: (int(account.used_percent or 0), account.last_selected_at),
+            )
+        return min(pick_from, key=lambda account: account.last_selected_at)
 
     def _pin(self, session_id: str, slug: str) -> None:
         # Evict oldest affinities instead of wiping the whole map: a full
@@ -773,35 +819,78 @@ class OpenAiAccountPool:
     async def get_subscription_status(
         self, request_id: str, slug: str | None = None
     ) -> dict[str, Any]:
+        account = None
         if slug is not None:
-            for account in self._accounts:
-                if account.slot.slug == slug:
-                    return await account.backend.get_subscription_status(request_id)
-            raise BackendError(404, f"Unknown account `{slug}`.")
-        return await self.primary().backend.get_subscription_status(request_id)
+            for candidate in self._accounts:
+                if candidate.slot.slug == slug:
+                    account = candidate
+                    break
+            if account is None:
+                raise BackendError(404, f"Unknown account `{slug}`.")
+        else:
+            account = self.primary()
+        return await self._probe_usage(account, request_id)
 
-    async def subscription_statuses(self, request_id: str) -> list[dict[str, Any]]:
+    async def _probe_usage(
+        self, account: _PooledAccount, request_id: str, *, force: bool = False
+    ) -> dict[str, Any]:
+        """One account's usage with a short TTL cache. Every successful probe
+        feeds the bench lifecycle and the balanced strategy's capacity
+        signal, so any status consumer keeps routing honest for free."""
+        now = time.monotonic()
+        if (
+            not force
+            and account.usage_payload is not None
+            and now - account.usage_fetched_at < USAGE_CACHE_SECONDS
+        ):
+            return json.loads(json.dumps(account.usage_payload))
+        probe_started = time.monotonic()
+        usage = await account.backend.get_subscription_status(request_id)
+        account.usage_payload = usage
+        account.usage_fetched_at = time.monotonic()
+        self._bench_from_usage(account, usage, probe_started)
+        return json.loads(json.dumps(usage))
+
+    async def subscription_statuses(
+        self, request_id: str, *, force: bool = False
+    ) -> list[dict[str, Any]]:
         """Per-account usage; errors are reported per account, not fatal.
 
         Doubles as a proactive limit check: an account whose usage already
         reports a reached limit is benched here, so it is skipped without
-        first wasting a request that would just 429."""
+        first wasting a request that would just 429. Single-flighted and
+        TTL-cached: concurrent status consumers must not multiply hits on
+        the personal upstream usage endpoint."""
         self.refresh_if_changed()
-        results: list[dict[str, Any]] = []
-        for account in self._accounts:
-            entry: dict[str, Any] = {
-                "slug": account.slot.slug,
-                "email": account.slot.email,
-            }
-            probe_started = time.monotonic()
+        async with self._usage_probe_lock:
+            results: list[dict[str, Any]] = []
+            for account in self._accounts:
+                entry: dict[str, Any] = {
+                    "slug": account.slot.slug,
+                    "email": account.slot.email,
+                }
+                try:
+                    entry["payload"] = await self._probe_usage(
+                        account, request_id, force=force
+                    )
+                except (BackendError, AuthenticationError) as error:
+                    entry["error"] = str(error)
+                results.append(entry)
+            return results
+
+    async def usage_refresh_loop(self) -> None:
+        """Background capacity refresher for the balanced strategy: without
+        it the routing signal would age out between manual status loads and
+        proactive benching would only happen reactively. Runs forever; the
+        app cancels the task on shutdown. ~12 probes/hour/account."""
+        while True:
+            await asyncio.sleep(USAGE_REFRESH_INTERVAL_SECONDS)
+            if len(self._accounts) < 2:
+                continue
             try:
-                usage = await account.backend.get_subscription_status(request_id)
-                entry["payload"] = usage
-                self._bench_from_usage(account, usage, probe_started)
-            except (BackendError, AuthenticationError) as error:
-                entry["error"] = str(error)
-            results.append(entry)
-        return results
+                await self.subscription_statuses("usage-refresh")
+            except Exception:  # noqa: BLE001 - the refresher must never die
+                continue
 
     def _bench_from_usage(
         self, account: _PooledAccount, usage: dict[str, Any], probe_started: float
@@ -824,6 +913,14 @@ class OpenAiAccountPool:
             if rate.get("limit_reached") is True or rate.get("allowed") is False:
                 reached = True
             windows = [rate.get("primary_window"), rate.get("secondary_window")]
+            # Capacity signal for balanced routing: the short-window
+            # percentage, recorded on every probe (limited or not).
+            primary = rate.get("primary_window")
+            if isinstance(primary, dict) and isinstance(
+                primary.get("used_percent"), (int, float)
+            ):
+                account.used_percent = float(primary["used_percent"])
+                account.usage_observed_at = time.monotonic()
         resets: list[int] = []
         for window in windows:
             if not isinstance(window, dict):

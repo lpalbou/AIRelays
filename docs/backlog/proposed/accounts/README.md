@@ -12,5 +12,4 @@ when evidence shows urgency.
 
 ## Items
 
-- [0013_openai_usage_probe_caching_and_single_flight.md](0013_openai_usage_probe_caching_and_single_flight.md)
 - [0014_wall_clock_bench_expiry_across_system_sleep.md](0014_wall_clock_bench_expiry_across_system_sleep.md)

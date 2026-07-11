@@ -209,13 +209,17 @@ prints the exact commands to add, sign out, or reorder them. In the desktop
 app, each account row has a sign-out button and the "Add account" button
 offers both browser and code (headless) sign-in.
 
-By default AIRelays balances requests across all accounts with capacity
-(`balance = "round_robin"`), so charge always spreads instead of draining
-one subscription while another idles. An account that reaches its usage
-limit is benched until its window resets and rejoins rotation
-automatically. Set `[providers.openai] balance = "ordered"` to drain the
-first account before touching the next instead. Failed-over requests are
-logged with the serving account, and
+By default AIRelays balances requests by remaining capacity
+(`balance = "balanced"`): the account with the most unused short-window
+quota serves next, so consumption equalizes as a percentage of each
+plan's own capacity — a small Plus plan and a large Enterprise plan
+deplete proportionally instead of the small plan draining many times
+faster. The relay probes each account's usage at launch and refreshes it
+in the background; an account at its usage limit is benched until its
+window resets and rejoins rotation automatically. Alternatives:
+`balance = "round_robin"` sends strictly equal request counts, and
+`balance = "ordered"` drains the first account before touching the next.
+Failed-over requests are logged with the serving account, and
 `/v1/subscription/status?all_accounts=true` reports usage per account.
 
 Multiple accounts exist so one user can use their own subscriptions from

@@ -15,6 +15,8 @@ request.
 ## Completed Items
 
 - [0012_balanced_multi_account_routing_and_pool_hardening.md](0012_balanced_multi_account_routing_and_pool_hardening.md): round-robin default, evidence-gated benching, failover classification, launch-time warm-up.
+- [0013_openai_usage_probe_caching_and_single_flight.md](0013_openai_usage_probe_caching_and_single_flight.md): TTL cache, single-flight, and a background refresher for the usage probes.
+- [0016_capacity_aware_balanced_routing.md](0016_capacity_aware_balanced_routing.md): the "balanced" default — route by remaining short-window quota so plans of different sizes deplete proportionally.
 
 ## Related Material
 

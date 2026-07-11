@@ -66,9 +66,11 @@ stream_lines = false
 [providers.openai]
 enabled = true
 models_cache_ttl_seconds = 300.0
-# Multi-account routing: "round_robin" (default) balances requests across
-# accounts with capacity; "ordered" drains the first account first.
-balance = "round_robin"
+# Multi-account routing: "balanced" (default) routes to the account with
+# the most remaining short-window quota so consumption equalizes as a
+# percentage of each plan's capacity; "round_robin" sends equal request
+# counts; "ordered" drains the first account first.
+balance = "balanced"
 # Fallback bench duration (seconds) when a limited account's reset time is
 # unknown; upstream-reported reset times are used when available.
 account_cooldown_seconds = 300
@@ -103,7 +105,7 @@ models = ["claude:sonnet", "claude:opus", "claude:haiku", "claude:fable"]
 - `AIRELAYS_LOG_STREAM_LINES`
 - `AIRELAYS_ENABLE_OPENAI`
 - `AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`
-- `AIRELAYS_OPENAI_BALANCE` (`round_robin` default, or `ordered`)
+- `AIRELAYS_OPENAI_BALANCE` (`balanced` default, `round_robin`, or `ordered`)
 - `AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS`
 - `AIRELAYS_ENABLE_CLAUDE` (legacy `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL` is still honored)
 - `AIRELAYS_CLAUDE_BIN`

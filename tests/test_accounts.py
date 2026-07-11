@@ -371,14 +371,85 @@ async def test_all_accounts_limited_reports_actionable_error(tmp_path: Path) -> 
 @pytest.mark.asyncio
 async def test_default_balance_spreads_load_across_accounts(tmp_path: Path) -> None:
     """The out-of-the-box configuration must balance charge across available
-    accounts — no config key required."""
+    accounts — no config key required. Without a usage signal the balanced
+    strategy falls back to fair rotation."""
     settings = _settings(tmp_path)
-    assert settings.openai_balance == "round_robin"
+    assert settings.openai_balance == "balanced"
     a, b = FakeBackend("a"), FakeBackend("b")
     pool = _pool(settings, [a, b], RecordingTraffic())
     for _ in range(6):
         await pool.collect_response({}, "req", None)
     assert (a.calls, b.calls) == (3, 3)
+
+
+@pytest.mark.asyncio
+async def test_balanced_mode_prefers_the_account_with_most_remaining_quota(tmp_path: Path) -> None:
+    """Equal request counts drain a small plan far faster than a large one;
+    the balanced default must route to the lowest short-window used_percent
+    so consumption equalizes as a percentage of each plan's capacity."""
+    import time
+    settings = _settings(tmp_path)
+    a, b = FakeBackend("a"), FakeBackend("b")
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    now = time.monotonic()
+    pool._accounts[0].used_percent = 25.0
+    pool._accounts[0].usage_observed_at = now
+    pool._accounts[1].used_percent = 1.0
+    pool._accounts[1].usage_observed_at = now
+    for _ in range(5):
+        await pool.collect_response({}, "req", None)
+    assert (a.calls, b.calls) == (0, 5)
+
+
+@pytest.mark.asyncio
+async def test_balanced_mode_ignores_stale_usage_signal(tmp_path: Path) -> None:
+    """A capacity signal older than the routing window must not steer
+    traffic; the strategy falls back to fair rotation instead of trusting
+    day-old percentages."""
+    import time
+    from airelay.accounts import USAGE_ROUTING_MAX_AGE_SECONDS
+
+    settings = _settings(tmp_path)
+    a, b = FakeBackend("a"), FakeBackend("b")
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    stale = time.monotonic() - USAGE_ROUTING_MAX_AGE_SECONDS - 1
+    pool._accounts[0].used_percent = 90.0
+    pool._accounts[0].usage_observed_at = stale
+    pool._accounts[1].used_percent = 1.0
+    pool._accounts[1].usage_observed_at = stale
+    for _ in range(4):
+        await pool.collect_response({}, "req", None)
+    assert (a.calls, b.calls) == (2, 2)
+
+
+@pytest.mark.asyncio
+async def test_usage_probes_are_cached_and_coalesced(tmp_path: Path) -> None:
+    """Status consumers must not multiply hits on the upstream usage
+    endpoint: within the TTL a second probe is served from cache, and a
+    forced refresh bypasses it."""
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+    b = FakeBackend("b")
+    counts = {"a": 0, "b": 0}
+
+    def usage_fn(name):
+        async def probe(request_id):
+            counts[name] += 1
+            return {"rate_limit": {"primary_window": {"used_percent": 10}}}
+        return probe
+
+    a.get_subscription_status = usage_fn("a")  # type: ignore[assignment]
+    b.get_subscription_status = usage_fn("b")  # type: ignore[assignment]
+    pool = _pool(settings, [a, b], RecordingTraffic())
+
+    await pool.subscription_statuses("req1")
+    await pool.subscription_statuses("req2")  # within TTL: cache serves it
+    assert counts == {"a": 1, "b": 1}
+
+    await pool.subscription_statuses("req3", force=True)
+    assert counts == {"a": 2, "b": 2}
+    # Probes feed the balanced strategy's capacity signal.
+    assert pool._accounts[0].used_percent == 10.0
 
 
 @pytest.mark.asyncio

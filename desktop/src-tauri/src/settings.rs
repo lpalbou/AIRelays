@@ -49,8 +49,9 @@ pub struct AppSettings {
     pub max_total_upload_bytes: u64,
     pub enable_openai_provider: bool,
     pub models_cache_ttl_seconds: f64,
-    /// Multi-account routing: "round_robin" balances charge across healthy
-    /// accounts (relay default); "ordered" drains the first account first.
+    /// Multi-account routing: "balanced" equalizes quota consumption
+    /// (relay default); "round_robin" sends equal request counts;
+    /// "ordered" drains the first account first.
     pub openai_balance: String,
     // The serde alias keeps settings files written while the Claude runtime
     // carried the "experimental" label loading unchanged.
@@ -99,7 +100,7 @@ impl Default for AppSettings {
             max_total_upload_bytes: 256 * 1024 * 1024,
             enable_openai_provider: true,
             models_cache_ttl_seconds: 300.0,
-            openai_balance: "round_robin".into(),
+            openai_balance: "balanced".into(),
             enable_claude: true,
             claude_bin: "claude".into(),
             claude_timeout_seconds: 600.0,
@@ -149,8 +150,8 @@ impl AppSettings {
         if !matches!(self.auth_storage_mode.as_str(), "auto" | "file" | "keyring") {
             return Err("Auth storage must be auto, file, or keyring.".into());
         }
-        if !matches!(self.openai_balance.as_str(), "round_robin" | "ordered") {
-            return Err("OpenAI account balancing must be round_robin or ordered.".into());
+        if !matches!(self.openai_balance.as_str(), "balanced" | "round_robin" | "ordered") {
+            return Err("OpenAI account balancing must be balanced, round_robin, or ordered.".into());
         }
         for (label, value) in [
             ("Upstream base URL", &self.upstream_base_url),

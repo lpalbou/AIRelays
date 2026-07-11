@@ -68,7 +68,7 @@ Claude headless: run `claude setup-token` on any browser-equipped machine, then 
 
 ## Multiple OpenAI Accounts
 
-One person can enroll several of their own OpenAI subscriptions; `airelays login` is additive. By default the relay balances requests across all accounts with capacity that serve the requested model (`balance = "round_robin"`); `balance = "ordered"` drains the first account before touching the next instead. An account at its usage limit is benched until its window resets and rejoins rotation automatically; at launch the relay probes each account's capacity and model catalog so balancing is correct from the first request. Manage with `airelays accounts` (list, order, refresh), sign out one with `airelays logout <email>`. Conversations stick to the account that served their first turn.
+One person can enroll several of their own OpenAI subscriptions; `airelays login` is additive. By default the relay routes each request to the account with the most remaining short-window quota among those that serve the requested model (`balance = "balanced"`), so consumption equalizes as a percentage of each plan's capacity; `balance = "round_robin"` sends strictly equal request counts and `balance = "ordered"` drains the first account before the next. An account at its usage limit is benched until its window resets and rejoins rotation automatically; at launch the relay probes each account's capacity and model catalog so balancing is correct from the first request. Manage with `airelays accounts` (list, order, refresh), sign out one with `airelays logout <email>`. Conversations stick to the account that served their first turn.
 
 ## Routes
 

@@ -168,9 +168,17 @@ def create_app(settings: Settings) -> FastAPI:
             if hasattr(backend, "warm_start")
             else None
         )
+        # Keeps the balanced strategy's capacity signal fresh and benches
+        # exhausted accounts proactively between manual status loads.
+        usage_task = (
+            asyncio.get_running_loop().create_task(backend.usage_refresh_loop())
+            if hasattr(backend, "usage_refresh_loop")
+            else None
+        )
         yield
-        if warm_task is not None and not warm_task.done():
-            warm_task.cancel()
+        for task in (warm_task, usage_task):
+            if task is not None and not task.done():
+                task.cancel()
         await backend.close()
 
     app = FastAPI(title=APP_NAME, version=__version__, lifespan=lifespan)

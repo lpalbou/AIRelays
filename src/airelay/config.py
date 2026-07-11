@@ -74,13 +74,13 @@ def _normalized_balance(value: Any) -> str:
     """Balancing strategy, normalized and validated. A typo must fail loudly
     at startup rather than silently selecting a different routing policy."""
     if value is None:
-        return "round_robin"
+        return "balanced"
     text = str(value).strip().lower().replace("-", "_")
-    if text in {"round_robin", "ordered"}:
+    if text in {"balanced", "round_robin", "ordered"}:
         return text
     raise ValueError(
         f"Invalid [providers.openai] balance value {value!r}: "
-        "use \"round_robin\" or \"ordered\"."
+        "use \"balanced\", \"round_robin\", or \"ordered\"."
     )
 
 
@@ -157,10 +157,11 @@ class Settings:
     log_stream_lines: bool = False
     enable_openai_provider: bool = True
     models_cache_ttl_seconds: float = 300.0
-    # Multiple own accounts: "round_robin" (default) spreads requests across
-    # healthy accounts so charge is always balanced; "ordered" uses the first
-    # account until it hits its usage limit, then continues with the next.
-    openai_balance: str = "round_robin"
+    # Multiple own accounts: "balanced" (default) routes to the account with
+    # the most remaining short-window quota so consumption equalizes as a
+    # percentage of each plan's capacity; "round_robin" sends strictly equal
+    # request counts; "ordered" drains the first account before the next.
+    openai_balance: str = "balanced"
     openai_account_cooldown_seconds: int = 300
     enable_claude: bool = True
     claude_bin: str = "claude"

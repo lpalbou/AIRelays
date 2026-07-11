@@ -1258,12 +1258,16 @@ def _print_accounts_summary(payload: dict[str, object]) -> None:
     if multi:
         balance = payload.get("balance")
         print()
-        if balance == "round_robin":
+        if balance == "ordered":
+            print("  Requests use account 1 first, then the next when it reaches")
+            print("  its usage limit.")
+        elif balance == "round_robin":
             print("  Requests are spread evenly across your accounts; an account")
             print("  at its usage limit is skipped until it resets.")
         else:
-            print("  Requests use account 1 first, then the next when it reaches")
-            print("  its usage limit.")
+            print("  Requests are balanced by remaining capacity: the account with")
+            print("  the most unused quota serves next, so consumption equalizes")
+            print("  as a percentage of each plan. Limited accounts are skipped.")
 
     # A self-documenting hub: always show how to add, and how to undo/reorder
     # once there is more than one account. Emails come from the listing.
