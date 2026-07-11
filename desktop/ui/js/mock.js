@@ -71,7 +71,17 @@ const state = () => ({
             plan_type: "plus",
             balance: "balanced",
             accounts: [
-              { slug: "default", email: "perso@gmail.com", plan_type: "plus", ready_for_requests: true, limited: false },
+              { slug: "default", email: "perso@gmail.com", plan_type: "plus", ready_for_requests: true, limited: false,
+                window_tokens: {
+                  object: "relay_window_tokens",
+                  scope: "current_primary_window_via_this_relay",
+                  window_reset_at: 1783805892,
+                  models: [
+                    { model: "gpt-5.5", input_tokens: 1234567, output_tokens: 89012, cached_input_tokens: 800000 },
+                    { model: "gpt-5.4-mini", input_tokens: 456789, output_tokens: 12345, cached_input_tokens: 300000 },
+                  ],
+                  totals: { input_tokens: 1691356, output_tokens: 101357, cached_input_tokens: 1100000 },
+                } },
               { slug: "work-x", email: "work@company.com", plan_type: "enterprise", ready_for_requests: true, limited: true, limited_for_seconds: 7800 },
             ],
           },

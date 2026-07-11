@@ -73,6 +73,74 @@ html, body {
   margin-left: 6px;
 }
 
+/* "more" hover: per-model token breakdown behind an account's usage bars */
+.account-more {
+  position: relative;
+  display: inline-block;
+  margin-top: 2px;
+}
+
+.account-more-trigger {
+  font-size: 11px;
+  color: var(--muted, #8b93a7);
+  cursor: default;
+  border-bottom: 1px dotted var(--muted, #8b93a7);
+}
+
+.account-more-panel {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  min-width: 300px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #2a2f42);
+  border-radius: 8px;
+  background: #141828;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.account-more:hover .account-more-panel {
+  display: block;
+}
+
+.account-more-title {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.account-more-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.account-more-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted, #8b93a7);
+  padding: 2px 10px 2px 0;
+}
+
+.account-more-table td {
+  padding: 2px 10px 2px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.account-more-total td {
+  border-top: 1px solid var(--border, #2a2f42);
+  font-weight: 600;
+}
+
+.account-more-note {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--muted, #8b93a7);
+  max-width: 300px;
+}
+
 .nav-item {
   display: flex;
   align-items: center;

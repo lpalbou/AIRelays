@@ -24,7 +24,15 @@ Can an OpenAI account's absolute 5h-window capacity (input/output tokens) be est
   5. Routing must not consume it: balanced routing's percent equalization is already the correct fixed point (it splits traffic proportionally to capacity without knowing it, and all accounts exhaust simultaneously); absolute-remaining routing would front-load the large account and behave worse under estimate error.
 - The wham/usage payload exposes no absolute quota anywhere (full field inventory checked), and public plan documentation covers neither the unit nor enterprise org policies.
 
-## Sanctioned fallback (not committed)
+## Sanctioned fallback (since shipped)
+
+The ground-truth reduced form shipped on 2026-07-12 as the Accounts card
+"more" hover: per-model input/output tokens served via the relay in the
+current 5h window plus totals (`window_tokens` on the account status
+payload; tallied in `src/airelay/usage_tally.py`). No extrapolation, no
+capacity claims — exactly the boundary this item drew.
+
+## Original fallback description
 
 If capacity visibility is ever wanted in UI, the honest reduced form is the observed exchange rate composed purely of ground truth — e.g. "this 5h window: 1.9M tokens via relay ≈ 47 points" — with no extrapolation, no persistence, no routing coupling. If the upstream ever exposes credit-denominated usage (the payload's `credits` block shows the shape exists), read it instead of estimating.
 

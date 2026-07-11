@@ -960,7 +960,69 @@ function accountBlock(account, index, total, balance) {
     err.title = usageEntry.error;
     block.appendChild(err);
   }
+  const detail = windowTokensDetail(account.window_tokens);
+  if (detail) block.appendChild(detail);
   return block;
+}
+
+function formatTokens(n) {
+  if (!Number.isFinite(n)) return "0";
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+  return String(n);
+}
+
+// Ground truth behind the usage bars: what this relay served on the account
+// during the current 5h window, per model — revealed on hover of "more".
+function windowTokensDetail(windowTokens) {
+  const models = windowTokens?.models;
+  if (!Array.isArray(models) || models.length === 0) return null;
+  const wrap = document.createElement("div");
+  wrap.className = "account-more";
+  const trigger = document.createElement("span");
+  trigger.className = "account-more-trigger";
+  trigger.textContent = "more";
+  const panel = document.createElement("div");
+  panel.className = "account-more-panel";
+  const title = document.createElement("div");
+  title.className = "account-more-title";
+  title.textContent = "This 5h window, via this relay";
+  panel.appendChild(title);
+  const table = document.createElement("table");
+  table.className = "account-more-table";
+  const header = document.createElement("tr");
+  for (const text of ["model", "tokens in", "tokens out"]) {
+    const th = document.createElement("th");
+    th.textContent = text;
+    header.appendChild(th);
+  }
+  table.appendChild(header);
+  for (const m of models) {
+    const row = document.createElement("tr");
+    for (const value of [m.model, formatTokens(m.input_tokens), formatTokens(m.output_tokens)]) {
+      const td = document.createElement("td");
+      td.textContent = value;
+      row.appendChild(td);
+    }
+    table.appendChild(row);
+  }
+  const totals = windowTokens.totals ?? {};
+  const totalRow = document.createElement("tr");
+  totalRow.className = "account-more-total";
+  for (const value of ["total", formatTokens(totals.input_tokens ?? 0), formatTokens(totals.output_tokens ?? 0)]) {
+    const td = document.createElement("td");
+    td.textContent = value;
+    totalRow.appendChild(td);
+  }
+  table.appendChild(totalRow);
+  panel.appendChild(table);
+  const note = document.createElement("div");
+  note.className = "account-more-note";
+  note.textContent = "Counts requests served through AIRelays only; usage from other apps on this account is not included.";
+  panel.appendChild(note);
+  wrap.append(trigger, panel);
+  return wrap;
 }
 
 function renderAccounts(state) {

@@ -737,6 +737,89 @@ async def test_hard_refresh_releases_bench_when_usage_shows_capacity(tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_window_token_tally_tracks_models_and_survives_reload(tmp_path: Path) -> None:
+    """The Accounts card's "more" hover shows per-model in/out tokens for
+    the current window: fed by non-stream responses, scoped to the window
+    identity, cleared on rollover, persisted across pool rebuilds."""
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+
+    async def respond(payload, request_id, session_id):
+        a.calls += 1
+        return {
+            "served_by": "a",
+            "model": "gpt-test",
+            "usage": {
+                "input_tokens": 1000,
+                "output_tokens": 50,
+                "input_tokens_details": {"cached_tokens": 400},
+            },
+        }
+
+    a.collect_response = respond  # type: ignore[assignment]
+    pool = _pool(settings, [a], RecordingTraffic())
+    account_id = pool._accounts[0].slot.account_id
+
+    for _ in range(3):
+        await pool.collect_response({}, "req", None)
+
+    snap = pool._tally.snapshot(account_id)
+    assert snap is not None
+    assert snap["models"][0]["model"] == "gpt-test"
+    assert snap["models"][0]["input_tokens"] == 3000
+    assert snap["models"][0]["output_tokens"] == 150
+    assert snap["totals"]["input_tokens"] == 3000
+    assert snap["totals"]["cached_input_tokens"] == 1200
+
+    # The breakdown reaches the status payload the desktop reads.
+    statuses = pool.account_statuses()
+    assert statuses[0]["window_tokens"]["totals"]["output_tokens"] == 150
+
+    # Same window anchor: tally persists; new anchor: window rolled, cleared.
+    pool._tally.set_window(account_id, 1783800000)
+    assert pool._tally.snapshot(account_id) is not None
+    pool._tally.set_window(account_id, 1783820000)
+    assert pool._tally.snapshot(account_id) is None
+
+    # Persistence: a new tally on the same path reloads saved state.
+    await pool.collect_response({}, "req", None)
+    pool._tally.save()
+    from airelay.usage_tally import WindowTokenTally
+
+    reloaded = WindowTokenTally(settings.data_dir / "openai-window-tokens.json")
+    snap = reloaded.snapshot(account_id)
+    assert snap is not None and snap["totals"]["input_tokens"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_window_token_tally_captures_streamed_usage(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+
+    async def stream(payload, request_id, session_id):
+        yield SSEEvent(
+            event="response.completed",
+            data=json.dumps(
+                {
+                    "response": {
+                        "model": "gpt-stream",
+                        "usage": {"input_tokens": 200, "output_tokens": 20},
+                    }
+                }
+            ),
+        )
+
+    a.stream_response_events = stream  # type: ignore[assignment]
+    pool = _pool(settings, [a], RecordingTraffic())
+    async for _ in pool.stream_response_events({}, "req", None):
+        pass
+    snap = pool._tally.snapshot(pool._accounts[0].slot.account_id)
+    assert snap is not None
+    assert snap["models"][0]["model"] == "gpt-stream"
+    assert snap["totals"]["input_tokens"] == 200
+
+
+@pytest.mark.asyncio
 async def test_single_account_pool_matches_legacy_behavior(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     a = FakeBackend("a")

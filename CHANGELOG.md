@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Accounts card token breakdown: each OpenAI account row gains a "more" hover showing, for the current 5h window, the input/output tokens the relay served per model plus overall totals — the ground truth behind the usage bars. Counts cover traffic through AIRelays only (usage from other apps on the same account is not included, and the panel says so); the tally resets when the window rolls over, survives relay restarts, and is exposed as `window_tokens` on the account status payload.
+
 ### Changed
 
 - Multi-account balancing is now capacity-aware by default (`balance = "balanced"`): each request routes to the account with the most remaining short-window quota, so consumption equalizes as a percentage of each plan's own capacity — with plans of very different sizes (e.g. Plus + Enterprise), equal request counts drained the small plan many times faster while the large one idled. Usage is probed at launch and refreshed in the background (~12 probes/hour/account), probes are TTL-cached and single-flighted to protect the upstream endpoint, and every probe also feeds proactive limit-benching. `round_robin` (strictly equal request counts) and `ordered` remain available.

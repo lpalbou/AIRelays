@@ -38,6 +38,7 @@ from airelay.auth import AuthenticationError, AuthManager, AuthRecord, AuthStora
 from airelay.backend import BackendError, ChatGptCodexBackend, SSEEvent
 from airelay.config import Settings
 from airelay.traffic import TrafficLogger
+from airelay.usage_tally import WindowTokenTally
 
 ACCOUNTS_DIRNAME = "accounts"
 MANIFEST_FILENAME = "manifest.json"
@@ -252,6 +253,9 @@ class OpenAiAccountPool:
         # Single-flight for usage probing: concurrent status consumers must
         # not multiply upstream hits on the rate-limited usage endpoint.
         self._usage_probe_lock = asyncio.Lock()
+        # Ground-truth token breakdown behind the usage bars: what the relay
+        # itself served per account/model in the current window.
+        self._tally = WindowTokenTally(settings.data_dir / "openai-window-tokens.json")
         # Set when the pool owns discovery (production); None when the caller
         # supplied fixed accounts (tests), which disables live reload.
         self._discoverable = accounts is None
@@ -390,6 +394,11 @@ class OpenAiAccountPool:
                 status["limited_for_seconds"] = int(account.limited_until - now)
             if account.last_error:
                 status["last_error"] = account.last_error
+            # Ground truth behind the usage bars: what this relay served on
+            # this account in the current window, per model.
+            window_tokens = self._tally.snapshot(account.slot.account_id)
+            if window_tokens is not None:
+                status["window_tokens"] = window_tokens
             statuses.append(status)
         return statuses
 
@@ -702,6 +711,10 @@ class OpenAiAccountPool:
             try:
                 result = await account.backend.collect_response(payload, request_id, session_id)
                 self._repin(session_id, account)
+                if isinstance(result, dict):
+                    self._tally.record(
+                        account.slot.account_id, result.get("model"), result.get("usage")
+                    )
                 return result
             except (BackendError, AuthenticationError) as error:
                 cooldown = self._failover_cooldown(error)
@@ -741,6 +754,8 @@ class OpenAiAccountPool:
                     if not started:
                         started = True
                         self._repin(session_id, account)
+                    if event.event == "response.completed":
+                        self._record_stream_usage(account, event)
                     yield event
                 return
             except (BackendError, AuthenticationError) as error:
@@ -767,6 +782,19 @@ class OpenAiAccountPool:
         if isinstance(error, BackendError):
             return f"status {error.status_code}: {error.detail[:160]}"
         return f"auth: {str(error)[:160]}"
+
+    def _record_stream_usage(self, account: _PooledAccount, event: SSEEvent) -> None:
+        """Feeds the token tally from a completed streamed response — the
+        one event per request that carries the final usage object."""
+        try:
+            parsed = json.loads(event.data)
+        except json.JSONDecodeError:
+            return
+        response = parsed.get("response") if isinstance(parsed, dict) else None
+        if isinstance(response, dict):
+            self._tally.record(
+                account.slot.account_id, response.get("model"), response.get("usage")
+            )
 
     async def _account_models(self, account: _PooledAccount, request_id: str) -> frozenset[str]:
         """Cached per-account model slugs, refreshed on the same TTL as the
@@ -921,6 +949,10 @@ class OpenAiAccountPool:
             ):
                 account.used_percent = float(primary["used_percent"])
                 account.usage_observed_at = time.monotonic()
+            # Window identity for the token tally: a changed reset anchor
+            # means the 5h bucket rolled and the breakdown starts fresh.
+            if isinstance(primary, dict):
+                self._tally.set_window(account.slot.account_id, primary.get("reset_at"))
         resets: list[int] = []
         for window in windows:
             if not isinstance(window, dict):
@@ -954,6 +986,7 @@ class OpenAiAccountPool:
             account.last_error = "usage limit reached (from usage report)"
 
     async def close(self) -> None:
+        self._tally.save()
         for account in self._accounts:
             await account.backend.close()
         retired, self._retired_backends = self._retired_backends, []
