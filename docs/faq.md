@@ -77,6 +77,17 @@ anyone else. See the [disclaimer](disclaimer.md) for the official terms
 links (Anthropic consumer terms, Claude Code authentication policy, OpenAI
 terms and usage policies); re-check them periodically, they change.
 
+## How do I control reasoning depth?
+
+Set `reasoning_effort` in your request to one of the model's supported
+modes. Every model's modes and default are published in `/v1/models`
+under `airelays.reasoning`, shown in the desktop Models tab, and listed
+by `airelays models`. OpenAI models accept `none`, `low`, `medium`,
+`high`, `xhigh` (omitted means `none`, lower than the official apps'
+`medium`); Claude models accept `low`, `medium`, `high`, `xhigh`, `max`
+(omitted means the model's adaptive default). See
+[API notes](api.md) for details.
+
 ## Does AIRelays support Gemini?
 
 No.

@@ -272,11 +272,11 @@ export async function mockInvoke(command, args = {}) {
       return {
         object: "list",
         data: [
-          { id: "gpt-5.5", object: "model", airelays: { provider: "openai" } },
-          { id: "gpt-5.4", object: "model", airelays: { provider: "openai" } },
-          { id: "gpt-5.4-mini", object: "model", airelays: { provider: "openai" } },
-          { id: "claude:sonnet", object: "model", airelays: { provider: "claude" } },
-          { id: "claude:opus", object: "model", airelays: { provider: "claude" } },
+          { id: "gpt-5.5", object: "model", airelays: { provider: "openai", reasoning: { parameter: "reasoning_effort", modes: ["none", "low", "medium", "high", "xhigh"], default: "none" } } },
+          { id: "gpt-5.4", object: "model", airelays: { provider: "openai", reasoning: { parameter: "reasoning_effort", modes: ["none", "low", "medium", "high", "xhigh"], default: "none" } } },
+          { id: "gpt-5.4-mini", object: "model", airelays: { provider: "openai", reasoning: { parameter: "reasoning_effort", modes: ["none", "low", "medium", "high", "xhigh"], default: "none" } } },
+          { id: "claude:sonnet", object: "model", airelays: { provider: "claude", reasoning: { parameter: "reasoning_effort", modes: ["low", "medium", "high", "xhigh", "max"], default: null } } },
+          { id: "claude:opus", object: "model", airelays: { provider: "claude", reasoning: { parameter: "reasoning_effort", modes: ["low", "medium", "high", "xhigh", "max"], default: null } } },
         ],
       };
     case "set_custom_token":

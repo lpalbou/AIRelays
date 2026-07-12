@@ -1387,10 +1387,15 @@ def _run_models(args: argparse.Namespace) -> None:
     display_names = {"openai": "OpenAI", "claude": "Claude"}
     for provider, entries in by_provider.items():
         _print_section(display_names.get(provider, provider))
+        width = max((len(str(model.get("id"))) for model in entries), default=0)
         for model in entries:
-            print(f"  {model.get('id')}")
+            reasoning = (model.get("airelays") or {}).get("reasoning") or {}
+            modes = reasoning.get("modes") or []
+            suffix = f"  reasoning: {', '.join(modes)}" if modes else ""
+            print(f"  {str(model.get('id')).ljust(width)}{suffix}")
     print()
     print("  Use these ids as `model` in requests to the endpoint above.")
+    print("  Set `reasoning_effort` to one of the listed reasoning modes.")
     print()
 
 

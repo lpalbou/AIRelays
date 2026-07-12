@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
 ### Added
 
-- Reasoning modes are now first-class on both runtimes. `/v1/models` publishes each model's supported modes and default under `airelays.reasoning` (verified against the live upstreams: OpenAI models accept `none`, `low`, `medium`, `high`, `xhigh` and reject `minimal`; Claude models accept `low`, `medium`, `high`, `xhigh`, `max`). `reasoning_effort` now works on `claude:*` requests too, mapped to the local CLI's `--effort` flag with case normalization — unsupported values are rejected with the supported list, because the CLI would otherwise silently fall back to its default. OpenAI forwarding is unchanged (`reasoning_effort` / `reasoning.effort` verbatim; invalid values surface the upstream's own error).
+- Reasoning modes are now first-class on both runtimes. `/v1/models` publishes each model's supported modes and default under `airelays.reasoning` (verified against the live upstreams: OpenAI models accept `none`, `low`, `medium`, `high`, `xhigh` and reject `minimal`; Claude models accept `low`, `medium`, `high`, `xhigh`, `max`). `reasoning_effort` now works on `claude:*` requests too, mapped to the local CLI's `--effort` flag with case normalization — unsupported values are rejected with the supported list, because the CLI would otherwise silently fall back to its default. OpenAI forwarding is unchanged (`reasoning_effort` / `reasoning.effort` verbatim; invalid values surface the upstream's own error). The desktop Models tab and `airelays models` advertise each model's reasoning modes alongside the id.
 
 ## 0.6.0
 

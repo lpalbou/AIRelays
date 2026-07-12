@@ -155,6 +155,18 @@ function modelRow(model) {
   id.className = "model-id";
   id.textContent = model.id;
   row.appendChild(id);
+  // Advertise the reasoning modes the model accepts (from the relay's
+  // live-verified metadata), so users know what `reasoning_effort` takes.
+  const reasoning = model.airelays?.reasoning;
+  if (Array.isArray(reasoning?.modes) && reasoning.modes.length > 0) {
+    const modes = document.createElement("span");
+    modes.className = "model-reasoning";
+    modes.textContent = `reasoning: ${reasoning.modes.join(" · ")}`;
+    modes.title = reasoning.default
+      ? `Set "${reasoning.parameter}" in requests. Default when omitted: ${reasoning.default}.`
+      : `Set "${reasoning.parameter}" in requests. Default when omitted: the model's adaptive default.`;
+    row.appendChild(modes);
+  }
   const spacer = document.createElement("span");
   spacer.className = "spacer";
   row.appendChild(spacer);

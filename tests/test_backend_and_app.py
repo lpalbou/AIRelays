@@ -1041,9 +1041,14 @@ def test_models_route_advertises_configured_extra_models_with_dedupe(tmp_path) -
         response = client.get("/v1/models")
 
     assert response.status_code == 200
-    ids = [item["id"] for item in response.json()["data"] if not item["id"].startswith("claude:")]
+    openai_models = [item for item in response.json()["data"] if not item["id"].startswith("claude:")]
+    ids = [item["id"] for item in openai_models]
     assert "gpt-5.6-sol" in ids
     assert ids.count("gpt-5.5") == 1  # deduped against the catalog
+    # Every OpenAI record advertises its reasoning modes for API consumers.
+    for item in openai_models:
+        assert item["airelays"]["reasoning"]["modes"] == ["none", "low", "medium", "high", "xhigh"]
+        assert item["airelays"]["reasoning"]["default"] == "none"
 
 
 def test_models_route_returns_claude_models_when_openai_auth_is_missing(tmp_path) -> None:
@@ -1068,6 +1073,10 @@ def test_models_route_returns_claude_models_when_openai_auth_is_missing(tmp_path
     claude_model = next(item for item in payload["data"] if item["id"] == "claude:sonnet")
     assert claude_model["airelays"]["provider"] == "claude"
     assert "experimental" not in claude_model["airelays"]
+    # Servers discover reasoning support straight from the API.
+    reasoning = claude_model["airelays"]["reasoning"]
+    assert reasoning["parameter"] == "reasoning_effort"
+    assert reasoning["modes"] == ["low", "medium", "high", "xhigh", "max"]
 
 
 def test_responses_route_rejects_claude_models_locally(tmp_path) -> None:
