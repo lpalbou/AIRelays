@@ -1055,10 +1055,15 @@ letting them fail, and always discloses what it changed:</p>
   <code>claude</code> CLI exposes no sampling controls, so these parameters are
   stripped and disclosed there too instead of failing the request.</li>
 <li><strong>Reasoning effort:</strong> <code>reasoning_effort</code> (chat completions) and
-  <code>reasoning.effort</code> (responses) are forwarded verbatim. Requests that omit
-  it run at upstream effort <code>none</code>, which is lower than the <code>medium</code> the
-  official ChatGPT apps use for the same models — set it explicitly when
-  comparing model quality.</li>
+  <code>reasoning.effort</code> (responses) are forwarded verbatim to OpenAI models;
+  on <code>claude:*</code> models <code>reasoning_effort</code> maps to the local CLI's
+  <code>--effort</code> flag. Each model's supported modes and default are published
+  in <code>/v1/models</code> under <code>airelays.reasoning</code>. Unsupported Claude values are
+  rejected with the supported list (the CLI would silently ignore them);
+  unsupported OpenAI values surface the upstream's own error. Requests
+  that omit the parameter run OpenAI models at upstream effort <code>none</code> —
+  lower than the <code>medium</code> the official ChatGPT apps use — and Claude
+  models at their adaptive default.</li>
 <li><strong>Rejected loudly instead of adapted:</strong> <code>store=true</code>, output-token limit
   fields (<code>max_tokens</code>, <code>max_completion_tokens</code>, <code>max_output_tokens</code>),
   <code>n&gt;1</code>, and <code>best_of</code>/<code>echo</code>/<code>logprobs</code>/<code>suffix</code> on <code>/v1/completions</code>.
@@ -1076,7 +1081,7 @@ letting them fail, and always discloses what it changed:</p>
 <li>Claude models are explicit <code>claude:*</code> ids.</li>
 <li>models starting with <code>claude:</code> route to the Claude runtime when it is enabled</li>
 <li>other model ids route to the OpenAI runtime when it is enabled</li>
-<li>Each model record includes an <code>airelays</code> extension block with provider identity and route capabilities.</li>
+<li>Each model record includes an <code>airelays</code> extension block with provider identity, route capabilities, and a <code>reasoning</code> block (<code>parameter</code>, supported <code>modes</code>, <code>default</code>).</li>
 <li>Successful OpenAI upstream model-list responses are cached in memory for
   <code>models_cache_ttl_seconds</code> seconds. The default is 300 seconds; <code>0</code>
   disables the cache.</li>
@@ -1145,6 +1150,9 @@ relay accepts, grouped by provider (<code>--json</code> supported).</p>
 <li>no tools</li>
 <li>no files, images, audio, or structured outputs</li>
 <li>no AIRelays local conversation reuse</li>
+<li><code>reasoning_effort</code> supported (<code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>),
+  mapped to the CLI's <code>--effort</code> flag; omitted means the model's adaptive
+  default</li>
 <li>sampling parameters stripped and disclosed via
   <code>x-airelays-ignored-parameters</code> (the <code>claude</code> CLI has no sampling
   controls); other unsupported generation controls rejected locally</li>

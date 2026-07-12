@@ -599,6 +599,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#how-do-i-control-reasoning-depth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How do I control reasoning depth?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#does-airelays-support-gemini" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -985,6 +996,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#how-do-i-control-reasoning-depth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How do I control reasoning depth?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#does-airelays-support-gemini" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1096,6 +1118,15 @@ tooling and sign-ins — and is not a mechanism for sharing access with
 anyone else. See the <a href="../disclaimer/">disclaimer</a> for the official terms
 links (Anthropic consumer terms, Claude Code authentication policy, OpenAI
 terms and usage policies); re-check them periodically, they change.</p>
+<h2 id="how-do-i-control-reasoning-depth">How do I control reasoning depth?<a class="headerlink" href="#how-do-i-control-reasoning-depth" title="Permanent link">&para;</a></h2>
+<p>Set <code>reasoning_effort</code> in your request to one of the model's supported
+modes. Every model's modes and default are published in <code>/v1/models</code>
+under <code>airelays.reasoning</code>, shown in the desktop Models tab, and listed
+by <code>airelays models</code>. OpenAI models accept <code>none</code>, <code>low</code>, <code>medium</code>,
+<code>high</code>, <code>xhigh</code> (omitted means <code>none</code>, lower than the official apps'
+<code>medium</code>); Claude models accept <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>
+(omitted means the model's adaptive default). See
+<a href="../api/">API notes</a> for details.</p>
 <h2 id="does-airelays-support-gemini">Does AIRelays support Gemini?<a class="headerlink" href="#does-airelays-support-gemini" title="Permanent link">&para;</a></h2>
 <p>No.</p>
 <h2 id="why-do-token-limit-parameters-return-422-on-the-openai-runtime">Why do token-limit parameters return <code>422</code> on the OpenAI runtime?<a class="headerlink" href="#why-do-token-limit-parameters-return-422-on-the-openai-runtime" title="Permanent link">&para;</a></h2>
