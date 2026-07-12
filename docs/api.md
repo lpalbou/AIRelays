@@ -18,10 +18,15 @@ letting them fail, and always discloses what it changed:
   `claude` CLI exposes no sampling controls, so these parameters are
   stripped and disclosed there too instead of failing the request.
 - **Reasoning effort:** `reasoning_effort` (chat completions) and
-  `reasoning.effort` (responses) are forwarded verbatim. Requests that omit
-  it run at upstream effort `none`, which is lower than the `medium` the
-  official ChatGPT apps use for the same models — set it explicitly when
-  comparing model quality.
+  `reasoning.effort` (responses) are forwarded verbatim to OpenAI models;
+  on `claude:*` models `reasoning_effort` maps to the local CLI's
+  `--effort` flag. Each model's supported modes and default are published
+  in `/v1/models` under `airelays.reasoning`. Unsupported Claude values are
+  rejected with the supported list (the CLI would silently ignore them);
+  unsupported OpenAI values surface the upstream's own error. Requests
+  that omit the parameter run OpenAI models at upstream effort `none` —
+  lower than the `medium` the official ChatGPT apps use — and Claude
+  models at their adaptive default.
 - **Rejected loudly instead of adapted:** `store=true`, output-token limit
   fields (`max_tokens`, `max_completion_tokens`, `max_output_tokens`),
   `n>1`, and `best_of`/`echo`/`logprobs`/`suffix` on `/v1/completions`.
@@ -40,7 +45,7 @@ Returns an OpenAI-style models list built from the enabled provider runtimes.
 - Claude models are explicit `claude:*` ids.
 - models starting with `claude:` route to the Claude runtime when it is enabled
 - other model ids route to the OpenAI runtime when it is enabled
-- Each model record includes an `airelays` extension block with provider identity and route capabilities.
+- Each model record includes an `airelays` extension block with provider identity, route capabilities, and a `reasoning` block (`parameter`, supported `modes`, `default`).
 - Successful OpenAI upstream model-list responses are cached in memory for
   `models_cache_ttl_seconds` seconds. The default is 300 seconds; `0`
   disables the cache.
@@ -119,6 +124,9 @@ Claude runtime:
 - no tools
 - no files, images, audio, or structured outputs
 - no AIRelays local conversation reuse
+- `reasoning_effort` supported (`low`, `medium`, `high`, `xhigh`, `max`),
+  mapped to the CLI's `--effort` flag; omitted means the model's adaptive
+  default
 - sampling parameters stripped and disclosed via
   `x-airelays-ignored-parameters` (the `claude` CLI has no sampling
   controls); other unsupported generation controls rejected locally

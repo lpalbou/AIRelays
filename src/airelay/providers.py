@@ -39,6 +39,15 @@ class ResolvedModel:
     upstream_id: str
 
 
+# Reasoning modes per provider, verified against the live upstreams: every
+# model the Codex subscription backend serves accepts these efforts on
+# `reasoning.effort` (and rejects `minimal` with an explicit error), while
+# the claude CLI's `--effort` flag accepts exactly the values below and
+# would otherwise silently fall back to its default on unknown ones.
+OPENAI_REASONING_MODES = ("none", "low", "medium", "high", "xhigh")
+CLAUDE_REASONING_MODES = ("low", "medium", "high", "xhigh", "max")
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderModel:
     id: str
@@ -47,6 +56,11 @@ class ProviderModel:
     upstream_id: str
     routes: dict[str, bool]
     stateful_conversations: bool
+    reasoning_modes: tuple[str, ...] = ()
+    # The effort used when a request does not set one: the Codex upstream
+    # runs at "none"; the claude CLI applies its own adaptive default, which
+    # is model-controlled (reported as null).
+    reasoning_default: str | None = None
 
     def as_wire(self) -> dict[str, Any]:
         return {
@@ -61,6 +75,11 @@ class ProviderModel:
                     "routes": self.routes,
                     "stateful_conversations": self.stateful_conversations,
                 },
+                "reasoning": {
+                    "parameter": "reasoning_effort",
+                    "modes": list(self.reasoning_modes),
+                    "default": self.reasoning_default,
+                },
             },
         }
 
@@ -72,6 +91,9 @@ class ClaudeTextRequest:
     system_prompt: str | None
     prompt: str
     include_usage: bool
+    # Reasoning depth for the CLI's --effort flag; None uses the model's
+    # own adaptive default.
+    effort: str | None = None
 
 
 def _openai_model_record(model_id: str) -> ProviderModel:
@@ -89,6 +111,8 @@ def _openai_model_record(model_id: str) -> ProviderModel:
             "subscription_status": True,
         },
         stateful_conversations=True,
+        reasoning_modes=OPENAI_REASONING_MODES,
+        reasoning_default="none",
     )
 
 
@@ -185,6 +209,25 @@ def _provided(value: Any) -> bool:
     return value is not None and value is not False and value != [] and value != {}
 
 
+def _claude_effort(body: dict[str, Any], route: str) -> str | None:
+    """Validated reasoning effort for the claude CLI. The CLI silently
+    ignores unknown --effort values and falls back to its default, which
+    would be silent degradation — so unsupported values are rejected here
+    with the supported list."""
+    effort = body.get("reasoning_effort")
+    if effort is None:
+        return None
+    if isinstance(effort, str) and effort.lower() in CLAUDE_REASONING_MODES:
+        return effort.lower()
+    supported = ", ".join(CLAUDE_REASONING_MODES)
+    raise ProviderError(
+        422,
+        f"Unsupported `reasoning_effort` {effort!r} for Claude models on `{route}`. "
+        f"Supported values: {supported}.",
+        code="unsupported_for_provider",
+    )
+
+
 def _usage_from_claude_result(payload: dict[str, Any] | None) -> dict[str, int]:
     usage = payload.get("usage") if isinstance(payload, dict) else None
     if not isinstance(usage, dict):
@@ -272,6 +315,8 @@ class ClaudeCliRuntime:
                 upstream_id=upstream_id,
                 routes=_claude_routes(),
                 stateful_conversations=False,
+                reasoning_modes=CLAUDE_REASONING_MODES,
+                reasoning_default=None,
             )
             records[model_id] = record
         return records
@@ -550,6 +595,7 @@ class ClaudeCliRuntime:
             system_prompt=system_prompt,
             prompt=_chat_transcript(turns),
             include_usage=include_usage,
+            effort=_claude_effort(body, "/v1/chat/completions"),
         )
 
     def _prepare_completion_request(self, body: dict[str, Any]) -> ClaudeTextRequest:
@@ -591,6 +637,7 @@ class ClaudeCliRuntime:
             system_prompt=None,
             prompt=prompt,
             include_usage=False,
+            effort=_claude_effort(body, "/v1/completions"),
         )
 
     def _resolved_model_from_body(self, body: dict[str, Any]) -> ResolvedModel:
@@ -735,6 +782,8 @@ class ClaudeCliRuntime:
         ]
         if request.system_prompt:
             command.extend(["--system-prompt", request.system_prompt])
+        if request.effort:
+            command.extend(["--effort", request.effort])
         if stream:
             command.extend(["--output-format", "stream-json", "--include-partial-messages", "--verbose"])
         else:

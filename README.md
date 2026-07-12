@@ -291,10 +291,15 @@ controls — so the same SDK calls work against `claude:*` models too.
 
 **Reasoning effort is forwarded, not invented.** `reasoning_effort` (chat
 completions) and `reasoning: {"effort": ...}` (responses) pass through to
-the upstream unchanged. When a request does not set one, the upstream runs
-reasoning models at effort `none` — noticeably below what the official
-apps use (`medium`). For quality comparable to the ChatGPT apps, set it
-explicitly:
+the upstream unchanged. Every model's supported modes are published in
+`/v1/models` under `airelays.reasoning` (OpenAI models accept `none`,
+`low`, `medium`, `high`, `xhigh`; Claude models accept `low`, `medium`,
+`high`, `xhigh`, `max`, mapped to the local CLI's `--effort` flag —
+unsupported values are rejected with the supported list rather than
+silently ignored). When a request does not set one, OpenAI models run at
+effort `none` — noticeably below what the official apps use (`medium`) —
+and Claude models use their own adaptive default. For quality comparable
+to the ChatGPT apps, set it explicitly:
 
 ```bash
 curl http://127.0.0.1:8317/v1/chat/completions \

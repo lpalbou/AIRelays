@@ -109,6 +109,72 @@ async def test_claude_runtime_rejects_tools_on_chat_route(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_claude_runtime_forwards_reasoning_effort_to_the_cli(tmp_path, monkeypatch) -> None:
+    """`reasoning_effort` on claude:* requests becomes the CLI's --effort
+    flag — the mechanism verified against the real claude binary."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    captured: dict[str, object] = {}
+
+    async def fake_run_json(request, request_id):
+        captured["request"] = request
+        return {"result": "ok", "stop_reason": "end_turn"}
+
+    monkeypatch.setattr(runtime, "_run_json", fake_run_json)
+    await runtime.create_chat_completion(
+        {
+            "model": "claude:sonnet",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "XHigh",
+        },
+        "req_1",
+    )
+    request = captured["request"]
+    assert request.effort == "xhigh"  # normalized
+    command = runtime._build_command(request, stream=False)
+    assert command[command.index("--effort") + 1] == "xhigh"
+
+    # Without the parameter, no flag: the model's adaptive default rules.
+    await runtime.create_chat_completion(
+        {"model": "claude:sonnet", "messages": [{"role": "user", "content": "hi"}]},
+        "req_2",
+    )
+    assert "--effort" not in runtime._build_command(captured["request"], stream=False)
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_rejects_unsupported_reasoning_effort(tmp_path) -> None:
+    """The claude CLI silently ignores unknown --effort values, which would
+    be silent degradation — the relay rejects them with the supported list."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    with pytest.raises(ProviderError, match="low, medium, high, xhigh, max"):
+        await runtime.create_chat_completion(
+            {
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "hello"}],
+                "reasoning_effort": "ultrathink",
+            },
+            "req_1",
+        )
+
+
+def test_model_records_expose_reasoning_modes(tmp_path) -> None:
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    claude_wire = runtime.list_models()[0]
+    assert claude_wire["airelays"]["reasoning"]["modes"] == [
+        "low", "medium", "high", "xhigh", "max",
+    ]
+    assert claude_wire["airelays"]["reasoning"]["parameter"] == "reasoning_effort"
+
+    from airelay.providers import _openai_model_record
+
+    openai_wire = _openai_model_record("gpt-5.5").as_wire()
+    assert openai_wire["airelays"]["reasoning"]["modes"] == [
+        "none", "low", "medium", "high", "xhigh",
+    ]
+    assert openai_wire["airelays"]["reasoning"]["default"] == "none"
+
+
+@pytest.mark.asyncio
 async def test_claude_runtime_rejects_stop_on_completions_route(tmp_path) -> None:
     runtime = ClaudeCliRuntime(make_settings(tmp_path))
 
