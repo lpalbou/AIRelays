@@ -115,16 +115,11 @@ function template() {
       </div>
     </section>
 
-    <section class="card" aria-label="Accounts">
+    <section class="card" aria-label="OpenAI accounts">
       <div class="row">
-        <h2 style="margin:0">Accounts</h2>
+        <h2 style="margin:0">OpenAI</h2>
         <span class="spacer"></span>
         <button class="btn btn-small btn-ghost" id="ov-refresh" title="Re-check limits and reload usage">${icon("refresh", 13)} Refresh</button>
-      </div>
-
-      <div class="provider-head">
-        <h3>OpenAI</h3>
-        <span class="spacer"></span>
         <div class="split-btn">
           <button class="btn btn-small" id="ov-login-openai">${icon("logIn", 13)} Sign in</button>
           <button class="btn btn-small split-btn-toggle" id="ov-login-openai-menu" aria-label="Choose OpenAI sign-in method" aria-haspopup="true">${icon("chevronDown", 12)}</button>
@@ -135,24 +130,28 @@ function template() {
         </div>
       </div>
       <div id="ov-accounts"><div class="empty">Start the relay to see accounts.</div></div>
+    </section>
 
-      <div id="ov-claude-section" hidden>
-        <div class="provider-head">
-          <h3>Claude</h3>
-          <span class="badge badge-warn" id="ov-claude-off-badge" hidden>Off in network mode</span>
-          <span class="spacer"></span>
-          <div class="split-btn">
-            <button class="btn btn-small" id="ov-login-claude">${icon("logIn", 13)} Sign in</button>
-            <button class="btn btn-small split-btn-toggle" id="ov-login-claude-menu" aria-label="Choose Claude sign-in method" aria-haspopup="true">${icon("chevronDown", 12)}</button>
-            <div class="split-menu" id="ov-claude-menu" hidden role="menu">
-              <button role="menuitem" data-method="browser">In a browser (this machine)</button>
-              <button role="menuitem" data-method="token">With a token (any device)</button>
-            </div>
+    <section class="card" id="ov-claude-section" aria-label="Claude account" hidden>
+      <div class="row">
+        <h2 style="margin:0">Claude</h2>
+        <span class="badge badge-warn" id="ov-claude-off-badge" hidden>Off in network mode</span>
+        <span class="spacer"></span>
+        <button class="btn btn-small btn-ghost" id="ov-refresh-claude" title="Reload Claude usage">${icon("refresh", 13)} Refresh</button>
+        <div class="split-btn">
+          <button class="btn btn-small" id="ov-login-claude">${icon("logIn", 13)} Sign in</button>
+          <button class="btn btn-small split-btn-toggle" id="ov-login-claude-menu" aria-label="Choose Claude sign-in method" aria-haspopup="true">${icon("chevronDown", 12)}</button>
+          <div class="split-menu" id="ov-claude-menu" hidden role="menu">
+            <button role="menuitem" data-method="browser">In a browser (this machine)</button>
+            <button role="menuitem" data-method="token">With a token (any device)</button>
           </div>
         </div>
-        <div id="ov-claude-account"></div>
       </div>
-      <div class="login-banner" id="ov-login-banner" hidden>
+      <div id="ov-claude-account"></div>
+    </section>
+
+    <section class="card" aria-label="Sign-in progress" id="ov-login-card" hidden>
+      <div class="login-banner" id="ov-login-banner">
         <div class="row">
           <span class="dot dot-warn"></span>
           <strong>Waiting for sign-in…</strong>
@@ -508,14 +507,22 @@ function bindActions(ctx) {
       );
     }
   });
-  // One refresh: clears usage-limit holds on the relay, then reloads usage.
-  el("ov-refresh").addEventListener("click", async () => {
-    const openaiReady = lastState?.relay_status?.providers?.openai?.ready_for_requests;
-    if (lastState?.reachable && openaiReady) {
-      await call(api.refreshAccounts(), "Refresh failed");
-    }
-    loadUsage();
-  });
+  // Refresh re-checks account capacity on the relay (releases are
+  // evidence-gated there) and reloads usage. The button shows a busy
+  // spinner for the several seconds the upstream probes take — without
+  // it the action read as doing nothing.
+  el("ov-refresh").addEventListener("click", () =>
+    withRefreshSpinner(el("ov-refresh"), async () => {
+      const openaiReady = lastState?.relay_status?.providers?.openai?.ready_for_requests;
+      if (lastState?.reachable && openaiReady) {
+        await call(api.refreshAccounts(), "Refresh failed");
+      }
+      await loadUsage();
+    })
+  );
+  el("ov-refresh-claude").addEventListener("click", () =>
+    withRefreshSpinner(el("ov-refresh-claude"), () => loadUsage())
+  );
 
   el("ov-login-copy").addEventListener("click", () => {
     const url = el("ov-login-url").textContent;
@@ -619,6 +626,21 @@ function openClaudeLogoutDialog() {
   root.querySelector("#ov-logout-dialog").showModal();
 }
 
+// Disables a refresh button and spins its icon while the async task runs,
+// so slow upstream probes are visibly in progress instead of looking dead.
+async function withRefreshSpinner(button, task) {
+  if (button.disabled) return;
+  const original = button.innerHTML;
+  button.disabled = true;
+  button.innerHTML = `<span class="spin">${icon("refresh", 13)}</span> Refreshing…`;
+  try {
+    await task();
+  } finally {
+    button.innerHTML = original;
+    button.disabled = false;
+  }
+}
+
 async function loadUsage() {
   if (!root) return;
   let usage;
@@ -681,6 +703,14 @@ function usageWindowRow(label, window) {
   const detail = document.createElement("span");
   detail.className = "usage-detail";
 
+  // No active window right now: the upstream anchors the 5h bucket at the
+  // first request, so between windows there is nothing to measure yet.
+  if (window.idle) {
+    detail.textContent = "0% used · window starts with the next request";
+    row.append(name, bar, detail);
+    return row;
+  }
+
   // A null used_percent means the window rolled over while we couldn't
   // reach the endpoint (stale snapshot): the old numbers are meaningless,
   // so show an empty bar and say so rather than fabricating "0% · <1m".
@@ -714,6 +744,18 @@ function usageWindows(status) {
   const push = (window, baseLabel) => {
     if (window) windows.push([windowLabel(window, baseLabel), window]);
   };
+  // Between 5h buckets the upstream reports no short window at all (it
+  // anchors the bucket at the first request — the weekly window may even
+  // arrive alone in the primary slot). Hiding the row read as a bug: show
+  // an explicit idle 5h row whenever only long windows are present.
+  const defaults = [limits.default?.primary_window, limits.default?.secondary_window]
+    .filter(Boolean);
+  const hasShortWindow = defaults.some(
+    (w) => (w.window_seconds ?? w.limit_window_seconds ?? 0) < 86400
+  );
+  if (defaults.length > 0 && !hasShortWindow) {
+    windows.push(["5h window", { idle: true }]);
+  }
   push(limits.default?.primary_window, "Requests");
   push(limits.default?.secondary_window, "Requests");
   for (const extra of limits.additional ?? []) {
@@ -818,6 +860,7 @@ function render(state) {
   const banner = el("ov-login-banner");
   const loginActive = Boolean(state.login_url) || state.login_running;
   banner.hidden = !loginActive;
+  el("ov-login-card").hidden = !loginActive;
   if (loginActive) {
     const hasUrl = Boolean(state.login_url);
     el("ov-login-url").textContent = state.login_url ?? "";
