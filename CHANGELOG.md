@@ -1,9 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 ### Changed
 
+- Overview account cards no longer overflow the window. Usage meters are now stacked — window label and detail on one line, a full-width bar underneath — so detail text of any length ("0% used · starts with the next request") has room, instead of spilling out of the old fixed 160px column and scrolling the whole page sideways. The dashboard now enforces "no horizontal page scrolling" structurally: the content pane clips horizontal overflow, wide tables scroll inside their own pane, account rows are flex (the email is the only elastic piece and it ellipsizes), and notes wrap instead of clipping.
+- Provider sign-in buttons now mirror each provider's account policy, derived from the same relay payload the account rows render. OpenAI (multi-account): "Sign in" with no account, "Add account" once one is registered. Claude (single-account): the Sign in button and its method menu grey out while an account is registered, with a tooltip pointing to sign-out for switching accounts.
 - The desktop tray activity indicator is now a real pulse. Served requests used to swap the icon to a single near-white frame for 300ms — an abrupt blink that was easy to miss outright and, on light menu bars, actually *lost* contrast at the moment it should stand out. The tray now plays a ~1.1s pre-rendered 16-frame animation: the bolt swells from its resting green into a saturated electric green (saturation carries the signal on light backgrounds where brightness cannot), the halo expands with it, and a ripple ring emanates outward from the bolt while the glyph eases back. The final frame converges exactly to the resting connected icon, so the hand-off back to the state icon is seamless. Re-triggers restart the animation cleanly, and the animation window is announced through an expiring deadline, so the tray's every-tick self-healing sync is preserved (the animation stays under the 1.5s status-poll tick and can never fight it).
 
 ## 0.7.0
