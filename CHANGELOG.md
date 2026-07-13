@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The desktop tray activity indicator is now a real pulse. Served requests used to swap the icon to a single near-white frame for 300ms — an abrupt blink that was easy to miss outright and, on light menu bars, actually *lost* contrast at the moment it should stand out. The tray now plays a ~1.1s pre-rendered 16-frame animation: the bolt swells from its resting green into a saturated electric green (saturation carries the signal on light backgrounds where brightness cannot), the halo expands with it, and a ripple ring emanates outward from the bolt while the glyph eases back. The final frame converges exactly to the resting connected icon, so the hand-off back to the state icon is seamless. Re-triggers restart the animation cleanly, and the animation window is announced through an expiring deadline, so the tray's every-tick self-healing sync is preserved (the animation stays under the 1.5s status-poll tick and can never fight it).
+
 ## 0.7.0
 
 ### Added

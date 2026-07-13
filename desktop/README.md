@@ -58,8 +58,9 @@ CI builds all three platforms from `.github/workflows/desktop.yml` on
 ## Platform notes
 
 - Tray state: bolt with relay arcs when the relay answers, bolt alone when
-  it does not (green/red on Windows and Linux, monochrome template on
-  macOS). Security toggles live only in the dashboard, where their
+  it does not (glowing green / red on every platform). Served requests play
+  a ~1s pulse: the bolt swells into a brighter green with a ripple ring,
+  then eases back. Security toggles live only in the dashboard, where their
   consequences are explained.
 - First run (or a failed tray) opens the dashboard window automatically.
 - Linux: GNOME needs the AppIndicator extension to show tray icons; the deb
