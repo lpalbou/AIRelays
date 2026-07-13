@@ -691,23 +691,39 @@ function windowLabel(window, fallback) {
   return label === "weekly" ? "Weekly" : `${label} window`;
 }
 
+// The measured value leads (slightly brighter), the explanation trails.
+function setUsageDetail(detail, strongText, restText) {
+  detail.textContent = "";
+  const strong = document.createElement("span");
+  strong.className = "usage-detail-strong";
+  strong.textContent = strongText;
+  detail.appendChild(strong);
+  if (restText) detail.append(restText);
+}
+
+// One meter, stacked: "label …… detail" header line, full-width bar below.
+// Text of any length fits by design — the old fixed side columns pushed
+// long details past the card edge and scrolled the whole page sideways.
 function usageWindowRow(label, window) {
   const row = document.createElement("div");
   row.className = "usage-row";
+  const head = document.createElement("div");
+  head.className = "usage-head";
   const name = document.createElement("span");
   name.className = "usage-label";
   name.textContent = label;
+  const detail = document.createElement("span");
+  detail.className = "usage-detail";
+  head.append(name, detail);
 
   const bar = document.createElement("div");
   bar.className = "usage-bar";
-  const detail = document.createElement("span");
-  detail.className = "usage-detail";
+  row.append(head, bar);
 
   // No active window right now: the upstream anchors the 5h bucket at the
   // first request, so between windows there is nothing to measure yet.
   if (window.idle) {
-    detail.textContent = "0% used · window starts with the next request";
-    row.append(name, bar, detail);
+    setUsageDetail(detail, "0% used", " · starts with the next request");
     return row;
   }
 
@@ -716,7 +732,6 @@ function usageWindowRow(label, window) {
   // so show an empty bar and say so rather than fabricating "0% · <1m".
   if (window.used_percent == null) {
     detail.textContent = "awaiting fresh data";
-    row.append(name, bar, detail);
     return row;
   }
 
@@ -727,13 +742,14 @@ function usageWindowRow(label, window) {
   if (used >= 100) fill.classList.add("full");
   else if (used >= 80) fill.classList.add("high");
   bar.appendChild(fill);
+  bar.setAttribute("role", "progressbar");
+  bar.setAttribute("aria-valuemin", "0");
+  bar.setAttribute("aria-valuemax", "100");
+  bar.setAttribute("aria-valuenow", String(Math.round(used)));
 
   const resets =
     window.reset_after_seconds > 0 ? formatDuration(window.reset_after_seconds) : null;
-  detail.textContent =
-    `${used.toFixed(0)}% used` + (resets ? ` · resets in ${resets}` : "");
-
-  row.append(name, bar, detail);
+  setUsageDetail(detail, `${used.toFixed(0)}% used`, resets ? ` · resets in ${resets}` : "");
   return row;
 }
 
@@ -837,22 +853,37 @@ function render(state) {
   el("ov-claude-section").hidden = !state.settings.enableClaude;
   el("ov-claude-off-badge").hidden = state.claude_effective;
 
-  // Sign-in stays enabled while signed in: the claude CLI treats a repeat
-  // sign-in as a credential refresh / account switch, both legitimate.
-  const claudeSignedIn = Boolean(
-    state.claude_effective && state.relay_status?.providers?.claude?.ready_for_requests
+  // Sign-in buttons mirror each provider's account policy, derived from
+  // the same payload the account rows render so they can never disagree.
+  // OpenAI accepts multiple accounts: with none the action is "Sign in",
+  // with at least one it becomes "Add account" (sign-ins are additive).
+  const openaiHasAccount = openaiAccountList(state.relay_status?.providers?.openai).length > 0;
+  setSignInButton(
+    el("ov-login-openai"),
+    openaiHasAccount ? "plus" : "logIn",
+    openaiHasAccount ? "Add account" : "Sign in",
+    openaiHasAccount
+      ? "Sign in with another OpenAI account; existing accounts are kept."
+      : "Sign in to OpenAI",
+    false
   );
-  el("ov-login-claude").title = claudeSignedIn
-    ? "Signing in again refreshes credentials or switches the account."
-    : "";
 
-  // Both sign-in buttons carry the provider name; repeated OpenAI sign-ins
-  // are additive (the CLI guard keeps existing accounts), so one label
-  // covers first sign-in and adding more.
-  const openaiReady = state.relay_status?.providers?.openai?.ready_for_requests;
-  el("ov-login-openai").title = openaiReady
-    ? "Add another OpenAI account"
-    : "Sign in to OpenAI";
+  // Claude accepts a single account: once one is registered (the relay
+  // answers with it, or a token is stored here), sign-in greys out —
+  // switching accounts goes through sign-out first.
+  const claudeRegistered = Boolean(
+    state.relay_status?.providers?.claude?.ready_for_requests || state.claude_token_present
+  );
+  setSignInButton(
+    el("ov-login-claude"),
+    "logIn",
+    "Sign in",
+    claudeRegistered
+      ? "Only one Claude account is supported — sign out first to switch accounts."
+      : "Sign in to Claude",
+    claudeRegistered
+  );
+  el("ov-login-claude-menu").disabled = claudeRegistered;
 
   // Sign-in in progress: the banner appears as soon as the flow starts —
   // before the URL is printed it still offers Cancel (a flow stuck ahead
@@ -888,6 +919,38 @@ function setSegment(id, selected) {
   button.setAttribute("aria-pressed", String(selected));
 }
 
+// Updates a provider sign-in button (icon + label + tooltip + enablement).
+// render() runs on every poll: the innerHTML is only rewritten when the
+// content actually changes, so hover/focus state is not disturbed.
+function setSignInButton(button, iconName, label, title, disabled) {
+  const key = `${iconName}|${label}`;
+  if (button.dataset.signin !== key) {
+    button.dataset.signin = key;
+    button.innerHTML = `${icon(iconName, 13)} ${label}`;
+  }
+  button.title = title;
+  button.disabled = disabled;
+}
+
+// The status endpoint reports a lone account at the top level; the
+// accounts array only appears with 2+ accounts. Shared by the account
+// rows and the sign-in button so both read the same reality.
+function openaiAccountList(openai) {
+  if (Array.isArray(openai?.accounts) && openai.accounts.length > 0) {
+    return openai.accounts;
+  }
+  if (openai?.enabled && openai?.email) {
+    return [{
+      email: openai.email,
+      plan_type: openai.plan_type,
+      ready_for_requests: openai.ready_for_requests,
+      limited: false,
+      window_tokens: openai.window_tokens,
+    }];
+  }
+  return [];
+}
+
 function endpointLine(tag, url) {
   const line = document.createElement("div");
   line.className = "endpoint";
@@ -895,6 +958,7 @@ function endpointLine(tag, url) {
   tagEl.className = "tag";
   tagEl.textContent = tag;
   const urlEl = document.createElement("span");
+  urlEl.className = "endpoint-url";
   urlEl.textContent = url;
   const copy = document.createElement("button");
   copy.className = "copy-btn";
@@ -998,7 +1062,7 @@ function accountBlock(account, index, total, balance) {
     }
   } else if (usageEntry?.error) {
     const err = document.createElement("div");
-    err.className = "account-plan";
+    err.className = "account-note";
     err.textContent = "Usage unavailable";
     err.title = usageEntry.error;
     block.appendChild(err);
@@ -1096,13 +1160,7 @@ function renderAccounts(state) {
   container.innerHTML = "";
 
   const openai = providers.openai;
-  // The status endpoint reports a lone account at the top level; the
-  // accounts array only appears with 2+ accounts.
-  const accounts = Array.isArray(openai?.accounts) && openai.accounts.length > 0
-    ? openai.accounts
-    : openai?.enabled && openai?.email
-      ? [{ email: openai.email, plan_type: openai.plan_type, ready_for_requests: openai.ready_for_requests, limited: false, window_tokens: openai.window_tokens }]
-      : [];
+  const accounts = openaiAccountList(openai);
 
   if (openai?.enabled && accounts.length === 0) {
     const empty = document.createElement("div");
@@ -1211,14 +1269,14 @@ function claudeBlock(claude, paused) {
 
   if (paused) {
     const note = document.createElement("div");
-    note.className = "account-plan";
+    note.className = "account-note";
     note.textContent = "Off while network access is on — switch to \u201CThis machine only\u201D to use it.";
     block.appendChild(note);
     return block;
   }
   if (!claude.ready_for_requests) {
     const note = document.createElement("div");
-    note.className = "account-plan";
+    note.className = "account-note";
     // A usage-fetch error (e.g. the relay process predates a settings
     // change) is more accurate than assuming the user is signed out.
     note.textContent = claudeUsage?.error
@@ -1237,7 +1295,7 @@ function claudeBlock(claude, paused) {
     // cached, and why a fresh read isn't possible yet.
     if (claudeUsage.stale) {
       const note = document.createElement("div");
-      note.className = "account-plan";
+      note.className = "account-note";
       const age = claudeUsage.as_of_epoch
         ? formatDuration(Math.max(0, Date.now() / 1000 - claudeUsage.as_of_epoch))
         : null;
@@ -1261,7 +1319,7 @@ function claudeBlock(claude, paused) {
     // No usable snapshot: explain why the bars are missing instead of
     // leaving the row silently blank.
     const note = document.createElement("div");
-    note.className = "account-plan";
+    note.className = "account-note";
     note.textContent = claudeUsage.error;
     block.appendChild(note);
   }

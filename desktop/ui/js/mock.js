@@ -86,7 +86,13 @@ const state = () => ({
               { slug: "work-x", email: "work@company.com", plan_type: "enterprise", ready_for_requests: true, limited: true, limited_for_seconds: 7800 },
             ],
           },
-          claude: { enabled: false, ready_for_requests: false },
+          claude: {
+            enabled: true,
+            ready_for_requests: true,
+            email: "perso@claude.ai",
+            subscription_type: "pro",
+            cli_version: "2.1.0",
+          },
         },
       }
     : null,
@@ -204,17 +210,15 @@ export async function mockInvoke(command, args = {}) {
                 default: {
                   allowed: true,
                   limit_reached: false,
+                  // Between 5h buckets the upstream reports no short window
+                  // at all (it anchors at the first request): the weekly
+                  // window arrives alone and the UI must render an explicit
+                  // idle 5h row — the longest detail text the card shows.
                   primary_window: {
-                    used_percent: 42,
-                    window_seconds: 18000,
-                    window_label: "5h",
-                    reset_after_seconds: 5400,
-                  },
-                  secondary_window: {
-                    used_percent: 78,
+                    used_percent: 23,
                     window_seconds: 604800,
                     window_label: "weekly",
-                    reset_after_seconds: 259200,
+                    reset_after_seconds: 536400,
                   },
                 },
                 additional: [],

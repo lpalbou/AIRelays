@@ -194,7 +194,11 @@ html, body {
 
 #content {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
+  /* Hard guarantee: the page itself never scrolls horizontally. Anything
+     wide either adapts, ellipsizes, or scrolls inside its own pane. */
+  overflow-x: hidden;
   padding: 22px 26px;
   outline: none;
 }
@@ -311,6 +315,8 @@ html, body {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--text-dim);
+  /* URLs have no natural break points; break anywhere over overflowing. */
+  overflow-wrap: anywhere;
 }
 
 /* ---------- buttons ---------- */
@@ -499,15 +505,27 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
 
 /* ---------- usage ---------- */
 
+/* One meter = label + detail on a header line, full-width bar below.
+   The previous fixed-column grid (130px | bar | 160px) overflowed the
+   card whenever the detail text outgrew its column; stacking gives text
+   of any length room and the bar the full card width. */
 .usage-row {
-  display: grid;
-  grid-template-columns: 130px 1fr 160px;
-  align-items: center;
-  gap: 12px;
-  padding: 4px 0;
+  padding: 5px 0 7px;
 }
 
-.usage-label { font-size: 12px; color: var(--text-dim); }
+.usage-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 5px;
+  min-width: 0;
+}
+
+.usage-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
 
 .usage-bar {
   height: 6px;
@@ -530,12 +548,21 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
 .usage-fill.full { background: var(--warn); }
 
 .usage-detail {
+  margin-left: auto;
   font-size: 12px;
-  color: var(--text-dim);
+  color: var(--text-faint);
   text-align: right;
   font-variant-numeric: tabular-nums;
+  /* Never push the layout wide: in a genuinely too-narrow pane the tail
+     of the detail ellipsizes instead of overflowing the card. */
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
+
+/* The measured value leads the detail line; the explanation trails dimmer. */
+.usage-detail-strong { color: var(--text-dim); font-weight: 550; }
 
 /* ---------- models ---------- */
 
@@ -574,6 +601,11 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
   width: 56px;
   flex-shrink: 0;
   font-family: inherit;
+}
+
+.endpoint .endpoint-url {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .copy-btn {
@@ -659,10 +691,12 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
   color: var(--text);
 }
 
-/* One account = a fixed 4-column header grid (identity / plan / status /
-   sign-out) so every row lines up, plus its usage bars underneath. */
+/* One account = identity header (email absorbs the free space; plan,
+   status and sign-out hug the right edge) plus usage meters underneath.
+   Flex instead of fixed columns: no text length can overflow the card —
+   the email is the only elastic piece and it ellipsizes. */
 .account-block {
-  padding: 8px 0 6px;
+  padding: 9px 0 7px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -670,16 +704,18 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
 .account-block.pending { opacity: 0.5; }
 
 .account-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 76px 110px 26px;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 2px;
+  gap: 10px;
+  margin-bottom: 4px;
+  min-width: 0;
 }
 
 /* Emails are items under a provider header: regular weight, slightly
    dimmer than the header so the section structure reads first. */
 .account-email {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 500;
   font-size: 12.5px;
   color: var(--text);
@@ -691,12 +727,22 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
 .account-plan {
   color: var(--text-faint);
   font-size: 11px;
+  flex-shrink: 0;
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.account-head .badge { justify-self: start; }
+/* Wrapping informational line under an account row (cached-usage age,
+   sign-in hints, pause explanations). Unlike .account-plan it wraps:
+   these are sentences, and clipping them loses the message. */
+.account-note {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 2px;
+  line-height: 1.5;
+}
 
 .provider-row {
   display: flex;
@@ -759,6 +805,8 @@ tr.selected td { background: rgba(109, 124, 255, 0.12); }
 .table-wrap {
   max-height: 46vh;
   overflow-y: auto;
+  /* Wide tables scroll inside their own pane, never the page. */
+  overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
 }
