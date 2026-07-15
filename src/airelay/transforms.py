@@ -20,11 +20,19 @@ TEXT_MIME_PREFIXES = (
 )
 INLINE_TEXT_FILE_MAX_BYTES = 1_000_000
 DEFAULT_MINIMAL_INSTRUCTIONS = "."
-UNSUPPORTED_UPSTREAM_SAMPLING_PARAMETERS = (
+# Parameters the verified upstreams cannot honor: the subscription backend
+# rejects the sampling controls outright, and neither upstream honors a
+# client-set output-token cap. The compatibility layer strips them from the
+# inbound request and discloses the omission (x-airelays-ignored-parameters,
+# compatibility_adaptation traffic record) instead of failing the request.
+UNSUPPORTED_UPSTREAM_PARAMETERS = (
     "temperature",
     "top_p",
     "presence_penalty",
     "frequency_penalty",
+    "max_output_tokens",
+    "max_completion_tokens",
+    "max_tokens",
 )
 
 
@@ -34,7 +42,7 @@ class TranslationError(ValueError):
 
 def strip_unsupported_response_parameters(payload: dict[str, Any]) -> list[str]:
     ignored: list[str] = []
-    for name in UNSUPPORTED_UPSTREAM_SAMPLING_PARAMETERS:
+    for name in UNSUPPORTED_UPSTREAM_PARAMETERS:
         if name in payload:
             payload.pop(name, None)
             ignored.append(name)
@@ -449,10 +457,6 @@ def prepare_response_request(
         raise TranslationError("`conversation` must be a string or an object with string `id`.")
     if payload.get("store") not in {None, False}:
         raise TranslationError("The subscription backend requires `store=false`.")
-    if "max_output_tokens" in payload:
-        raise TranslationError(
-            "The verified subscription backend does not currently support `max_output_tokens` on `/v1/responses`."
-        )
     if not allow_tools and payload.get("tools"):
         raise TranslationError("This route disables tools.")
     if not allow_tools and payload.get("tool_choice") not in {None, "none"}:
@@ -675,11 +679,6 @@ def chat_completions_to_responses(
         payload["presence_penalty"] = body["presence_penalty"]
     if "frequency_penalty" in body:
         payload["frequency_penalty"] = body["frequency_penalty"]
-    if "max_completion_tokens" in body:
-        raise TranslationError(
-            "The verified subscription backend does not currently support "
-            "`max_completion_tokens` on `/v1/chat/completions`."
-        )
     if "metadata" in body:
         payload["metadata"] = body["metadata"]
     if "service_tier" in body:
@@ -753,11 +752,6 @@ def completions_to_responses(body: dict[str, Any]) -> tuple[dict[str, Any], bool
         payload["presence_penalty"] = body["presence_penalty"]
     if "frequency_penalty" in body:
         payload["frequency_penalty"] = body["frequency_penalty"]
-    if "max_tokens" in body:
-        raise TranslationError(
-            "The verified subscription backend does not currently support "
-            "`max_tokens` on `/v1/completions`."
-        )
     if "stop" in body:
         payload["stop"] = body["stop"]
     if "metadata" in body:

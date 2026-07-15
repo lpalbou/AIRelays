@@ -220,11 +220,30 @@ def test_responses_route_reports_unknown_local_file_as_422(tmp_path) -> None:
     assert "Unknown local file id `file_missing`" in response.json()["detail"]
 
 
-def test_responses_route_rejects_max_output_tokens_locally(tmp_path) -> None:
+def test_responses_route_strips_max_output_tokens_locally(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)
+    captured: dict[str, object] = {}
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del request_id, session_id
+        captured["payload"] = payload
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.4",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
 
     with TestClient(app) as client:
+        client.app.state.backend.collect_response = fake_collect_response
         response = client.post(
             "/v1/responses",
             json={
@@ -235,15 +254,35 @@ def test_responses_route_rejects_max_output_tokens_locally(tmp_path) -> None:
             },
         )
 
-    assert response.status_code == 422
-    assert "max_output_tokens" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.headers["x-airelays-ignored-parameters"] == "max_output_tokens"
+    assert "max_output_tokens" not in captured["payload"]
 
 
-def test_chat_completions_route_rejects_max_completion_tokens_locally(tmp_path) -> None:
+def test_chat_completions_route_strips_max_completion_tokens_locally(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)
+    captured: dict[str, object] = {}
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del request_id, session_id
+        captured["payload"] = payload
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.4",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
 
     with TestClient(app) as client:
+        client.app.state.backend.collect_response = fake_collect_response
         response = client.post(
             "/v1/chat/completions",
             json={
@@ -254,15 +293,35 @@ def test_chat_completions_route_rejects_max_completion_tokens_locally(tmp_path) 
             },
         )
 
-    assert response.status_code == 422
-    assert "max_completion_tokens" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.headers["x-airelays-ignored-parameters"] == "max_completion_tokens"
+    assert "max_completion_tokens" not in captured["payload"]
 
 
-def test_completions_route_rejects_max_tokens_locally(tmp_path) -> None:
+def test_completions_route_strips_max_tokens_locally(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)
+    captured: dict[str, object] = {}
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del request_id, session_id
+        captured["payload"] = payload
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.4",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
 
     with TestClient(app) as client:
+        client.app.state.backend.collect_response = fake_collect_response
         response = client.post(
             "/v1/completions",
             json={
@@ -273,8 +332,9 @@ def test_completions_route_rejects_max_tokens_locally(tmp_path) -> None:
             },
         )
 
-    assert response.status_code == 422
-    assert "max_tokens" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.headers["x-airelays-ignored-parameters"] == "max_tokens"
+    assert "max_tokens" not in captured["payload"]
 
 
 def test_responses_route_rewrites_local_pdf_file_id_as_input_file(tmp_path) -> None:

@@ -38,12 +38,13 @@ from airelay.transforms import (
 )
 
 
-# The Claude CLI exposes no sampling controls, so the sampling parameters
-# standard OpenAI SDKs send by default get the same documented treatment as
-# on the OpenAI runtime: stripped and disclosed, never a hard failure.
+# The Claude CLI exposes no sampling or output-token-limit controls, so the
+# parameters standard OpenAI SDKs send by default get the same documented
+# treatment as on the OpenAI runtime: stripped and disclosed, never a hard
+# failure.
 CLAUDE_ADAPTATION_REASON = (
-    "The Claude runtime's local CLI has no sampling controls, "
-    "so the compatibility layer omitted these parameters."
+    "The Claude runtime's local CLI has no sampling or output-token-limit "
+    "controls, so the compatibility layer omitted these parameters."
 )
 
 # Endpoints the desktop app and health checks poll continuously. Logging
@@ -269,7 +270,7 @@ def create_app(settings: Settings) -> FastAPI:
         request_id: str,
         ignored_parameters: list[str],
         reason: str = (
-            "The ChatGPT subscription backend rejects these OpenAI sampling "
+            "The ChatGPT subscription backend does not support these OpenAI "
             "parameters, so the compatibility layer omitted them."
         ),
     ) -> None:
@@ -686,8 +687,8 @@ def create_app(settings: Settings) -> FastAPI:
                         "The Claude runtime supports `/v1/chat/completions` and `/v1/completions` only.",
                         code="unsupported_for_provider",
                     )
+            ignored_parameters = strip_unsupported_response_parameters(body)
             payload, wants_stream, conversation_id = prepare_response_request(body, store, allow_tools)
-            ignored_parameters = strip_unsupported_response_parameters(payload)
             log_adaptation(request_id, ignored_parameters)
             response_headers = _adaptation_headers(ignored_parameters)
             if conversation_id:
@@ -813,8 +814,8 @@ def create_app(settings: Settings) -> FastAPI:
                         media_type="text/event-stream",
                         headers=claude_headers,
                     )
+            ignored_parameters = strip_unsupported_response_parameters(body)
             payload, wants_stream, conversation_id = chat_completions_to_responses(body, store, allow_tools)
-            ignored_parameters = strip_unsupported_response_parameters(payload)
             log_adaptation(request_id, ignored_parameters)
             response_headers = _adaptation_headers(ignored_parameters)
             if conversation_id:
@@ -996,8 +997,8 @@ def create_app(settings: Settings) -> FastAPI:
                         media_type="text/event-stream",
                         headers=claude_headers,
                     )
+            ignored_parameters = strip_unsupported_response_parameters(body)
             payload, wants_stream, conversation_id = completions_to_responses(body)
-            ignored_parameters = strip_unsupported_response_parameters(payload)
             log_adaptation(request_id, ignored_parameters)
             response_headers = _adaptation_headers(ignored_parameters)
             if conversation_id:

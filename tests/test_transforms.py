@@ -133,17 +133,20 @@ def test_prepare_response_request_normalizes_raw_base64_input_file_to_data_url(
     ]
 
 
-def test_prepare_response_request_rejects_max_output_tokens(store: AppStore) -> None:
-    with pytest.raises(TranslationError, match="max_output_tokens"):
-        prepare_response_request(
-            {
-                "model": "gpt-5.4-mini",
-                "input": "hello",
-                "max_output_tokens": 20,
-            },
-            store,
-            allow_tools=True,
-        )
+def test_prepare_response_request_accepts_max_output_tokens(store: AppStore) -> None:
+    payload, wants_stream, conversation_id = prepare_response_request(
+        {
+            "model": "gpt-5.4-mini",
+            "input": "hello",
+            "max_output_tokens": 20,
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert wants_stream is False
+    assert conversation_id is None
+    assert payload["max_output_tokens"] == 20
 
 
 def test_prepare_response_request_accepts_conversation_object_id(store: AppStore) -> None:
@@ -745,31 +748,37 @@ def test_completions_to_responses_supports_legacy_prompt_shape() -> None:
     assert payload["input"][0]["content"][0]["text"] == "Say hello."
 
 
-def test_chat_completions_to_responses_rejects_max_completion_tokens(store: AppStore) -> None:
-    with pytest.raises(TranslationError, match="max_completion_tokens"):
-        chat_completions_to_responses(
-            {
-                "model": "gpt-5.4-mini",
-                "messages": [{"role": "user", "content": "hello"}],
-                "max_completion_tokens": 32,
-            },
-            store,
-            allow_tools=True,
-        )
+def test_chat_completions_to_responses_ignores_max_completion_tokens(store: AppStore) -> None:
+    payload, wants_stream, conversation_id = chat_completions_to_responses(
+        {
+            "model": "gpt-5.4-mini",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_completion_tokens": 32,
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert wants_stream is False
+    assert conversation_id is None
+    assert "max_completion_tokens" not in payload
 
 
-def test_completions_to_responses_rejects_max_tokens() -> None:
-    with pytest.raises(TranslationError, match="max_tokens"):
-        completions_to_responses(
-            {
-                "model": "gpt-5.4-mini",
-                "prompt": "Say hello.",
-                "max_tokens": 32,
-            }
-        )
+def test_completions_to_responses_ignores_max_tokens() -> None:
+    payload, wants_stream, conversation_id = completions_to_responses(
+        {
+            "model": "gpt-5.4-mini",
+            "prompt": "Say hello.",
+            "max_tokens": 32,
+        }
+    )
+
+    assert wants_stream is False
+    assert conversation_id is None
+    assert "max_tokens" not in payload
 
 
-def test_strip_unsupported_response_parameters_removes_sampling_parameters() -> None:
+def test_strip_unsupported_response_parameters_removes_sampling_and_token_limits() -> None:
     payload = {
         "model": "gpt-5.4",
         "temperature": 0.7,
@@ -786,10 +795,10 @@ def test_strip_unsupported_response_parameters_removes_sampling_parameters() -> 
         "top_p",
         "presence_penalty",
         "frequency_penalty",
+        "max_output_tokens",
     ]
     assert payload == {
         "model": "gpt-5.4",
-        "max_output_tokens": 32,
     }
 
 

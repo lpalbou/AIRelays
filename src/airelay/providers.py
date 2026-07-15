@@ -558,10 +558,11 @@ class ClaudeCliRuntime:
         if body.get("n") not in {None, 1}:
             raise ProviderError(422, "The Claude runtime supports only `n=1`.", code="unsupported_for_provider")
         # Sampling parameters (`temperature`, `top_p`, `presence_penalty`,
-        # `frequency_penalty`) are not listed here: the app layer strips and
-        # discloses them (x-airelays-ignored-parameters), the same documented
-        # adaptation the OpenAI runtime applies, because the local claude CLI
-        # exposes no sampling controls and standard SDKs send them by default.
+        # `frequency_penalty`) and output-token limits (`max_completion_tokens`,
+        # `max_tokens`) are not listed here: the app layer strips and discloses
+        # them (x-airelays-ignored-parameters), the same documented adaptation
+        # the OpenAI runtime applies, because the local claude CLI exposes no
+        # equivalent controls and standard SDKs send them by default.
         for field in (
             "tools",
             "functions",
@@ -575,7 +576,6 @@ class ClaudeCliRuntime:
             "audio",
             "prediction",
             "parallel_tool_calls",
-            "max_completion_tokens",
         ):
             if _provided(body.get(field)):
                 raise ProviderError(
@@ -602,8 +602,9 @@ class ClaudeCliRuntime:
         resolved = self._resolved_model_from_body(body)
         if body.get("n") not in {None, 1}:
             raise ProviderError(422, "The Claude runtime supports only `n=1`.", code="unsupported_for_provider")
-        # Sampling parameters are stripped and disclosed by the app layer
-        # instead of rejected here — see _prepare_chat_request for rationale.
+        # Sampling parameters and output-token limits are stripped and
+        # disclosed by the app layer instead of rejected here — see
+        # _prepare_chat_request for rationale.
         for field in (
             "best_of",
             "echo",
@@ -611,7 +612,6 @@ class ClaudeCliRuntime:
             "suffix",
             "conversation",
             "store",
-            "max_tokens",
             "stop",
         ):
             if _provided(body.get(field)):

@@ -289,6 +289,11 @@ sampling defaults, which cannot be overridden. The Claude routes
 apply the same adaptation — the local `claude` CLI has no sampling
 controls — so the same SDK calls work against `claude:*` models too.
 
+**Output-token limits are removed.** The subscription upstreams do not
+honor client-set output caps (`max_tokens`, `max_completion_tokens`,
+`max_output_tokens`), so AIRelays strips them instead of failing the
+request; responses run to the model's natural stop.
+
 **Reasoning effort is forwarded, not invented.** `reasoning_effort` (chat
 completions) and `reasoning: {"effort": ...}` (responses) pass through to
 the upstream unchanged. Every model's supported modes are published in
