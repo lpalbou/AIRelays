@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0
+
+### Fixed
+
+- Text-generation requests no longer fail with `422 The verified subscription backend does not currently support max_completion_tokens` when standard SDK clients send output-token limits. `max_tokens`, `max_completion_tokens`, and `max_output_tokens` now receive the same documented compatibility adaptation as sampling parameters, on both runtimes: stripped (the subscription upstreams do not honor client-set output caps), disclosed in the `x-airelays-ignored-parameters` response header, and logged as a `compatibility_adaptation` traffic record. Responses run to the model's natural stop.
+
 ## 0.8.0
 
 ### Changed
