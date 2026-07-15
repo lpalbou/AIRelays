@@ -1044,16 +1044,19 @@ platform API. AIRelays adapts requests on the three text-generation routes
 (<code>/v1/responses</code>, <code>/v1/chat/completions</code>, <code>/v1/completions</code>) rather than
 letting them fail, and always discloses what it changed:</p>
 <ul>
-<li><strong>Removed sampling parameters:</strong> <code>temperature</code>, <code>top_p</code>,
+<li><strong>Removed unsupported parameters:</strong> <code>temperature</code>, <code>top_p</code>,
   <code>presence_penalty</code>, and <code>frequency_penalty</code> are stripped before the
   upstream call because the upstream rejects them
-  (<code>"Unsupported parameter: temperature"</code>). The names of removed
-  parameters are returned in the <code>x-airelays-ignored-parameters</code> response
-  header and logged as a <code>compatibility_adaptation</code> traffic record with the
-  reason. Generation runs with the upstream's own sampling defaults. The
-  same adaptation applies on the Claude routes: the local
-  <code>claude</code> CLI exposes no sampling controls, so these parameters are
-  stripped and disclosed there too instead of failing the request.</li>
+  (<code>"Unsupported parameter: temperature"</code>). Output-token limit fields
+  (<code>max_tokens</code>, <code>max_completion_tokens</code>, <code>max_output_tokens</code>) are also
+  stripped because the verified subscription backend does not honor them.
+  The names of removed parameters are returned in the
+  <code>x-airelays-ignored-parameters</code> response header and logged as a
+  <code>compatibility_adaptation</code> traffic record with the reason. Generation
+  runs with the upstream's own defaults. The same adaptation applies on
+  the Claude routes: the local <code>claude</code> CLI exposes no sampling or token
+  limit controls, so these parameters are stripped and disclosed there
+  too instead of failing the request.</li>
 <li><strong>Reasoning effort:</strong> <code>reasoning_effort</code> (chat completions) and
   <code>reasoning.effort</code> (responses) are forwarded verbatim to OpenAI models;
   on <code>claude:*</code> models <code>reasoning_effort</code> maps to the local CLI's
@@ -1064,11 +1067,10 @@ letting them fail, and always discloses what it changed:</p>
   that omit the parameter run OpenAI models at upstream effort <code>none</code> —
   lower than the <code>medium</code> the official ChatGPT apps use — and Claude
   models at their adaptive default.</li>
-<li><strong>Rejected loudly instead of adapted:</strong> <code>store=true</code>, output-token limit
-  fields (<code>max_tokens</code>, <code>max_completion_tokens</code>, <code>max_output_tokens</code>),
-  <code>n&gt;1</code>, and <code>best_of</code>/<code>echo</code>/<code>logprobs</code>/<code>suffix</code> on <code>/v1/completions</code>.
-  These change semantics in ways silent stripping would hide, so they
-  return a clear error.</li>
+<li><strong>Rejected loudly instead of adapted:</strong> <code>store=true</code>, <code>n&gt;1</code>, and
+  <code>best_of</code>/<code>echo</code>/<code>logprobs</code>/<code>suffix</code> on <code>/v1/completions</code>. These change
+  semantics in ways silent stripping would hide, so they return a clear
+  error.</li>
 <li><strong>Account affinity:</strong> with multiple OpenAI accounts, a conversation is
   pinned to the account that served its first turn (protects upstream
   prompt caching); failover to another account happens only at turn
