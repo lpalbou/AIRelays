@@ -20,6 +20,48 @@ def store(tmp_path):
     return AppStore(tmp_path / "data")
 
 
+def test_reasoning_effort_is_forwarded_on_both_openai_text_routes(store: AppStore) -> None:
+    """The single line that carries `reasoning_effort` upstream must be
+    pinned: silently dropping it is the exact regression class that
+    mislabeled experiment arms (see CHANGELOG 0.7.0/0.10.0)."""
+    chat_payload, _, _ = chat_completions_to_responses(
+        {
+            "model": "gpt-5.5",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "high",
+        },
+        store,
+        allow_tools=True,
+    )
+    assert chat_payload["reasoning"] == {"effort": "high"}
+
+    completions_payload, _, _ = completions_to_responses(
+        {"model": "gpt-5.5", "prompt": "hi", "reasoning_effort": "high"}
+    )
+    assert completions_payload["reasoning"] == {"effort": "high"}
+
+
+def test_reasoning_effort_null_is_treated_as_absent(store: AppStore) -> None:
+    """An explicit JSON null means "not set" (OpenAI semantics); forwarding
+    `reasoning: {"effort": null}` to the unverified upstream is a risk with
+    zero upside."""
+    chat_payload, _, _ = chat_completions_to_responses(
+        {
+            "model": "gpt-5.5",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": None,
+        },
+        store,
+        allow_tools=True,
+    )
+    assert "reasoning" not in chat_payload
+
+    completions_payload, _, _ = completions_to_responses(
+        {"model": "gpt-5.5", "prompt": "hi", "reasoning_effort": None}
+    )
+    assert "reasoning" not in completions_payload
+
+
 def test_prepare_response_request_defaults_to_minimal_instructions(store: AppStore) -> None:
     payload, wants_stream, conversation_id = prepare_response_request(
         {"model": "gpt-5.4-mini", "input": "hello"},

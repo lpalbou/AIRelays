@@ -1137,6 +1137,10 @@ def test_models_route_returns_claude_models_when_openai_auth_is_missing(tmp_path
     reasoning = claude_model["airelays"]["reasoning"]
     assert reasoning["parameter"] == "reasoning_effort"
     assert reasoning["modes"] == ["low", "medium", "high", "xhigh", "max"]
+    # ... and structured output support the same way.
+    structured = claude_model["airelays"]["structured_output"]
+    assert structured["parameter"] == "response_format"
+    assert structured["types"] == ["json_schema", "json_object"]
 
 
 def test_responses_route_rejects_claude_models_locally(tmp_path) -> None:
@@ -1239,6 +1243,59 @@ def test_chat_completions_route_streams_claude_model(tmp_path) -> None:
 
     assert response.status_code == 200
     assert response.text == "data: first\n\ndata: [DONE]\n\n"
+
+
+def test_claude_stream_requests_validate_before_headers(tmp_path) -> None:
+    """Regression (adversarial review C1): a validation error raised inside
+    the response generator can only surface as an empty 200 stream. Invalid
+    streaming requests must return real 4xx status codes."""
+    settings = make_settings(
+        tmp_path,
+        require_bearer_auth=True,
+        enable_claude=True,
+        claude_models=("claude:sonnet",),
+    )
+    settings.write_bearer_token("relay-token")
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        bad_effort = client.post(
+            "/v1/chat/completions",
+            headers={"authorization": "Bearer relay-token"},
+            json={
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+                "reasoning_effort": "ultrathink",
+            },
+        )
+        bad_format = client.post(
+            "/v1/chat/completions",
+            headers={"authorization": "Bearer relay-token"},
+            json={
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+                "response_format": {"type": "xml"},
+            },
+        )
+        bad_completion = client.post(
+            "/v1/completions",
+            headers={"authorization": "Bearer relay-token"},
+            json={
+                "model": "claude:sonnet",
+                "prompt": "hi",
+                "stream": True,
+                "response_format": {"type": "json_object"},
+            },
+        )
+
+    assert bad_effort.status_code == 422
+    assert "Supported values: low, medium, high, xhigh, max" in bad_effort.json()["detail"]
+    assert bad_format.status_code == 422
+    assert "Supported types: text, json_object, json_schema" in bad_format.json()["detail"]
+    assert bad_completion.status_code == 422
+    assert "response_format" in bad_completion.json()["detail"]
 
 
 def test_completions_route_dispatches_claude_model(tmp_path) -> None:

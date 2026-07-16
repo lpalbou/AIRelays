@@ -78,7 +78,8 @@ The current Claude runtime supports only explicit `claude:*` models on text `cha
 Checks:
 
 - confirm the model id is one of the configured `claude:*` ids
-- remove tools, files, images, audio, structured outputs, and `conversation`
+- remove tools, files, images, audio, and `conversation`
+  (`response_format` json_schema/json_object is supported on chat completions)
 - remove unsupported generation controls
 
 ## Claude startup refusal

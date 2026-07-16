@@ -167,6 +167,16 @@ function modelRow(model) {
       : `Set "${reasoning.parameter}" in requests. Default when omitted: the model's adaptive default.`;
     row.appendChild(modes);
   }
+  // Advertise structured-output support the same way (`response_format`
+  // types honored on chat completions).
+  const structured = model.airelays?.structured_output;
+  if (Array.isArray(structured?.types) && structured.types.length > 0) {
+    const types = document.createElement("span");
+    types.className = "model-reasoning";
+    types.textContent = `structured: ${structured.types.join(" · ")}`;
+    types.title = `Set "${structured.parameter}" on chat completions requests.`;
+    row.appendChild(types);
+  }
   const spacer = document.createElement("span");
   spacer.className = "spacer";
   row.appendChild(spacer);

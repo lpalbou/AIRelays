@@ -20,16 +20,22 @@ letting them fail, and always discloses what it changed:
   the Claude routes: the local `claude` CLI exposes no sampling or token
   limit controls, so these parameters are stripped and disclosed there
   too instead of failing the request.
-- **Reasoning effort:** `reasoning_effort` (chat completions) and
-  `reasoning.effort` (responses) are forwarded verbatim to OpenAI models;
-  on `claude:*` models `reasoning_effort` maps to the local CLI's
-  `--effort` flag. Each model's supported modes and default are published
+- **Reasoning effort:** `reasoning_effort` (chat completions and
+  completions) and `reasoning.effort` (responses) are forwarded verbatim
+  to OpenAI models; on `claude:*` models `reasoning_effort` maps to the
+  local CLI's `--effort` flag on both text routes. An explicit JSON `null`
+  is treated as absent. Each model's supported modes and default are published
   in `/v1/models` under `airelays.reasoning`. Unsupported Claude values are
   rejected with the supported list (the CLI would silently ignore them);
   unsupported OpenAI values surface the upstream's own error. Requests
   that omit the parameter run OpenAI models at upstream effort `none` —
   lower than the `medium` the official ChatGPT apps use — and Claude
   models at their adaptive default.
+- **Structured outputs:** `response_format.type=json_schema` is forwarded
+  (translated) to OpenAI models; on `claude:*` chat completions both
+  `json_schema` and `json_object` are honored via the claude CLI's native
+  `--json-schema` enforcement. Supported types per model are published in
+  `/v1/models` under `airelays.structured_output`.
 - **Rejected loudly instead of adapted:** `store=true`, `n>1`, and
   `best_of`/`echo`/`logprobs`/`suffix` on `/v1/completions`. These change
   semantics in ways silent stripping would hide, so they return a clear
@@ -47,7 +53,7 @@ Returns an OpenAI-style models list built from the enabled provider runtimes.
 - Claude models are explicit `claude:*` ids.
 - models starting with `claude:` route to the Claude runtime when it is enabled
 - other model ids route to the OpenAI runtime when it is enabled
-- Each model record includes an `airelays` extension block with provider identity, route capabilities, and a `reasoning` block (`parameter`, supported `modes`, `default`).
+- Each model record includes an `airelays` extension block with provider identity, route capabilities, a `reasoning` block (`parameter`, supported `modes`, `default`), and a `structured_output` block (`parameter`, supported `types` for `response_format` on chat completions).
 - Successful OpenAI upstream model-list responses are cached in memory for
   `models_cache_ttl_seconds` seconds. The default is 300 seconds; `0`
   disables the cache.
@@ -124,11 +130,26 @@ Claude runtime:
 - text-only `system`, `developer`, `user`, and `assistant` messages
 - `stream=true|false`
 - no tools
-- no files, images, audio, or structured outputs
+- no files, images, or audio
 - no AIRelays local conversation reuse
 - `reasoning_effort` supported (`low`, `medium`, `high`, `xhigh`, `max`),
   mapped to the CLI's `--effort` flag; omitted means the model's adaptive
   default
+- structured outputs supported: `response_format.type=json_schema` and
+  `json_object` map to the CLI's `--json-schema` flag (native schema
+  enforcement; `json_object` enforces the permissive `{"type": "object"}`
+  schema). The response `content` is the enforced JSON only — a run that
+  produces no schema-conforming output fails loudly instead of returning
+  prose. On streaming requests the JSON text streams as the content
+  deltas. Enforcement runs as an internal tool turn upstream, so
+  schema-enforced calls bill some additional output tokens. Unsupported
+  `response_format` shapes (including a missing `type`) are rejected with
+  a 422; serialized schemas are capped at 200 KB (they travel on the local
+  CLI's argv). Two documented leniencies versus OpenAI:
+  `json_schema.name` is optional (metadata the CLI does not use), and
+  `strict` is ignored because the CLI's native enforcement is always
+  strict — clients can only get stricter behavior than asked, never
+  weaker.
 - sampling parameters stripped and disclosed via
   `x-airelays-ignored-parameters` (the `claude` CLI has no sampling
   controls); other unsupported generation controls rejected locally
@@ -144,7 +165,11 @@ Claude runtime:
 - explicit `claude:*` models only
 - text-only prompt-in, text-out
 - `stream=true|false`
-- no files, images, audio, tools, or structured outputs
+- no files, images, audio, or tools
+- `reasoning_effort` supported (same modes and mapping as chat completions)
+- `response_format` rejected loudly (not part of the completions API;
+  ignoring it would silently hand unenforced text to a client that asked
+  for JSON — use `/v1/chat/completions` for structured outputs)
 - sampling parameters stripped and disclosed via
   `x-airelays-ignored-parameters`; other unsupported generation controls
   rejected locally

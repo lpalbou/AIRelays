@@ -37,6 +37,7 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - `GET /v1/subscription/status` reports OpenAI usage by default and Claude usage with `?provider=claude`, both in one normalized shape
 - the upstream rejects `temperature`/`top_p`/penalty parameters and does not honor output-token limits (`max_tokens`, `max_completion_tokens`, `max_output_tokens`); the relay strips them on both runtimes and discloses it via the `x-airelays-ignored-parameters` header
 - `reasoning_effort` works on both runtimes; each model's supported modes and default are published in `/v1/models` under `airelays.reasoning` — set it explicitly for parity with the official apps
+- `response_format` structured outputs work on chat completions for both runtimes (Claude: `json_schema` and `json_object`, enforced natively by the CLI's `--json-schema`; OpenAI: `json_schema`); supported types per model are published under `airelays.structured_output`
 - `airelays doctor` runs local setup checks plus live OpenAI `/models` and optional `/responses` probes
 
 ## Optional

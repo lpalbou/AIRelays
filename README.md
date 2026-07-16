@@ -338,7 +338,10 @@ Claude runtime:
 - supported routes: text `/v1/chat/completions` and text `/v1/completions`
 - stateless only
 - no `/v1/responses`
-- no files, images, audio, tools, or structured outputs
+- no files, images, audio, or tools
+- structured outputs on chat completions: `response_format` `json_schema` /
+  `json_object` map to the CLI's native `--json-schema` enforcement
+- `reasoning_effort` maps to the CLI's `--effort` (low, medium, high, xhigh, max)
 - no AIRelays local conversation reuse
 - sampling parameters are stripped and disclosed, like on the OpenAI runtime
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
 import os
@@ -46,6 +47,11 @@ class ResolvedModel:
 # would otherwise silently fall back to its default on unknown ones.
 OPENAI_REASONING_MODES = ("none", "low", "medium", "high", "xhigh")
 CLAUDE_REASONING_MODES = ("low", "medium", "high", "xhigh", "max")
+# The serialized response_format schema rides the claude CLI's argv; beyond
+# the platform argument-size limit (macOS ARG_MAX ~1 MiB total) the spawn
+# fails with a raw E2BIG. Reject far below that, while a clean 422 is still
+# possible (OpenAI itself caps schema sizes well under this).
+CLAUDE_MAX_SCHEMA_BYTES = 200_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +67,12 @@ class ProviderModel:
     # runs at "none"; the claude CLI applies its own adaptive default, which
     # is model-controlled (reported as null).
     reasoning_default: str | None = None
+    # `response_format` types honored on chat completions ("text" is always
+    # accepted and therefore not listed). OpenAI models support json_schema
+    # (translated for the subscription backend); Claude models support
+    # json_schema and json_object (mapped to the CLI's --json-schema flag,
+    # which enforces the schema natively).
+    structured_output_types: tuple[str, ...] = ()
 
     def as_wire(self) -> dict[str, Any]:
         return {
@@ -80,6 +92,10 @@ class ProviderModel:
                     "modes": list(self.reasoning_modes),
                     "default": self.reasoning_default,
                 },
+                "structured_output": {
+                    "parameter": "response_format",
+                    "types": list(self.structured_output_types),
+                },
             },
         }
 
@@ -94,6 +110,9 @@ class ClaudeTextRequest:
     # Reasoning depth for the CLI's --effort flag; None uses the model's
     # own adaptive default.
     effort: str | None = None
+    # Serialized JSON Schema for the CLI's --json-schema flag (from
+    # `response_format`); None means plain text output.
+    output_schema: str | None = None
 
 
 def _openai_model_record(model_id: str) -> ProviderModel:
@@ -113,6 +132,7 @@ def _openai_model_record(model_id: str) -> ProviderModel:
         stateful_conversations=True,
         reasoning_modes=OPENAI_REASONING_MODES,
         reasoning_default="none",
+        structured_output_types=("json_schema",),
     )
 
 
@@ -228,6 +248,109 @@ def _claude_effort(body: dict[str, Any], route: str) -> str | None:
     )
 
 
+def _claude_output_schema(body: dict[str, Any], route: str) -> str | None:
+    """Serialized JSON Schema for the CLI's --json-schema flag, built from the
+    OpenAI-style `response_format`. The CLI enforces the schema natively and
+    reports the conforming object in its result envelope (`structured_output`,
+    with `result` carrying the same JSON as text) — verified against claude
+    CLI 2.1.209. Unsupported shapes are rejected loudly instead of degrading
+    to unenforced text."""
+    response_format = body.get("response_format")
+    if response_format is None:
+        return None
+    if not isinstance(response_format, dict):
+        raise ProviderError(
+            422,
+            f"`response_format` must be an object on `{route}`.",
+            code="invalid_request_error",
+        )
+    if not response_format:
+        return None  # {} carries no request, like an absent parameter
+    format_type = response_format.get("type")
+    if format_type == "text":
+        return None
+    if format_type == "json_object":
+        # OpenAI's json_object mode promises "a valid JSON object" without a
+        # caller schema; the equivalent native enforcement is the permissive
+        # object schema.
+        return json.dumps({"type": "object"}, ensure_ascii=True, separators=(",", ":"))
+    if format_type == "json_schema":
+        schema_payload = response_format.get("json_schema")
+        if not isinstance(schema_payload, dict):
+            raise ProviderError(
+                422,
+                f"`response_format.type=json_schema` requires a `json_schema` object on `{route}`.",
+                code="invalid_request_error",
+            )
+        schema = schema_payload.get("schema")
+        if not isinstance(schema, dict):
+            raise ProviderError(
+                422,
+                f"`response_format.json_schema.schema` must be an object on `{route}`.",
+                code="invalid_request_error",
+            )
+        try:
+            serialized = json.dumps(schema, ensure_ascii=True, separators=(",", ":"), allow_nan=False)
+        except ValueError as exc:
+            raise ProviderError(
+                422,
+                f"`response_format.json_schema.schema` must be valid JSON on `{route}` "
+                "(NaN and Infinity are not representable).",
+                code="invalid_request_error",
+            ) from exc
+        if len(serialized) > CLAUDE_MAX_SCHEMA_BYTES:
+            # The schema travels on the CLI's argv; past the platform's
+            # argument-size limit the spawn fails with a raw OS error, so
+            # oversized schemas are rejected while a status code is still
+            # possible.
+            raise ProviderError(
+                422,
+                f"`response_format` schema is too large for the local Claude CLI "
+                f"(serialized {len(serialized)} bytes, maximum {CLAUDE_MAX_SCHEMA_BYTES}).",
+                code="invalid_request_error",
+            )
+        return serialized
+    # A missing `type` on a non-empty response_format lands here too
+    # (format_type None): OpenAI rejects that shape, and treating it as
+    # "text" would silently drop the enforcement the client asked for.
+    raise ProviderError(
+        422,
+        f"Unsupported `response_format.type` {format_type!r} for Claude models on `{route}`. "
+        "Supported types: text, json_object, json_schema.",
+        code="unsupported_for_provider",
+    )
+
+
+def _claude_structured_content(payload: dict[str, Any]) -> str | None:
+    """The JSON text a schema-enforced run produced. `structured_output` is
+    the CLI's typed field for it; `result` carries the same JSON as a string
+    and doubles as the fallback if the envelope shape ever changes — but the
+    fallback is trusted only when it actually parses as JSON, because on
+    refusal/truncation `result` can carry prose, and serving prose as the
+    "enforced JSON" would be silent degradation."""
+    structured = payload.get("structured_output")
+    if structured is not None:
+        return json.dumps(structured, ensure_ascii=False, separators=(",", ":"))
+    result = payload.get("result")
+    if isinstance(result, str) and result.strip():
+        try:
+            json.loads(result)
+        except json.JSONDecodeError:
+            return None
+        return result
+    return None
+
+
+def _claude_error_detail(payload: dict[str, Any]) -> str | None:
+    """Error text from a CLI result envelope, when it is one. The CLI can
+    exit 0 while reporting failure in-band (`is_error`, error subtypes), so
+    envelope inspection — not the exit code — is the reliable signal."""
+    subtype = payload.get("subtype")
+    if payload.get("is_error") is True or (isinstance(subtype, str) and subtype.startswith("error")):
+        return str(payload.get("result") or "Claude CLI returned an error.")
+    return None
+
+
 def _usage_from_claude_result(payload: dict[str, Any] | None) -> dict[str, int]:
     usage = payload.get("usage") if isinstance(payload, dict) else None
     if not isinstance(usage, dict):
@@ -317,6 +440,7 @@ class ClaudeCliRuntime:
                 stateful_conversations=False,
                 reasoning_modes=CLAUDE_REASONING_MODES,
                 reasoning_default=None,
+                structured_output_types=("json_schema", "json_object"),
             )
             records[model_id] = record
         return records
@@ -362,6 +486,20 @@ class ClaudeCliRuntime:
     async def create_chat_completion(self, body: dict[str, Any], request_id: str) -> dict[str, Any]:
         request = self._prepare_chat_request(body)
         result = await self._run_json(request, request_id)
+        content = result.get("result", "")
+        if request.output_schema:
+            # Schema-enforced runs must return the enforced JSON only; the
+            # model's surrounding prose (if any) is not the answer. A run
+            # that produced no conforming JSON is a provider failure, not an
+            # empty success.
+            structured_content = _claude_structured_content(result)
+            if structured_content is None:
+                raise ProviderError(
+                    502,
+                    "The Claude CLI returned no schema-conforming output for a `response_format` request.",
+                    code="provider_failure",
+                )
+            content = structured_content
         return {
             "id": f"chatcmpl_{uuid.uuid4().hex}",
             "object": "chat.completion",
@@ -372,7 +510,7 @@ class ClaudeCliRuntime:
                     "index": 0,
                     "message": {
                         "role": "assistant",
-                        "content": result.get("result", ""),
+                        "content": content,
                     },
                     "finish_reason": _finish_reason(result.get("stop_reason")),
                 }
@@ -380,12 +518,22 @@ class ClaudeCliRuntime:
             "usage": _usage_from_claude_result(result),
         }
 
-    async def stream_chat_completion(
+    def stream_chat_completion(
         self,
         body: dict[str, Any],
         request_id: str,
     ) -> AsyncIterator[bytes]:
+        # Validation must happen before the app layer commits SSE headers:
+        # a 422 raised inside the generator can only surface as an empty 200
+        # once streaming has started. Prepare eagerly, then stream.
         request = self._prepare_chat_request(body)
+        return self._stream_chat_response(request, request_id)
+
+    async def _stream_chat_response(
+        self,
+        request: ClaudeTextRequest,
+        request_id: str,
+    ) -> AsyncIterator[bytes]:
         response_id = f"chatcmpl_{uuid.uuid4().hex}"
         created_at = int(time.time())
         sent_role = False
@@ -393,28 +541,45 @@ class ClaudeCliRuntime:
         assistant_fallback = ""
         last_usage: dict[str, int] | None = None
         finish_reason = "stop"
+        # Schema-enforced runs: the enforced JSON streams as the CLI's
+        # StructuredOutput tool-use block (`input_json_delta` fragments); any
+        # text deltas around it are the model's prose, not the answer, and
+        # must not reach a client that asked for JSON.
+        structured = bool(request.output_schema)
+        # Under CLI 2.1.209 exactly one tool-use block exists per schema run;
+        # if a future CLI ever streamed a second (e.g. an enforcement retry),
+        # concatenating both would hand the client unparseable JSON, so only
+        # the first block's fragments are forwarded.
+        tool_use_blocks = 0
         async for event in self._run_stream(request, request_id):
             event_type = event.get("type")
             if event_type == "stream_event":
                 inner = event.get("event") or {}
+                if inner.get("type") == "content_block_start":
+                    block = inner.get("content_block") or {}
+                    if block.get("type") == "tool_use":
+                        tool_use_blocks += 1
                 if inner.get("type") == "content_block_delta":
                     delta = inner.get("delta") or {}
-                    if delta.get("type") == "text_delta":
-                        text = delta.get("text") or ""
-                        if not isinstance(text, str) or not text:
-                            continue
-                        saw_text = True
-                        delta_payload: dict[str, Any] = {"content": text}
-                        if not sent_role:
-                            delta_payload = {"role": "assistant", "content": text}
-                            sent_role = True
-                        chunk = chat_completion_chunk(
-                            response_id,
-                            created_at,
-                            request.public_model,
-                            delta_payload,
-                        )
-                        yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
+                    text: Any = None
+                    if delta.get("type") == "text_delta" and not structured:
+                        text = delta.get("text")
+                    elif delta.get("type") == "input_json_delta" and structured and tool_use_blocks <= 1:
+                        text = delta.get("partial_json")
+                    if not isinstance(text, str) or not text:
+                        continue
+                    saw_text = True
+                    delta_payload: dict[str, Any] = {"content": text}
+                    if not sent_role:
+                        delta_payload = {"role": "assistant", "content": text}
+                        sent_role = True
+                    chunk = chat_completion_chunk(
+                        response_id,
+                        created_at,
+                        request.public_model,
+                        delta_payload,
+                    )
+                    yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
                 elif inner.get("type") == "message_delta":
                     finish_reason = _finish_reason((inner.get("delta") or {}).get("stop_reason"))
                     usage = inner.get("usage")
@@ -425,7 +590,7 @@ class ClaudeCliRuntime:
                             "total_tokens": int(usage.get("input_tokens") or 0)
                             + int(usage.get("output_tokens") or 0),
                         }
-            elif event_type == "assistant" and not saw_text:
+            elif event_type == "assistant" and not saw_text and not structured:
                 message = event.get("message") or {}
                 content = message.get("content") or []
                 assistant_fallback = "".join(
@@ -434,9 +599,25 @@ class ClaudeCliRuntime:
                     if isinstance(block, dict) and block.get("type") == "text"
                 )
             elif event_type == "result":
+                # The CLI can exit 0 while reporting failure in-band; that
+                # text is an error, never the answer (the non-stream path has
+                # always guarded this — the stream must too).
+                error_detail = _claude_error_detail(event)
+                if error_detail is not None:
+                    raise ProviderError(502, error_detail, code="provider_failure")
                 last_usage = _usage_from_claude_result(event)
                 finish_reason = _finish_reason(event.get("stop_reason"))
-                if not assistant_fallback:
+                if structured:
+                    if not saw_text:
+                        structured_fallback = _claude_structured_content(event)
+                        if structured_fallback is None:
+                            raise ProviderError(
+                                502,
+                                "The Claude CLI returned no schema-conforming output for a `response_format` request.",
+                                code="provider_failure",
+                            )
+                        assistant_fallback = structured_fallback
+                elif not assistant_fallback:
                     result_text = event.get("result")
                     if isinstance(result_text, str):
                         assistant_fallback = result_text
@@ -488,12 +669,20 @@ class ClaudeCliRuntime:
             "usage": _usage_from_claude_result(result),
         }
 
-    async def stream_completion(
+    def stream_completion(
         self,
         body: dict[str, Any],
         request_id: str,
     ) -> AsyncIterator[bytes]:
+        # Same eager-validation contract as stream_chat_completion.
         request = self._prepare_completion_request(body)
+        return self._stream_completion_response(request, request_id)
+
+    async def _stream_completion_response(
+        self,
+        request: ClaudeTextRequest,
+        request_id: str,
+    ) -> AsyncIterator[bytes]:
         response_id = f"cmpl_{uuid.uuid4().hex}"
         created_at = int(time.time())
         saw_text = False
@@ -529,6 +718,9 @@ class ClaudeCliRuntime:
                     if isinstance(block, dict) and block.get("type") == "text"
                 )
             elif event_type == "result":
+                error_detail = _claude_error_detail(event)
+                if error_detail is not None:
+                    raise ProviderError(502, error_detail, code="provider_failure")
                 finish_reason = _finish_reason(event.get("stop_reason"))
                 if not assistant_fallback:
                     result_text = event.get("result")
@@ -563,12 +755,13 @@ class ClaudeCliRuntime:
         # them (x-airelays-ignored-parameters), the same documented adaptation
         # the OpenAI runtime applies, because the local claude CLI exposes no
         # equivalent controls and standard SDKs send them by default.
+        # `response_format` is honored (mapped to the CLI's --json-schema),
+        # so it is not rejected here either.
         for field in (
             "tools",
             "functions",
             "tool_choice",
             "function_call",
-            "response_format",
             "conversation",
             "store",
             "previous_response_id",
@@ -596,6 +789,7 @@ class ClaudeCliRuntime:
             prompt=_chat_transcript(turns),
             include_usage=include_usage,
             effort=_claude_effort(body, "/v1/chat/completions"),
+            output_schema=_claude_output_schema(body, "/v1/chat/completions"),
         )
 
     def _prepare_completion_request(self, body: dict[str, Any]) -> ClaudeTextRequest:
@@ -604,7 +798,10 @@ class ClaudeCliRuntime:
             raise ProviderError(422, "The Claude runtime supports only `n=1`.", code="unsupported_for_provider")
         # Sampling parameters and output-token limits are stripped and
         # disclosed by the app layer instead of rejected here — see
-        # _prepare_chat_request for rationale.
+        # _prepare_chat_request for rationale. `response_format` is not part
+        # of the completions API; silently ignoring it would be silent
+        # degradation for a client that asked for enforced JSON, so it is
+        # rejected loudly (use /v1/chat/completions for structured outputs).
         for field in (
             "best_of",
             "echo",
@@ -613,6 +810,7 @@ class ClaudeCliRuntime:
             "conversation",
             "store",
             "stop",
+            "response_format",
         ):
             if _provided(body.get(field)):
                 raise ProviderError(
@@ -673,6 +871,19 @@ class ClaudeCliRuntime:
                         f"Claude CLI not found at `{self._settings.claude_bin}`.",
                         code="provider_unavailable",
                     ) from exc
+                except OSError as exc:
+                    if exc.errno == errno.E2BIG:
+                        raise ProviderError(
+                            413,
+                            "The request is too large for the local Claude CLI "
+                            "(argument list exceeded the platform limit).",
+                            code="invalid_request_error",
+                        ) from exc
+                    raise ProviderError(
+                        503,
+                        f"Failed to launch the Claude CLI: {exc}",
+                        code="provider_unavailable",
+                    ) from exc
                 try:
                     stdout, stderr = await asyncio.wait_for(
                         process.communicate(request.prompt.encode("utf-8")),
@@ -702,8 +913,9 @@ class ClaudeCliRuntime:
             parsed = json.loads(stdout.decode("utf-8"))
         except json.JSONDecodeError as exc:
             raise ProviderError(502, "Claude CLI returned invalid JSON.", code="provider_failure") from exc
-        if parsed.get("subtype") == "error" or parsed.get("is_error") is True:
-            raise ProviderError(502, str(parsed.get("result") or "Claude CLI returned an error."), code="provider_failure")
+        error_detail = _claude_error_detail(parsed)
+        if error_detail is not None:
+            raise ProviderError(502, error_detail, code="provider_failure")
         return parsed
 
     async def _run_stream(
@@ -728,6 +940,19 @@ class ClaudeCliRuntime:
                     raise ProviderError(
                         503,
                         f"Claude CLI not found at `{self._settings.claude_bin}`.",
+                        code="provider_unavailable",
+                    ) from exc
+                except OSError as exc:
+                    if exc.errno == errno.E2BIG:
+                        raise ProviderError(
+                            413,
+                            "The request is too large for the local Claude CLI "
+                            "(argument list exceeded the platform limit).",
+                            code="invalid_request_error",
+                        ) from exc
+                    raise ProviderError(
+                        503,
+                        f"Failed to launch the Claude CLI: {exc}",
                         code="provider_unavailable",
                     ) from exc
 
@@ -784,6 +1009,8 @@ class ClaudeCliRuntime:
             command.extend(["--system-prompt", request.system_prompt])
         if request.effort:
             command.extend(["--effort", request.effort])
+        if request.output_schema:
+            command.extend(["--json-schema", request.output_schema])
         if stream:
             command.extend(["--output-format", "stream-json", "--include-partial-messages", "--verbose"])
         else:

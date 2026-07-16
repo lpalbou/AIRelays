@@ -276,11 +276,11 @@ export async function mockInvoke(command, args = {}) {
       return {
         object: "list",
         data: [
-          { id: "gpt-5.5", object: "model", airelays: { provider: "openai", reasoning: { parameter: "reasoning_effort", modes: ["none", "low", "medium", "high", "xhigh"], default: "none" } } },
-          { id: "gpt-5.4", object: "model", airelays: { provider: "openai", reasoning: { parameter: "reasoning_effort", modes: ["none", "low", "medium", "high", "xhigh"], default: "none" } } },
-          { id: "gpt-5.4-mini", object: "model", airelays: { provider: "openai", reasoning: { parameter: "reasoning_effort", modes: ["none", "low", "medium", "high", "xhigh"], default: "none" } } },
-          { id: "claude:sonnet", object: "model", airelays: { provider: "claude", reasoning: { parameter: "reasoning_effort", modes: ["low", "medium", "high", "xhigh", "max"], default: null } } },
-          { id: "claude:opus", object: "model", airelays: { provider: "claude", reasoning: { parameter: "reasoning_effort", modes: ["low", "medium", "high", "xhigh", "max"], default: null } } },
+          { id: "gpt-5.5", object: "model", airelays: { provider: "openai", reasoning: { parameter: "reasoning_effort", modes: ["none", "low", "medium", "high", "xhigh"], default: "none" }, structured_output: { parameter: "response_format", types: ["json_schema"] } } },
+          { id: "gpt-5.4", object: "model", airelays: { provider: "openai", reasoning: { parameter: "reasoning_effort", modes: ["none", "low", "medium", "high", "xhigh"], default: "none" }, structured_output: { parameter: "response_format", types: ["json_schema"] } } },
+          { id: "gpt-5.4-mini", object: "model", airelays: { provider: "openai", reasoning: { parameter: "reasoning_effort", modes: ["none", "low", "medium", "high", "xhigh"], default: "none" }, structured_output: { parameter: "response_format", types: ["json_schema"] } } },
+          { id: "claude:sonnet", object: "model", airelays: { provider: "claude", reasoning: { parameter: "reasoning_effort", modes: ["low", "medium", "high", "xhigh", "max"], default: null }, structured_output: { parameter: "response_format", types: ["json_schema", "json_object"] } } },
+          { id: "claude:opus", object: "model", airelays: { provider: "claude", reasoning: { parameter: "reasoning_effort", modes: ["low", "medium", "high", "xhigh", "max"], default: null }, structured_output: { parameter: "response_format", types: ["json_schema", "json_object"] } } },
         ],
       };
     case "set_custom_token":

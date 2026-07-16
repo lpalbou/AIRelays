@@ -685,7 +685,9 @@ def chat_completions_to_responses(
         payload["service_tier"] = body["service_tier"]
     if "user" in body:
         payload["user"] = body["user"]
-    if "reasoning_effort" in body:
+    # An explicit JSON null means "not set" (OpenAI semantics), so key
+    # presence alone must not forward `reasoning: {"effort": null}` upstream.
+    if body.get("reasoning_effort") is not None:
         payload["reasoning"] = {"effort": body["reasoning_effort"]}
 
     response_format = body.get("response_format")
@@ -758,6 +760,11 @@ def completions_to_responses(body: dict[str, Any]) -> tuple[dict[str, Any], bool
         payload["metadata"] = body["metadata"]
     if "user" in body:
         payload["user"] = body["user"]
+    # The completions route serves the same reasoning models as chat; the
+    # control must not be silently dropped here while chat honors it (the
+    # Claude runtime honors it on this route too).
+    if body.get("reasoning_effort") is not None:
+        payload["reasoning"] = {"effort": body["reasoning_effort"]}
 
     wants_stream = bool(body.get("stream"))
     conversation_id = body.get("conversation")

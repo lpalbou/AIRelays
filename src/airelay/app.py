@@ -71,6 +71,13 @@ def _request_id(request: Request | None = None) -> str:
     return created
 
 
+def _stream_error_event(message: str, code: str) -> bytes:
+    """OpenAI-style in-band SSE error event, for failures that happen after
+    the response headers are already on the wire."""
+    payload = {"error": {"message": message, "type": code, "param": None, "code": code}}
+    return f"data: {json.dumps(payload, ensure_ascii=True)}\n\n".encode("utf-8")
+
+
 def _http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, HTTPException):
         return exc
@@ -797,17 +804,28 @@ def create_app(settings: Settings) -> FastAPI:
                             )
                         return logged_json(request_id, payload, headers=claude_headers)
 
+                    # Validation happens here, before SSE headers are
+                    # committed: invalid requests surface as real 4xx
+                    # responses instead of empty 200 streams.
+                    claude_stream = claude_runtime.stream_chat_completion(body, request_id)
+
                     async def claude_event_stream() -> AsyncIterator[bytes]:
-                        async for chunk in claude_runtime.stream_chat_completion(body, request_id):
-                            traffic.write(
-                                {
-                                    "request_id": request_id,
-                                    "phase": "outbound_stream_chunk",
-                                    "provider": "claude",
-                                    "body": snapshot_body("text/event-stream", chunk),
-                                }
-                            )
-                            yield chunk
+                        try:
+                            async for chunk in claude_stream:
+                                traffic.write(
+                                    {
+                                        "request_id": request_id,
+                                        "phase": "outbound_stream_chunk",
+                                        "provider": "claude",
+                                        "body": snapshot_body("text/event-stream", chunk),
+                                    }
+                                )
+                                yield chunk
+                        except ProviderError as exc:
+                            # Headers are already on the wire; signal the
+                            # failure in-band the way OpenAI does instead of
+                            # silently truncating the stream.
+                            yield _stream_error_event(exc.detail, exc.code)
 
                     return StreamingResponse(
                         claude_event_stream(),
@@ -831,6 +849,17 @@ def create_app(settings: Settings) -> FastAPI:
                 chat_payload = responses_to_chat_completion(response_payload)
                 return logged_json(request_id, chat_payload, headers=response_headers)
 
+            # Contact the upstream before committing SSE headers: an upstream
+            # rejection (e.g. an invalid reasoning effort) raised inside the
+            # response generator can only surface as an empty 200 stream, so
+            # the first upstream event is awaited eagerly and errors become
+            # real status codes.
+            upstream_events = backend.stream_response_events(payload, request_id, conversation_id)
+            try:
+                first_event: SSEEvent | None = await anext(upstream_events)
+            except StopAsyncIteration:
+                first_event = None
+
             async def event_stream() -> AsyncIterator[bytes]:
                 response_id = f"chatcmpl_{uuid.uuid4().hex}"
                 created_at = int(time.time())
@@ -841,7 +870,14 @@ def create_app(settings: Settings) -> FastAPI:
                 usage_requested = bool((body.get("stream_options") or {}).get("include_usage"))
                 latest_response_id: str | None = None
                 latest_usage: dict[str, Any] | None = None
-                async for event in backend.stream_response_events(payload, request_id, conversation_id):
+
+                async def upstream_iter() -> AsyncIterator[SSEEvent]:
+                    if first_event is not None:
+                        yield first_event
+                    async for upstream_event in upstream_events:
+                        yield upstream_event
+
+                async for event in upstream_iter():
                     try:
                         parsed = json.loads(event.data)
                     except json.JSONDecodeError:
@@ -980,17 +1016,23 @@ def create_app(settings: Settings) -> FastAPI:
                             )
                         return logged_json(request_id, payload, headers=claude_headers)
 
+                    # Same eager-validation contract as the chat route.
+                    claude_stream = claude_runtime.stream_completion(body, request_id)
+
                     async def claude_event_stream() -> AsyncIterator[bytes]:
-                        async for chunk in claude_runtime.stream_completion(body, request_id):
-                            traffic.write(
-                                {
-                                    "request_id": request_id,
-                                    "phase": "outbound_stream_chunk",
-                                    "provider": "claude",
-                                    "body": snapshot_body("text/event-stream", chunk),
-                                }
-                            )
-                            yield chunk
+                        try:
+                            async for chunk in claude_stream:
+                                traffic.write(
+                                    {
+                                        "request_id": request_id,
+                                        "phase": "outbound_stream_chunk",
+                                        "provider": "claude",
+                                        "body": snapshot_body("text/event-stream", chunk),
+                                    }
+                                )
+                                yield chunk
+                        except ProviderError as exc:
+                            yield _stream_error_event(exc.detail, exc.code)
 
                     return StreamingResponse(
                         claude_event_stream(),
@@ -1015,12 +1057,27 @@ def create_app(settings: Settings) -> FastAPI:
                     headers=response_headers,
                 )
 
+            # Same eager first-event contact as the chat route, for real
+            # pre-stream status codes.
+            upstream_events = backend.stream_response_events(payload, request_id, conversation_id)
+            try:
+                first_event: SSEEvent | None = await anext(upstream_events)
+            except StopAsyncIteration:
+                first_event = None
+
             async def event_stream() -> AsyncIterator[bytes]:
                 response_id = f"cmpl_{uuid.uuid4().hex}"
                 created_at = int(time.time())
                 model = body.get("model", "unknown")
                 latest_response_id: str | None = None
-                async for event in backend.stream_response_events(payload, request_id, conversation_id):
+
+                async def upstream_iter() -> AsyncIterator[SSEEvent]:
+                    if first_event is not None:
+                        yield first_event
+                    async for upstream_event in upstream_events:
+                        yield upstream_event
+
+                async for event in upstream_iter():
                     try:
                         parsed = json.loads(event.data)
                     except json.JSONDecodeError:

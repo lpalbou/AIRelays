@@ -1389,9 +1389,14 @@ def _run_models(args: argparse.Namespace) -> None:
         _print_section(display_names.get(provider, provider))
         width = max((len(str(model.get("id"))) for model in entries), default=0)
         for model in entries:
-            reasoning = (model.get("airelays") or {}).get("reasoning") or {}
+            extension = model.get("airelays") or {}
+            reasoning = extension.get("reasoning") or {}
             modes = reasoning.get("modes") or []
             suffix = f"  reasoning: {', '.join(modes)}" if modes else ""
+            structured = extension.get("structured_output") or {}
+            types = structured.get("types") or []
+            if types:
+                suffix += f"  structured: {', '.join(types)}"
             print(f"  {str(model.get('id')).ljust(width)}{suffix}")
     print()
     print("  Use these ids as `model` in requests to the endpoint above.")

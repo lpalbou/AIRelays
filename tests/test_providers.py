@@ -157,6 +157,483 @@ async def test_claude_runtime_rejects_unsupported_reasoning_effort(tmp_path) -> 
         )
 
 
+@pytest.mark.asyncio
+async def test_claude_runtime_maps_response_format_json_schema_to_the_cli(tmp_path, monkeypatch) -> None:
+    """OpenAI-style `response_format.type=json_schema` becomes the CLI's
+    --json-schema flag (native enforcement), and the response content is the
+    enforced JSON — never the model's surrounding prose."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    captured: dict[str, object] = {}
+
+    async def fake_run_json(request, request_id):
+        captured["request"] = request
+        return {
+            # With --json-schema the CLI reports the conforming object in
+            # `structured_output`; `result` carries the same JSON as text.
+            "result": "{\n  \"response\": 4\n}",
+            "structured_output": {"response": 4},
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 9, "output_tokens": 21},
+        }
+
+    monkeypatch.setattr(runtime, "_run_json", fake_run_json)
+    payload = await runtime.create_chat_completion(
+        {
+            "model": "claude:sonnet",
+            "messages": [{"role": "user", "content": "Rate it."}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "rating",
+                    "schema": {
+                        "type": "object",
+                        "properties": {"response": {"type": "integer"}},
+                        "required": ["response"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+        },
+        "req_1",
+    )
+
+    request = captured["request"]
+    assert request.output_schema is not None
+    import json as _json
+
+    assert _json.loads(request.output_schema) == {
+        "type": "object",
+        "properties": {"response": {"type": "integer"}},
+        "required": ["response"],
+        "additionalProperties": False,
+    }
+    command = runtime._build_command(request, stream=False)
+    assert command[command.index("--json-schema") + 1] == request.output_schema
+    # The typed structured_output field wins; content is the JSON only.
+    assert _json.loads(payload["choices"][0]["message"]["content"]) == {"response": 4}
+    assert payload["choices"][0]["finish_reason"] == "stop"
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_maps_response_format_json_object_to_permissive_schema(tmp_path, monkeypatch) -> None:
+    """`json_object` promises "a valid JSON object" without a caller schema;
+    the equivalent native enforcement is the permissive object schema."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    captured: dict[str, object] = {}
+
+    async def fake_run_json(request, request_id):
+        captured["request"] = request
+        return {"result": "{\"ok\": true}", "structured_output": {"ok": True}, "stop_reason": "tool_use"}
+
+    monkeypatch.setattr(runtime, "_run_json", fake_run_json)
+    await runtime.create_chat_completion(
+        {
+            "model": "claude:sonnet",
+            "messages": [{"role": "user", "content": "Reply in JSON."}],
+            "response_format": {"type": "json_object"},
+        },
+        "req_1",
+    )
+    import json as _json
+
+    assert _json.loads(captured["request"].output_schema) == {"type": "object"}
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_response_format_text_is_a_noop(tmp_path, monkeypatch) -> None:
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    captured: dict[str, object] = {}
+
+    async def fake_run_json(request, request_id):
+        captured["request"] = request
+        return {"result": "plain text", "stop_reason": "end_turn"}
+
+    monkeypatch.setattr(runtime, "_run_json", fake_run_json)
+    payload = await runtime.create_chat_completion(
+        {
+            "model": "claude:sonnet",
+            "messages": [{"role": "user", "content": "hi"}],
+            "response_format": {"type": "text"},
+        },
+        "req_1",
+    )
+    assert captured["request"].output_schema is None
+    assert "--json-schema" not in runtime._build_command(captured["request"], stream=False)
+    assert payload["choices"][0]["message"]["content"] == "plain text"
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_rejects_unsupported_response_format_shapes(tmp_path) -> None:
+    """Unknown response_format types and malformed json_schema payloads are
+    rejected loudly instead of degrading to unenforced text."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    with pytest.raises(ProviderError, match="Supported types: text, json_object, json_schema"):
+        await runtime.create_chat_completion(
+            {
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "hello"}],
+                "response_format": {"type": "xml"},
+            },
+            "req_1",
+        )
+    with pytest.raises(ProviderError, match="requires a `json_schema` object"):
+        await runtime.create_chat_completion(
+            {
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "hello"}],
+                "response_format": {"type": "json_schema"},
+            },
+            "req_2",
+        )
+    with pytest.raises(ProviderError, match="`response_format.json_schema.schema` must be an object"):
+        await runtime.create_chat_completion(
+            {
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "hello"}],
+                "response_format": {"type": "json_schema", "json_schema": {"name": "x"}},
+            },
+            "req_3",
+        )
+
+
+def _collect_stream_chunks(sse_bytes: list[bytes]) -> list[dict]:
+    import json as _json
+
+    chunks = []
+    for raw in sse_bytes:
+        for line in raw.decode("utf-8").splitlines():
+            line = line.strip()
+            if not line.startswith("data: ") or line == "data: [DONE]":
+                continue
+            chunks.append(_json.loads(line[len("data: "):]))
+    return chunks
+
+
+@pytest.mark.asyncio
+async def test_claude_stream_with_schema_streams_only_the_enforced_json(tmp_path, monkeypatch) -> None:
+    """Streaming a schema-enforced request must deliver the JSON text (the
+    CLI's StructuredOutput input_json_delta fragments) as the content deltas,
+    and suppress the model's surrounding prose — a client that asked for
+    JSON must never receive non-JSON content."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+
+    async def fake_stream(request, request_id):
+        events = [
+            {"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "let me think"}}},
+            {"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Here is your JSON: "}}},
+            {"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": ""}}},
+            {"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{\"response\": 4"}}},
+            {"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "}"}}},
+            {"type": "stream_event", "event": {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"input_tokens": 9, "output_tokens": 30}}},
+            {"type": "result", "result": "{\"response\": 4}", "structured_output": {"response": 4}, "stop_reason": "tool_use", "usage": {"input_tokens": 9, "output_tokens": 30}},
+        ]
+        for event in events:
+            yield event
+
+    monkeypatch.setattr(runtime, "_run_stream", fake_stream)
+    collected = []
+    async for chunk in runtime.stream_chat_completion(
+        {
+            "model": "claude:sonnet",
+            "messages": [{"role": "user", "content": "Rate it."}],
+            "stream": True,
+            "response_format": {"type": "json_object"},
+        },
+        "req_1",
+    ):
+        collected.append(chunk)
+
+    chunks = _collect_stream_chunks(collected)
+    content = "".join(
+        (chunk["choices"][0].get("delta") or {}).get("content") or ""
+        for chunk in chunks
+        if chunk.get("choices")
+    )
+    import json as _json
+
+    assert _json.loads(content) == {"response": 4}
+    assert "Here is your JSON" not in content
+    finish_reasons = [chunk["choices"][0].get("finish_reason") for chunk in chunks if chunk.get("choices")]
+    assert "stop" in finish_reasons
+
+
+@pytest.mark.asyncio
+async def test_claude_stream_with_schema_falls_back_to_the_result_envelope(tmp_path, monkeypatch) -> None:
+    """If no StructuredOutput fragments streamed (CLI shape drift), the
+    result envelope still carries the enforced JSON; it is emitted as one
+    content chunk rather than dropped."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+
+    async def fake_stream(request, request_id):
+        events = [
+            {"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "prose"}}},
+            {"type": "result", "result": "{\"response\":2}", "structured_output": {"response": 2}, "stop_reason": "tool_use", "usage": {"input_tokens": 4, "output_tokens": 8}},
+        ]
+        for event in events:
+            yield event
+
+    monkeypatch.setattr(runtime, "_run_stream", fake_stream)
+    collected = []
+    async for chunk in runtime.stream_chat_completion(
+        {
+            "model": "claude:sonnet",
+            "messages": [{"role": "user", "content": "Rate it."}],
+            "stream": True,
+            "response_format": {"type": "json_object"},
+        },
+        "req_1",
+    ):
+        collected.append(chunk)
+
+    chunks = _collect_stream_chunks(collected)
+    content = "".join(
+        (chunk["choices"][0].get("delta") or {}).get("content") or ""
+        for chunk in chunks
+        if chunk.get("choices")
+    )
+    import json as _json
+
+    assert _json.loads(content) == {"response": 2}
+    assert "prose" not in content
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_rejects_response_format_without_a_type(tmp_path) -> None:
+    """A non-empty response_format with no `type` must not silently degrade
+    to unenforced text (OpenAI rejects the same shape)."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    with pytest.raises(ProviderError, match="Supported types: text, json_object, json_schema"):
+        await runtime.create_chat_completion(
+            {
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "hello"}],
+                "response_format": {"json_schema": {"name": "x", "schema": {"type": "object"}}},
+            },
+            "req_1",
+        )
+    # Non-string type values (unhashable included) get the same clean 422.
+    with pytest.raises(ProviderError, match="Supported types"):
+        await runtime.create_chat_completion(
+            {
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "hello"}],
+                "response_format": {"type": {}},
+            },
+            "req_2",
+        )
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_rejects_oversized_and_nonfinite_schemas(tmp_path) -> None:
+    """The schema rides the CLI argv: oversized schemas must 422 before the
+    spawn can fail with a raw E2BIG, and NaN/Infinity are not JSON."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    huge = {"type": "object", "properties": {f"k{i}": {"type": "string"} for i in range(9000)}}
+    with pytest.raises(ProviderError, match="too large"):
+        await runtime.create_chat_completion(
+            {
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "hello"}],
+                "response_format": {"type": "json_schema", "json_schema": {"name": "x", "schema": huge}},
+            },
+            "req_1",
+        )
+    with pytest.raises(ProviderError, match="NaN and Infinity"):
+        await runtime.create_chat_completion(
+            {
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "hello"}],
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {"name": "x", "schema": {"type": "object", "x": float("nan")}},
+                },
+            },
+            "req_2",
+        )
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_never_serves_prose_as_enforced_json(tmp_path, monkeypatch) -> None:
+    """If a schema-enforced run yields no structured_output and a `result`
+    that does not parse as JSON (refusal, truncation), the request must fail
+    loudly — prose served under a JSON contract is silent degradation."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+
+    async def fake_run_json(request, request_id):
+        return {"result": "I'm sorry, I can't produce that.", "stop_reason": "end_turn"}
+
+    monkeypatch.setattr(runtime, "_run_json", fake_run_json)
+    with pytest.raises(ProviderError, match="no schema-conforming output"):
+        await runtime.create_chat_completion(
+            {
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "Rate it."}],
+                "response_format": {"type": "json_object"},
+            },
+            "req_1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_claude_stream_surfaces_cli_error_envelopes_instead_of_content(tmp_path, monkeypatch) -> None:
+    """The CLI can exit 0 while reporting failure in-band (`is_error`,
+    error subtypes). The stream must raise — never narrate the error text as
+    assistant content (the non-stream path has always guarded this)."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+
+    async def fake_stream(request, request_id):
+        events = [
+            {
+                "type": "result",
+                "subtype": "error_during_execution",
+                "is_error": True,
+                "result": "API Error: 401 invalid bearer token",
+            },
+        ]
+        for event in events:
+            yield event
+
+    monkeypatch.setattr(runtime, "_run_stream", fake_stream)
+    with pytest.raises(ProviderError, match="401 invalid bearer token"):
+        async for _ in runtime.stream_chat_completion(
+            {
+                "model": "claude:sonnet",
+                "messages": [{"role": "user", "content": "Rate it."}],
+                "stream": True,
+                "response_format": {"type": "json_object"},
+            },
+            "req_1",
+        ):
+            pass
+
+
+FAKE_CLAUDE_CLI = '''#!/usr/bin/env python3
+import json, sys
+
+args = sys.argv[1:]
+prompt = sys.stdin.read()
+
+
+def flag(name):
+    return args[args.index(name) + 1] if name in args else None
+
+
+schema_arg = flag("--json-schema")
+out_format = flag("--output-format")
+if schema_arg is None:
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+                      "result": "no schema", "stop_reason": "end_turn", "argv": args}))
+    sys.exit(0)
+schema = json.loads(schema_arg)  # must be valid JSON on the argv boundary
+if out_format == "json":
+    print(json.dumps({
+        "type": "result", "subtype": "success", "is_error": False,
+        "result": "{\\"response\\":5}", "structured_output": {"response": 5},
+        "stop_reason": "tool_use",
+        "usage": {"input_tokens": 3, "output_tokens": 9},
+        "argv": args,
+    }))
+else:
+    events = [
+        {"type": "stream_event", "event": {"type": "content_block_delta",
+                                           "delta": {"type": "text_delta", "text": "prose to suppress"}}},
+        {"type": "stream_event", "event": {"type": "content_block_delta",
+                                           "delta": {"type": "input_json_delta", "partial_json": "{\\"response\\""}}},
+        {"type": "stream_event", "event": {"type": "content_block_delta",
+                                           "delta": {"type": "input_json_delta", "partial_json": ":5}"}}},
+        {"type": "stream_event", "event": {"type": "message_delta", "delta": {"stop_reason": "tool_use"},
+                                           "usage": {"input_tokens": 3, "output_tokens": 9}}},
+        {"type": "result", "subtype": "success", "is_error": False,
+         "result": "{\\"response\\":5}", "structured_output": {"response": 5},
+         "stop_reason": "tool_use", "usage": {"input_tokens": 3, "output_tokens": 9}},
+    ]
+    for event in events:
+        print(json.dumps(event))
+'''
+
+
+def _install_fake_claude(tmp_path) -> str:
+    import os
+    import sys as _sys
+
+    script = tmp_path / "fake-claude"
+    script.write_text(FAKE_CLAUDE_CLI.replace("#!/usr/bin/env python3", f"#!{_sys.executable}"), encoding="utf-8")
+    script.chmod(script.stat().st_mode | 0o111)
+    return str(script)
+
+
+@pytest.mark.asyncio
+async def test_claude_end_to_end_json_schema_through_a_real_subprocess(tmp_path) -> None:
+    """Full path over the actual subprocess boundary with a fake `claude`
+    binary speaking the probed CLI envelope: response_format travels as
+    --json-schema argv, the result envelope's structured_output becomes the
+    message content, and --effort rides along."""
+    settings = make_settings(tmp_path, claude_bin=_install_fake_claude(tmp_path))
+    runtime = ClaudeCliRuntime(settings)
+
+    payload = await runtime.create_chat_completion(
+        {
+            "model": "claude:sonnet",
+            "messages": [{"role": "user", "content": "Rate it."}],
+            "reasoning_effort": "low",
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "rating", "schema": {"type": "object"}},
+            },
+        },
+        "req_e2e",
+    )
+
+    import json as _json
+
+    assert _json.loads(payload["choices"][0]["message"]["content"]) == {"response": 5}
+    assert payload["usage"] == {"prompt_tokens": 3, "completion_tokens": 9, "total_tokens": 12}
+
+
+@pytest.mark.asyncio
+async def test_claude_end_to_end_streaming_json_schema_through_a_real_subprocess(tmp_path) -> None:
+    settings = make_settings(tmp_path, claude_bin=_install_fake_claude(tmp_path))
+    runtime = ClaudeCliRuntime(settings)
+
+    collected = []
+    async for chunk in runtime.stream_chat_completion(
+        {
+            "model": "claude:sonnet",
+            "messages": [{"role": "user", "content": "Rate it."}],
+            "stream": True,
+            "response_format": {"type": "json_object"},
+            "stream_options": {"include_usage": True},
+        },
+        "req_e2e_stream",
+    ):
+        collected.append(chunk)
+
+    chunks = _collect_stream_chunks(collected)
+    content = "".join(
+        (chunk["choices"][0].get("delta") or {}).get("content") or ""
+        for chunk in chunks
+        if chunk.get("choices")
+    )
+    import json as _json
+
+    assert _json.loads(content) == {"response": 5}
+    assert "prose" not in content
+    usage_chunks = [chunk for chunk in chunks if chunk.get("usage")]
+    assert usage_chunks and usage_chunks[-1]["usage"]["total_tokens"] == 12
+
+
+def test_model_records_expose_structured_output_types(tmp_path) -> None:
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    claude_wire = runtime.list_models()[0]
+    assert claude_wire["airelays"]["structured_output"]["parameter"] == "response_format"
+    assert claude_wire["airelays"]["structured_output"]["types"] == ["json_schema", "json_object"]
+
+    from airelay.providers import _openai_model_record
+
+    openai_wire = _openai_model_record("gpt-5.5").as_wire()
+    assert openai_wire["airelays"]["structured_output"]["types"] == ["json_schema"]
+
+
 def test_model_records_expose_reasoning_modes(tmp_path) -> None:
     runtime = ClaudeCliRuntime(make_settings(tmp_path))
     claude_wire = runtime.list_models()[0]
@@ -184,6 +661,45 @@ async def test_claude_runtime_rejects_stop_on_completions_route(tmp_path) -> Non
                 "model": "claude:sonnet",
                 "prompt": "hello",
                 "stop": ["END"],
+            },
+            "req_123",
+        )
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_forwards_reasoning_effort_on_completions_route(tmp_path, monkeypatch) -> None:
+    """`reasoning_effort` is honored on `/v1/completions` too — same
+    validation and the same --effort argv as the chat route."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    captured: dict[str, object] = {}
+
+    async def fake_run_json(request, request_id):
+        captured["request"] = request
+        return {"result": "ok", "stop_reason": "end_turn"}
+
+    monkeypatch.setattr(runtime, "_run_json", fake_run_json)
+    await runtime.create_completion(
+        {"model": "claude:sonnet", "prompt": "hello", "reasoning_effort": "max"},
+        "req_1",
+    )
+    request = captured["request"]
+    assert request.effort == "max"
+    for stream in (False, True):
+        command = runtime._build_command(request, stream=stream)
+        assert command[command.index("--effort") + 1] == "max"
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_rejects_response_format_on_completions_route(tmp_path) -> None:
+    """`response_format` is not part of the completions API; ignoring it
+    would silently hand unenforced text to a client that asked for JSON."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    with pytest.raises(ProviderError, match="does not support `response_format`"):
+        await runtime.create_completion(
+            {
+                "model": "claude:sonnet",
+                "prompt": "hello",
+                "response_format": {"type": "json_object"},
             },
             "req_123",
         )
