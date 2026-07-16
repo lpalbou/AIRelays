@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.0
+
+### Added
+
+- Structured outputs on Claude chat completions. `response_format.type=json_schema` and `json_object` on `claude:*` models now map to the claude CLI's native `--json-schema` enforcement (`json_object` enforces the permissive `{"type": "object"}` schema), instead of returning a 422. The response `content` is the enforced JSON only — the model's surrounding prose never reaches a client that asked for JSON — and on streaming requests the JSON text streams as the content deltas (the CLI's StructuredOutput fragments), with a result-envelope fallback if no fragments arrive. Enforcement runs as an internal tool turn upstream, so schema-enforced calls bill some additional output tokens. Unsupported `response_format` shapes are still rejected loudly, including on `/v1/completions`, where the parameter does not exist in the OpenAI API and silently ignoring it would hand unenforced text to a client that asked for JSON.
+- `/v1/models` now publishes each model's structured-output support under `airelays.structured_output` (`parameter`, supported `types`): `json_schema` + `json_object` for Claude models, `json_schema` for OpenAI models (translated for the subscription backend, as before). The desktop Models tab and `airelays models` advertise it alongside the reasoning modes.
+
+### Fixed
+
+- Streaming requests no longer swallow errors (found by adversarial review). Request validation used to run inside the response generator, after the SSE headers were committed, so an invalid `reasoning_effort` or `response_format` on a `stream: true` request produced an empty `200` stream instead of an error. Claude streaming requests now validate before headers and return real 4xx status codes; both OpenAI streaming routes now contact the upstream and await its first event before committing headers, so upstream rejections surface as real status codes too. Failures that happen after streaming has started (provider timeouts, CLI failures) now emit an OpenAI-style in-band `data: {"error": ...}` event instead of silently truncating the stream — including the CLI's exit-0 error envelopes, which the streaming paths previously narrated as assistant content.
+- `reasoning_effort` is now honored on `/v1/completions` for OpenAI models (it was silently dropped there while chat completions and the Claude runtime honored it), and an explicit JSON `null` effort is treated as absent on both routes instead of being forwarded as `reasoning: {"effort": null}`.
+- Structured-output honesty hardening (found by adversarial review): a schema-enforced run that produces no schema-conforming output now fails loudly instead of serving prose or an upstream error message under the JSON contract; a `response_format` without a `type` is rejected like OpenAI does instead of silently degrading to unenforced text; oversized schemas (200 KB serialized cap; they travel on the local CLI's argv) and NaN/Infinity values get clean 422s instead of raw OS errors; and if a future CLI ever streamed more than one structured-output block, only the first is forwarded rather than concatenating into unparseable JSON.
+- The Claude runtime documentation no longer claims structured outputs are unsupported; docs/api.md, README, troubleshooting, and the LLM-readable indexes were aligned with the verified behavior above.
+
 ## 0.9.0
 
 ### Fixed
