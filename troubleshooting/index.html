@@ -1082,7 +1082,8 @@ usually heavy system load or a long request burst.</p>
 <p>Checks:</p>
 <ul>
 <li>confirm the model id is one of the configured <code>claude:*</code> ids</li>
-<li>remove tools, files, images, audio, structured outputs, and <code>conversation</code></li>
+<li>remove tools, files, images, audio, and <code>conversation</code>
+  (<code>response_format</code> json_schema/json_object is supported on chat completions)</li>
 <li>remove unsupported generation controls</li>
 </ul>
 <h2 id="claude-startup-refusal">Claude startup refusal<a class="headerlink" href="#claude-startup-refusal" title="Permanent link">&para;</a></h2>

@@ -1057,16 +1057,22 @@ letting them fail, and always discloses what it changed:</p>
   the Claude routes: the local <code>claude</code> CLI exposes no sampling or token
   limit controls, so these parameters are stripped and disclosed there
   too instead of failing the request.</li>
-<li><strong>Reasoning effort:</strong> <code>reasoning_effort</code> (chat completions) and
-  <code>reasoning.effort</code> (responses) are forwarded verbatim to OpenAI models;
-  on <code>claude:*</code> models <code>reasoning_effort</code> maps to the local CLI's
-  <code>--effort</code> flag. Each model's supported modes and default are published
+<li><strong>Reasoning effort:</strong> <code>reasoning_effort</code> (chat completions and
+  completions) and <code>reasoning.effort</code> (responses) are forwarded verbatim
+  to OpenAI models; on <code>claude:*</code> models <code>reasoning_effort</code> maps to the
+  local CLI's <code>--effort</code> flag on both text routes. An explicit JSON <code>null</code>
+  is treated as absent. Each model's supported modes and default are published
   in <code>/v1/models</code> under <code>airelays.reasoning</code>. Unsupported Claude values are
   rejected with the supported list (the CLI would silently ignore them);
   unsupported OpenAI values surface the upstream's own error. Requests
   that omit the parameter run OpenAI models at upstream effort <code>none</code> —
   lower than the <code>medium</code> the official ChatGPT apps use — and Claude
   models at their adaptive default.</li>
+<li><strong>Structured outputs:</strong> <code>response_format.type=json_schema</code> is forwarded
+  (translated) to OpenAI models; on <code>claude:*</code> chat completions both
+  <code>json_schema</code> and <code>json_object</code> are honored via the claude CLI's native
+  <code>--json-schema</code> enforcement. Supported types per model are published in
+  <code>/v1/models</code> under <code>airelays.structured_output</code>.</li>
 <li><strong>Rejected loudly instead of adapted:</strong> <code>store=true</code>, <code>n&gt;1</code>, and
   <code>best_of</code>/<code>echo</code>/<code>logprobs</code>/<code>suffix</code> on <code>/v1/completions</code>. These change
   semantics in ways silent stripping would hide, so they return a clear
@@ -1083,7 +1089,7 @@ letting them fail, and always discloses what it changed:</p>
 <li>Claude models are explicit <code>claude:*</code> ids.</li>
 <li>models starting with <code>claude:</code> route to the Claude runtime when it is enabled</li>
 <li>other model ids route to the OpenAI runtime when it is enabled</li>
-<li>Each model record includes an <code>airelays</code> extension block with provider identity, route capabilities, and a <code>reasoning</code> block (<code>parameter</code>, supported <code>modes</code>, <code>default</code>).</li>
+<li>Each model record includes an <code>airelays</code> extension block with provider identity, route capabilities, a <code>reasoning</code> block (<code>parameter</code>, supported <code>modes</code>, <code>default</code>), and a <code>structured_output</code> block (<code>parameter</code>, supported <code>types</code> for <code>response_format</code> on chat completions).</li>
 <li>Successful OpenAI upstream model-list responses are cached in memory for
   <code>models_cache_ttl_seconds</code> seconds. The default is 300 seconds; <code>0</code>
   disables the cache.</li>
@@ -1150,11 +1156,26 @@ relay accepts, grouped by provider (<code>--json</code> supported).</p>
 <li>text-only <code>system</code>, <code>developer</code>, <code>user</code>, and <code>assistant</code> messages</li>
 <li><code>stream=true|false</code></li>
 <li>no tools</li>
-<li>no files, images, audio, or structured outputs</li>
+<li>no files, images, or audio</li>
 <li>no AIRelays local conversation reuse</li>
 <li><code>reasoning_effort</code> supported (<code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>),
   mapped to the CLI's <code>--effort</code> flag; omitted means the model's adaptive
   default</li>
+<li>structured outputs supported: <code>response_format.type=json_schema</code> and
+  <code>json_object</code> map to the CLI's <code>--json-schema</code> flag (native schema
+  enforcement; <code>json_object</code> enforces the permissive <code>{"type": "object"}</code>
+  schema). The response <code>content</code> is the enforced JSON only — a run that
+  produces no schema-conforming output fails loudly instead of returning
+  prose. On streaming requests the JSON text streams as the content
+  deltas. Enforcement runs as an internal tool turn upstream, so
+  schema-enforced calls bill some additional output tokens. Unsupported
+  <code>response_format</code> shapes (including a missing <code>type</code>) are rejected with
+  a 422; serialized schemas are capped at 200 KB (they travel on the local
+  CLI's argv). Two documented leniencies versus OpenAI:
+  <code>json_schema.name</code> is optional (metadata the CLI does not use), and
+  <code>strict</code> is ignored because the CLI's native enforcement is always
+  strict — clients can only get stricter behavior than asked, never
+  weaker.</li>
 <li>sampling parameters stripped and disclosed via
   <code>x-airelays-ignored-parameters</code> (the <code>claude</code> CLI has no sampling
   controls); other unsupported generation controls rejected locally</li>
@@ -1169,7 +1190,11 @@ relay accepts, grouped by provider (<code>--json</code> supported).</p>
 <li>explicit <code>claude:*</code> models only</li>
 <li>text-only prompt-in, text-out</li>
 <li><code>stream=true|false</code></li>
-<li>no files, images, audio, tools, or structured outputs</li>
+<li>no files, images, audio, or tools</li>
+<li><code>reasoning_effort</code> supported (same modes and mapping as chat completions)</li>
+<li><code>response_format</code> rejected loudly (not part of the completions API;
+  ignoring it would silently hand unenforced text to a client that asked
+  for JSON — use <code>/v1/chat/completions</code> for structured outputs)</li>
 <li>sampling parameters stripped and disclosed via
   <code>x-airelays-ignored-parameters</code>; other unsupported generation controls
   rejected locally</li>
