@@ -19,7 +19,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -27,7 +27,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -827,13 +827,13 @@
 <h2 id="counts">Counts<a class="headerlink" href="#counts" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Planned: 0</li>
-<li>Proposed: 2</li>
-<li>Completed: 6</li>
+<li>Proposed: 3</li>
+<li>Completed: 7</li>
 <li>Deprecated: 1</li>
 <li>Recurrent: 0</li>
 </ul>
 <h2 id="priority">Priority<a class="headerlink" href="#priority" title="Permanent link">&para;</a></h2>
-<p>No committed planned items. Remaining proposed items (0014 wall-clock bench expiry, 0015 Claude token shape validation) are low-urgency hardening.</p>
+<p>No committed planned items. Proposed items 0014 (wall-clock bench expiry) and 0015 (Claude token shape validation) are low-urgency hardening. Proposed item 0018 (metered embeddings capability slice) is a deliberately uncertain product-boundary idea gated on a new ADR amending ADR 0002 — do not implement without promotion.</p>
 <h2 id="planned-tracks">Planned Tracks<a class="headerlink" href="#planned-tracks" title="Permanent link">&para;</a></h2>
 <p>No active planned tracks.</p>
 <h2 id="planned-items">Planned Items<a class="headerlink" href="#planned-items" title="Permanent link">&para;</a></h2>
@@ -844,6 +844,7 @@
 <li><a href="../proposed/accounts/0014_wall_clock_bench_expiry_across_system_sleep/">0014_wall_clock_bench_expiry_across_system_sleep.md</a></li>
 <li><a href="../proposed/providers/">Provider runtimes</a></li>
 <li><a href="../proposed/providers/0015_claude_token_shape_validation_on_set_token/">0015_claude_token_shape_validation_on_set_token.md</a></li>
+<li><a href="../proposed/providers/0018_metered_embeddings_capability_slice/">0018_metered_embeddings_capability_slice.md</a> — single opt-in API key for <code>/v1/embeddings</code> only; both subscriptions verifiably cannot produce embeddings. Value uncertain (possibly reduces to key-management centralization, a double-edged trade); promotion requires a new ADR amending ADR 0002, a demonstrated recurring need, and explicit rejection of the local/direct/sidecar alternatives.</li>
 </ul>
 <h2 id="completed-work">Completed Work<a class="headerlink" href="#completed-work" title="Permanent link">&para;</a></h2>
 <ul>
@@ -855,6 +856,7 @@
 <li><a href="../completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening/">0012_balanced_multi_account_routing_and_pool_hardening.md</a></li>
 <li><a href="../completed/accounts/0013_openai_usage_probe_caching_and_single_flight/">0013_openai_usage_probe_caching_and_single_flight.md</a></li>
 <li><a href="../completed/accounts/0016_capacity_aware_balanced_routing/">0016_capacity_aware_balanced_routing.md</a></li>
+<li><a href="../completed/accounts/0019_longest_window_balancing_and_weekly_tally/">0019_longest_window_balancing_and_weekly_tally.md</a></li>
 </ul>
 <table>
 <thead>
@@ -930,6 +932,16 @@
 <td>New "balanced" default routes by remaining short-window quota so plans of different sizes deplete proportionally; round_robin/ordered stay as opt-ins.</td>
 <td><code>pytest -q</code> (168); log-verified 199/199 request parity motivating the change; live convergence check after install</td>
 </tr>
+<tr>
+<td>0019</td>
+<td>Longest-window balancing and weekly token tally</td>
+<td>(worked directly; recorded post-completion)</td>
+<td><code>docs/backlog/completed/accounts/0019_longest_window_balancing_and_weekly_tally.md</code></td>
+<td>2026-07-28</td>
+<td>Completed</td>
+<td>Windows identified by duration after the upstream payload became plan-dependent; balancing and the "more" token tally key on each account's longest (weekly) window; fabricated idle 5h row removed.</td>
+<td>Two-agent adversarial pass; <code>pytest -q</code> (208, 15 new); Playwright mock render; live check after install</td>
+</tr>
 </tbody>
 </table>
 <h2 id="deprecated-work">Deprecated Work<a class="headerlink" href="#deprecated-work" title="Permanent link">&para;</a></h2>
@@ -1002,7 +1014,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

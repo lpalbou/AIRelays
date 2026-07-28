@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://www.lpalbou.info/AIRelays/backlog/completed/accounts/0016_capacity_aware_balanced_routing/">
+        <link rel="canonical" href="https://www.lpalbou.info/AIRelays/backlog/proposed/providers/0018_metered_embeddings_capability_slice/">
       
       
       
@@ -23,7 +23,7 @@
     
     
       
-        <title>Completed: Capacity-aware balanced routing - AIRelays</title>
+        <title>Proposed: Metered embeddings capability slice (single API key, embeddings only) - AIRelays</title>
       
     
     
@@ -64,7 +64,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#completed-capacity-aware-balanced-routing" class="md-skip">
+        <a href="#proposed-metered-embeddings-capability-slice-single-api-key-embeddings-only" class="md-skip">
           Skip to content
         </a>
       
@@ -100,7 +100,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Completed: Capacity-aware balanced routing
+              Proposed: Metered embeddings capability slice (single API key, embeddings only)
             
           </span>
         </div>
@@ -714,6 +714,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#adr-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADR status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#context" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -725,10 +736,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-we-did" class="md-nav__link">
+  <a href="#current-code-reality" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What we did
+        Current code reality
       
     </span>
   </a>
@@ -736,10 +747,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validation" class="md-nav__link">
+  <a href="#problem-or-opportunity" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Validation
+        Problem or opportunity
       
     </span>
   </a>
@@ -747,10 +758,65 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#residual-risks-follow-ups" class="md-nav__link">
+  <a href="#proposed-direction" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Residual risks / follow-ups
+        Proposed direction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-it-might-matter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why it might matter
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#promotion-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Promotion criteria
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation-ideas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation ideas
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guidance-for-future-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Guidance for future agents
       
     </span>
   </a>
@@ -777,32 +843,154 @@
   
 
 
-<h1 id="completed-capacity-aware-balanced-routing">Completed: Capacity-aware balanced routing<a class="headerlink" href="#completed-capacity-aware-balanced-routing" title="Permanent link">&para;</a></h1>
+<h1 id="proposed-metered-embeddings-capability-slice-single-api-key-embeddings-only">Proposed: Metered embeddings capability slice (single API key, embeddings only)<a class="headerlink" href="#proposed-metered-embeddings-capability-slice-single-api-key-embeddings-only" title="Permanent link">&para;</a></h1>
 <h2 id="metadata">Metadata<a class="headerlink" href="#metadata" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Created: 2026-07-11</li>
-<li>Status: Completed</li>
-<li>Completed: 2026-07-11</li>
+<li>Created: 2026-07-13</li>
+<li>Status: Proposed</li>
+<li>Completed: N/A</li>
+</ul>
+<h2 id="adr-status">ADR status<a class="headerlink" href="#adr-status" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Governing ADRs: ADR 0002 (subscription backend compatibility boundary), ADR 0003 (default-deny relay security), ADR 0004 (provider runtime boundary)</li>
+<li>ADR impact: Needs new ADR before promotion. ADR 0002 defines the product as subscription-backed, explicitly "not on a user-supplied OpenAI platform API key", and 0.2.3 deliberately removed the last API-key path. Implementing this item requires an ADR that amends or supersedes that scope with a narrow capability-complement rule (see Proposed direction). Do not implement from this backlog item alone.</li>
 </ul>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
-<p>After the round-robin default shipped, live usage showed the intended limit: request counts were exactly equal (verified in traffic logs: 199/199 completed requests, ~1.0M tokens each side over two hours), yet the Plus account's 5h window climbed to 25% while the Enterprise account sat at 1% — equal request counts drain a small plan many times faster than a large one. The owner's requirement is balanced charge, and charge is quota consumption, not request count.</p>
-<h2 id="what-we-did">What we did<a class="headerlink" href="#what-we-did" title="Permanent link">&para;</a></h2>
+<p>Vector embeddings are physically impossible through both enrolled subscription
+runtimes (verified live 2026-07-13):</p>
 <ul>
-<li>New default strategy <code>balance = "balanced"</code>: each request routes to the healthy, model-capable account with the lowest short-window <code>used_percent</code> (integer-bucketed to avoid ping-pong, ties rotate least-recently-selected), so consumption equalizes as a percentage of each plan's own capacity.</li>
-<li>The capacity signal comes from the existing usage probes: recorded on every probe by <code>_bench_from_usage</code>, trusted for routing for up to 15 minutes, with fair rotation as the fallback when the signal is missing or stale.</li>
-<li>Probe infrastructure from item 0013 (TTL cache, single-flight, background refresher) keeps the signal fresh at a bounded upstream cost.</li>
-<li><code>round_robin</code> (strictly equal counts) and <code>ordered</code> (spillover) remain as explicit opt-ins; config validation, desktop settings select, Accounts-card captions, and CLI summaries describe all three.</li>
+<li>The ChatGPT Codex backend has no embeddings route (an unauthenticated probe of
+  <code>/backend-api/codex/embeddings</code> behaves exactly like a nonexistent path, unlike
+  <code>/responses</code> → 401 and <code>/models</code> → 405), its model catalog carries no embedding
+  models, and forcing an embedding model id onto <code>/responses</code> is rejected upstream:
+  "The 'text-embedding-3-small' model is not supported when using Codex with a
+  ChatGPT account."</li>
+<li>Anthropic has no first-party embedding models at all — their docs state
+  "Anthropic does not offer its own embedding model" and recommend Voyage AI;
+  <code>api.anthropic.com/v1/embeddings</code> is a genuine 404. The <code>claude</code> CLI surface is
+  text generation only.</li>
 </ul>
-<h2 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h2>
+<p>So today no client of AIRelays can obtain embeddings, and the relay's
+<code>/v1/embeddings</code> route answers an honest 501. An adversarial design review
+(2026-07-13, Fable 5) of a broader proposal — general API-key providers for
+OpenAI/Anthropic/OpenRouter/OVH — rejected the broad version (identity conflict
+with ADR 0002, security model sized for quota not dollars, "passthrough" collapsing
+into a translation layer by the third provider) but explicitly kept alive this
+minimal slice: one metered credential, one capability, namespaced and opt-in.</p>
+<h2 id="current-code-reality">Current code reality<a class="headerlink" href="#current-code-reality" title="Permanent link">&para;</a></h2>
+<p>Inspected 2026-07-13:</p>
 <ul>
-<li><code>pytest -q</code> — 168 passed, including: balanced mode routes everything to the lower-used account, stale signals fall back to rotation, default-config behavior, and cache/single-flight semantics</li>
-<li>Live verification on the production relay after install: traffic shifts to the Enterprise account while its used_percent trails the Plus account's</li>
+<li><code>src/airelay/app.py</code>: <code>/v1/embeddings</code> is registered in the <code>unsupported_route</code>
+  group and returns 501 <code>unsupported_error</code> before any upstream contact.</li>
+<li><code>src/airelay/providers.py</code>: provider-scoped runtimes with namespaced model ids
+  (<code>claude:*</code>) and per-model route capability metadata published via <code>/v1/models</code> —
+  the structural pattern this slice would follow.</li>
+<li><code>src/airelay/auth.py</code>: <code>AuthStorage</code> (keyring-backed) is the correct home for a
+  metered key. The desktop rewrites <code>config.toml</code> (<code>accounts.py</code> docstring), so the
+  key must never live there.</li>
+<li><code>src/airelay/config.py</code>: <code>validate_provider_guardrails()</code> is the precedent for a
+  hard startup interlock (Claude refuses non-loopback listeners); the metered key
+  needs an equivalent (refuse to start with a key configured in <code>--no-auth</code> mode).</li>
+<li><code>src/airelay/security.py</code>: one shared relay bearer token, request-denominated
+  rate limits — no per-client scoping or spend controls exist.</li>
+<li><code>src/airelay/traffic.py</code>: logs full JSON request/response bodies; raw embedding
+  vectors (thousands of floats per response) would bloat hourly logs and the
+  desktop traffic reader, so vector payloads must be summarized, never logged raw.</li>
+<li><code>src/airelay/accounts.py</code>: the pool retries on 429/5xx — free on subscriptions, a
+  spend multiplier on metered calls; the metered path must not inherit retries.</li>
 </ul>
-<h2 id="residual-risks-follow-ups">Residual risks / follow-ups<a class="headerlink" href="#residual-risks-follow-ups" title="Permanent link">&para;</a></h2>
+<h2 id="problem-or-opportunity">Problem or opportunity<a class="headerlink" href="#problem-or-opportunity" title="Permanent link">&para;</a></h2>
+<p>Two candidate benefits, both uncertain:</p>
+<ol>
+<li>Capability: RAG-style workloads next to chat need embeddings; the relay cannot
+   serve them and forces a second endpoint into every client config.</li>
+<li>Key custody: apps would hold only the relay token while the real billing key
+   lives in one place (keyring), with one rotation point and unified traffic
+   logging across subscription and metered usage.</li>
+</ol>
+<p>Honest counter-position (owner's own doubt, recorded deliberately): this may be
+useless in practice. Any app can point its embeddings base URL directly at OpenAI
+(same API shape, upstream-enforceable project budgets) or at a local model. The
+marginal value may reduce to key-management centralization alone — and
+centralizing a billing key behind one shared, unscoped bearer token is a richer
+theft target as much as it is a convenience. That trade cuts both ways and is the
+core reason this item is proposed, not planned.</p>
+<h2 id="proposed-direction">Proposed direction<a class="headerlink" href="#proposed-direction" title="Permanent link">&para;</a></h2>
+<p>A capability-complement rule, to be codified in the new ADR: metered credentials
+may exist only for capabilities no enrolled subscription can physically provide —
+today, exactly embeddings.</p>
 <ul>
-<li><code>used_percent</code> reflects the upstream's own accounting granularity (integer percent); very small plans may still step in visible increments.</li>
-<li>Wall-clock bench expiry across system sleep remains proposed (item 0014).</li>
+<li>Serve <code>/v1/embeddings</code> only for explicitly namespaced ids
+  (e.g. <code>openai-api:text-embedding-3-small</code>); bare or subscription model ids keep
+  the current rejection; every other 501 route stays 501.</li>
+<li>Opt-in, off by default; key stored via <code>AuthStorage</code> (keyring), never
+  <code>config.toml</code>.</li>
+<li>Hard interlock: refuse to start when a metered key is configured together with
+  <code>--no-auth</code> (open mode), mirroring <code>validate_provider_guardrails()</code>.</li>
+<li>No retries/failover on the metered path.</li>
+<li>Traffic logs record dims/bytes/hash summaries of vectors, never raw payloads.</li>
+<li>Desktop: one plain "Embeddings" line (request and token counts, link to the
+  upstream billing dashboard, explicit "AIRelays does not enforce spend caps"
+  note). No usage bars, no windows, no pretending.</li>
+<li>Setup docs require an endpoint-restricted, budget-capped OpenAI project key so a
+  stolen key is nearly worthless.</li>
 </ul>
+<h2 id="why-it-might-matter">Why it might matter<a class="headerlink" href="#why-it-might-matter" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Closes the only verified capability hole in the OpenAI-compatible surface while
+  keeping the subscription identity intact (one narrow, explicitly bounded
+  exception instead of a general metered gateway).</li>
+<li>Preserves the "one endpoint, one client secret" story for mixed chat+RAG apps.</li>
+<li>The bounded shape is cheap to hold: embeddings is the most stable OpenAI route —
+  no streaming, no tools, spend measured in cents per million tokens.</li>
+</ul>
+<h2 id="promotion-criteria">Promotion criteria<a class="headerlink" href="#promotion-criteria" title="Permanent link">&para;</a></h2>
+<p>Promote to <code>planned/</code> only when all of these hold:</p>
+<ol>
+<li>A concrete, recurring need is demonstrated (a real workflow that wants chat and
+   embeddings through the same relay endpoint — not a hypothetical).</li>
+<li>The competing alternatives are reassessed and rejected for that need:
+   local embeddings via an <code>ollama:*</code>-style adapter (no key, no billing, follows
+   the <code>claude</code> CLI precedent), direct provider config in the client app, or a
+   documented sidecar (e.g. LiteLLM) holding keys with AIRelays as one upstream.</li>
+<li>The superseding/amending ADR is drafted and accepted (capability-complement
+   rule, non-goals, and the open-mode interlock as policy).</li>
+<li>The owner accepts the custody trade-off explicitly: billing key behind one
+   shared bearer token, no per-client scopes, no relay-side spend enforcement.</li>
+</ol>
+<h2 id="validation-ideas">Validation ideas<a class="headerlink" href="#validation-ideas" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Unit: namespaced id routing, rejection of bare/subscription ids on
+  <code>/v1/embeddings</code>, startup interlock with <code>--no-auth</code>, key resolution from
+  keyring only.</li>
+<li>Traffic: assert vector payloads are summarized (dims/bytes/hash) in logs.</li>
+<li>Live: one real embeddings call through the relay against a budget-capped project
+  key; confirm token counts surface in the desktop line.</li>
+<li>Docs: FAQ entry explaining why embeddings are impossible via subscriptions and
+  when to prefer direct/local/sidecar alternatives instead of this slice.</li>
+</ul>
+<h2 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<p>This proposal does not authorize:</p>
+<ul>
+<li>metered chat/completions/responses of any kind;</li>
+<li>OpenRouter, Anthropic API, or OVH providers (OpenRouter does not reliably close
+  the embeddings gap and aggregation is better consumed directly);</li>
+<li>any subscription→metered fallback, silent or configured;</li>
+<li>images/audio/realtime unlocks;</li>
+<li>spend dashboards or relay-side budget enforcement (v1 explicitly displays "no
+  spend caps" instead);</li>
+<li>per-client scoped relay tokens (a prerequisite for any broader centralization
+  ambition, tracked separately if that product bet is ever made).</li>
+</ul>
+<h2 id="guidance-for-future-agents">Guidance for future agents<a class="headerlink" href="#guidance-for-future-agents" title="Permanent link">&para;</a></h2>
+<p>Re-verify the capability gap before acting: if either subscription upstream gains
+an embeddings surface, or if a local-embeddings adapter lands first, this item
+likely dies — check <code>deprecated/</code> fit before promoting. Read ADR 0002 and the
+0.2.3 changelog entry first; the identity boundary is deliberate and this item is
+an exception to it, not a precedent for general API-key support. If the real
+underlying need turns out to be "centralize all my keys", stop and write that up
+as its own decision (per-client scoped tokens and budgets as the entry fee) rather
+than stretching this slice.</p>
 
 
 

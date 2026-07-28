@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -1068,14 +1068,18 @@
 <p>No. AIRelays is an independent third-party project.</p>
 <h2 id="how-are-requests-spread-across-my-openai-accounts">How are requests spread across my OpenAI accounts?<a class="headerlink" href="#how-are-requests-spread-across-my-openai-accounts" title="Permanent link">&para;</a></h2>
 <p>With more than one enrolled account, the relay routes each request to the
-account with the most remaining short-window quota among those that serve
-the requested model (the default, <code>balance = "balanced"</code>), so consumption
-equalizes as a percentage of each plan's own capacity — plans of very
-different sizes deplete proportionally. Usage is probed at launch and
-refreshed in the background; an account that reaches its limit is benched
-until its window resets. Alternatives: <code>balance = "round_robin"</code> for
-strictly equal request counts, <code>balance = "ordered"</code> to drain the first
-account before the next. See <a href="../configuration/">Configuration</a>.</p>
+account with the most remaining quota in its longest usage window — the
+weekly budget — among those that serve the requested model (the default,
+<code>balance = "balanced"</code>), so consumption equalizes as a percentage of each
+plan's own capacity — plans of very different sizes deplete
+proportionally. Which windows a plan reports is upstream policy (some
+plans report only a weekly window), so the relay ranks windows by
+duration rather than trusting their position in the payload. Usage is
+probed at launch and refreshed in the background; an account that reaches
+a limit on any window is benched until that window resets. Alternatives:
+<code>balance = "round_robin"</code> for strictly equal request counts,
+<code>balance = "ordered"</code> to drain the first account before the next. See
+<a href="../configuration/">Configuration</a>.</p>
 <h2 id="can-i-disable-relay-auth">Can I disable relay auth?<a class="headerlink" href="#can-i-disable-relay-auth" title="Permanent link">&para;</a></h2>
 <p>Yes. Open local relay mode applies to all enabled providers, including the Claude runtime.</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init<span class="w"> </span>--no-auth
@@ -1191,7 +1195,7 @@ by <code>airelays models</code>. OpenAI models accept <code>none</code>, <code>l
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
