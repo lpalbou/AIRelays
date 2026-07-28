@@ -63,7 +63,9 @@ Returns an OpenAI-style models list built from the enabled provider runtimes.
 ## `GET /v1/subscription/status`
 
 Returns a normalized subscription-usage snapshot with per-window usage
-percentages, window labels ("5h", "weekly"), and reset times.
+percentages, window labels ("5h", "weekly", derived from each window's
+duration), and reset times. Which windows appear is plan-dependent
+upstream policy; only reported windows are returned.
 
 - default provider is OpenAI (source: `chatgpt.com/backend-api/wham/usage`)
 - `?provider=claude` returns Claude subscription usage in the same

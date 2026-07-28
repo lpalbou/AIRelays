@@ -7,14 +7,14 @@ AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provi
 ## Counts
 
 - Planned: 0
-- Proposed: 2
-- Completed: 6
+- Proposed: 3
+- Completed: 7
 - Deprecated: 1
 - Recurrent: 0
 
 ## Priority
 
-No committed planned items. Remaining proposed items (0014 wall-clock bench expiry, 0015 Claude token shape validation) are low-urgency hardening.
+No committed planned items. Proposed items 0014 (wall-clock bench expiry) and 0015 (Claude token shape validation) are low-urgency hardening. Proposed item 0018 (metered embeddings capability slice) is a deliberately uncertain product-boundary idea gated on a new ADR amending ADR 0002 — do not implement without promotion.
 
 ## Planned Tracks
 
@@ -30,6 +30,7 @@ No active planned items.
   - [0014_wall_clock_bench_expiry_across_system_sleep.md](proposed/accounts/0014_wall_clock_bench_expiry_across_system_sleep.md)
 - [Provider runtimes](proposed/providers/README.md)
   - [0015_claude_token_shape_validation_on_set_token.md](proposed/providers/0015_claude_token_shape_validation_on_set_token.md)
+  - [0018_metered_embeddings_capability_slice.md](proposed/providers/0018_metered_embeddings_capability_slice.md) — single opt-in API key for `/v1/embeddings` only; both subscriptions verifiably cannot produce embeddings. Value uncertain (possibly reduces to key-management centralization, a double-edged trade); promotion requires a new ADR amending ADR 0002, a demonstrated recurring need, and explicit rejection of the local/direct/sidecar alternatives.
 
 ## Completed Work
 
@@ -41,6 +42,7 @@ No active planned items.
   - [0012_balanced_multi_account_routing_and_pool_hardening.md](completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening.md)
   - [0013_openai_usage_probe_caching_and_single_flight.md](completed/accounts/0013_openai_usage_probe_caching_and_single_flight.md)
   - [0016_capacity_aware_balanced_routing.md](completed/accounts/0016_capacity_aware_balanced_routing.md)
+  - [0019_longest_window_balancing_and_weekly_tally.md](completed/accounts/0019_longest_window_balancing_and_weekly_tally.md)
 
 | ID | Item | Original Path | Final Path | Completed | Outcome | Notes | Validation |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -50,6 +52,7 @@ No active planned items.
 | 0012 | Balanced multi-account routing and pool hardening | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening.md` | 2026-07-11 | Completed | Round-robin default, evidence-gated benching, failover classification, launch-time warm-up; desktop exposes the balance setting. | `pytest -q` (165); live balanced-selection, failover, refresh, and warm-start checks against real accounts |
 | 0013 | OpenAI usage-probe caching and single-flight | `docs/backlog/proposed/accounts/0013_openai_usage_probe_caching_and_single_flight.md` | `docs/backlog/completed/accounts/0013_openai_usage_probe_caching_and_single_flight.md` | 2026-07-11 | Completed | 60s TTL cache, single-flight lock, force-bypass for manual refresh, 300s background refresher feeding proactive benching. | `pytest -q` (168) incl. cache/coalesce tests |
 | 0016 | Capacity-aware balanced routing | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0016_capacity_aware_balanced_routing.md` | 2026-07-11 | Completed | New "balanced" default routes by remaining short-window quota so plans of different sizes deplete proportionally; round_robin/ordered stay as opt-ins. | `pytest -q` (168); log-verified 199/199 request parity motivating the change; live convergence check after install |
+| 0019 | Longest-window balancing and weekly token tally | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0019_longest_window_balancing_and_weekly_tally.md` | 2026-07-28 | Completed | Windows identified by duration after the upstream payload became plan-dependent; balancing and the "more" token tally key on each account's longest (weekly) window; fabricated idle 5h row removed. | Two-agent adversarial pass; `pytest -q` (208, 15 new); Playwright mock render; live check after install |
 
 ## Deprecated Work
 

@@ -7,13 +7,20 @@ AIRelays exposes:
 
 Both providers report usage in one normalized shape, so a client can render
 OpenAI and Claude quota with the same code: per-window `used_percent`,
-`window_label` ("5h", "weekly"), and reset times (`reset_after_seconds`,
-`reset_at_iso`).
+`window_label` ("5h", "weekly", derived from each window's duration), and
+reset times (`reset_after_seconds`, `reset_at_iso`).
 
 ## OpenAI
 
 Reads the OpenAI subscription usage surface at
 `chatgpt.com/backend-api/wham/usage`.
+
+Which windows appear is plan-dependent upstream policy: some plans report
+a 5h window plus a weekly window, others only a weekly window. AIRelays
+passes through exactly the windows the upstream reports — nothing is
+synthesized — and identifies each by its duration, not its position in
+the payload. Multi-account balancing and the desktop's per-account token
+breakdown both key on the longest reported window (the weekly budget).
 
 ```bash
 curl 'http://127.0.0.1:8080/v1/subscription/status' \

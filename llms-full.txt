@@ -68,7 +68,7 @@ Claude headless: run `claude setup-token` on any browser-equipped machine, then 
 
 ## Multiple OpenAI Accounts
 
-One person can enroll several of their own OpenAI subscriptions; `airelays login` is additive. By default the relay routes each request to the account with the most remaining short-window quota among those that serve the requested model (`balance = "balanced"`), so consumption equalizes as a percentage of each plan's capacity; `balance = "round_robin"` sends strictly equal request counts and `balance = "ordered"` drains the first account before the next. An account at its usage limit is benched until its window resets and rejoins rotation automatically; at launch the relay probes each account's capacity and model catalog so balancing is correct from the first request. Manage with `airelays accounts` (list, order, refresh), sign out one with `airelays logout <email>`. Conversations stick to the account that served their first turn.
+One person can enroll several of their own OpenAI subscriptions; `airelays login` is additive. By default the relay routes each request to the account with the most remaining quota in its longest usage window — the weekly budget; windows are identified by duration because which windows a plan reports is upstream policy — among those that serve the requested model (`balance = "balanced"`), so consumption equalizes as a percentage of each plan's capacity; `balance = "round_robin"` sends strictly equal request counts and `balance = "ordered"` drains the first account before the next. An account at its usage limit is benched until its window resets and rejoins rotation automatically; at launch the relay probes each account's capacity and model catalog so balancing is correct from the first request. Manage with `airelays accounts` (list, order, refresh), sign out one with `airelays logout <email>`. Conversations stick to the account that served their first turn.
 
 ## Routes
 
@@ -92,7 +92,7 @@ The verified upstream is the ChatGPT subscription backend, not the public platfo
 
 ## Subscription Usage
 
-`GET /v1/subscription/status` returns per-window `used_percent`, `window_label` ("5h", "weekly"), and reset times in one shape for both providers. OpenAI reads the subscription usage surface; multi-account installs can query one account (`?account=`) or all (`?all_accounts=true`). Claude (`?provider=claude`) returns the 5-hour and weekly windows plus per-model weekly caps when reported; its upstream source is not a publicly documented API, so the relay caches it briefly and degrades gracefully.
+`GET /v1/subscription/status` returns per-window `used_percent`, `window_label` ("5h", "weekly", derived from each window's duration), and reset times in one shape for both providers. Which windows appear is plan-dependent upstream policy; only reported windows are returned. OpenAI reads the subscription usage surface; multi-account installs can query one account (`?account=`) or all (`?all_accounts=true`). Claude (`?provider=claude`) returns the 5-hour and weekly windows plus per-model weekly caps when reported; its upstream source is not a publicly documented API, so the relay caches it briefly and degrades gracefully.
 
 ## Security Defaults
 

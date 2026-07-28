@@ -67,7 +67,7 @@ stream_lines = false
 enabled = true
 models_cache_ttl_seconds = 300.0
 # Multi-account routing: "balanced" (default) routes to the account with
-# the most remaining short-window quota so consumption equalizes as a
+# the most remaining weekly quota so consumption equalizes as a
 # percentage of each plan's capacity; "round_robin" sends equal request
 # counts; "ordered" drains the first account first.
 balance = "balanced"

@@ -210,13 +210,16 @@ app, each account row has a sign-out button and the "Add account" button
 offers both browser and code (headless) sign-in.
 
 By default AIRelays balances requests by remaining capacity
-(`balance = "balanced"`): the account with the most unused short-window
-quota serves next, so consumption equalizes as a percentage of each
-plan's own capacity — a small Plus plan and a large Enterprise plan
-deplete proportionally instead of the small plan draining many times
-faster. The relay probes each account's usage at launch and refreshes it
-in the background; an account at its usage limit is benched until its
-window resets and rejoins rotation automatically. Alternatives:
+(`balance = "balanced"`): the account with the most unused weekly quota
+serves next, so consumption equalizes as a percentage of each plan's own
+capacity — a small Plus plan and a large Enterprise plan deplete
+proportionally instead of the small plan draining many times faster.
+Which usage windows a plan reports is upstream policy (some plans report
+only a weekly window), so the relay identifies windows by duration and
+balances on each account's longest one. The relay probes each account's
+usage at launch and refreshes it in the background; an account at a
+usage limit is benched until that window resets and rejoins rotation
+automatically. Alternatives:
 `balance = "round_robin"` sends strictly equal request counts, and
 `balance = "ordered"` drains the first account before touching the next.
 Failed-over requests are logged with the serving account, and

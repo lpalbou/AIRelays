@@ -1,6 +1,16 @@
 # Changelog
 
-## 0.10.0
+## 0.11.0
+
+### Changed
+
+- Multi-account balancing now compares accounts on their longest usage window (the weekly budget) instead of the payload's primary slot. The upstream usage payload is plan-dependent — some plans report only a weekly window while others keep a 5h window plus a weekly one — so the primary slot no longer identifies a horizon: comparing it across accounts mixed a weekly percentage against a 5h percentage and could route sustained traffic into a small plan's scarce weekly budget while a large plan idled. Windows are now identified by duration (`limit_window_seconds`), the balanced strategy equalizes weekly consumption as a percentage of each plan's own capacity, and short-window exhaustion remains covered by proactive benching and failover. Benching still considers every reported window.
+- The per-account "more" token breakdown (desktop Accounts card, `window_tokens` on the account status payload) is now scoped to the account's longest usage window instead of the 5h bucket, so it accumulates over the weekly budget rather than clearing every few hours. The payload carries the window identity (`window_label`, `window_seconds`; `scope` is now `current_usage_window_via_this_relay`), and the panel title names the window it covers (e.g. "This weekly window, via this relay"). On upgrade, breakdowns previously anchored to a 5h bucket start fresh once; existing fields (`models`, `totals`) are unchanged.
+- Account cards render only the usage windows the upstream actually reports. The synthesized idle "5h window · 0% used · starts with the next request" row is gone: plans without a 5h window no longer show a fabricated one.
+
+### Fixed
+
+- `pytest` from the repository root now collects only the real test suite (`testpaths`), instead of crawling into gitignored desktop runtime bundles whose vendored packages fail collection and shadow `src/airelay`.
 
 ### Added
 
