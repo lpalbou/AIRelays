@@ -385,8 +385,9 @@ async def test_default_balance_spreads_load_across_accounts(tmp_path: Path) -> N
 @pytest.mark.asyncio
 async def test_balanced_mode_prefers_the_account_with_most_remaining_quota(tmp_path: Path) -> None:
     """Equal request counts drain a small plan far faster than a large one;
-    the balanced default must route to the lowest short-window used_percent
-    so consumption equalizes as a percentage of each plan's capacity."""
+    the balanced default must route to the lowest used_percent of each
+    account's longest-horizon (weekly) window so consumption equalizes as a
+    percentage of each plan's scarce budget."""
     import time
     settings = _settings(tmp_path)
     a, b = FakeBackend("a"), FakeBackend("b")
@@ -468,6 +469,131 @@ async def test_balanced_selection_stays_fair_under_membership_churn(tmp_path: Pa
     # b is now the least-recently-selected and must be picked next.
     await pool.collect_response({}, "req3", None)
     assert b.calls == 1
+
+
+# Usage payload shapes as observed live (2026-07). Which windows a plan
+# reports is upstream policy: a Plus account carries its weekly window ALONE
+# in the primary slot (no 5h window exists for the plan), while an Enterprise
+# account keeps the classic 5h primary plus a weekly secondary. The pool must
+# identify windows by duration, never by slot — these fixtures exist to pin
+# that down with the real shapes.
+
+
+def _plus_shaped_usage(weekly_percent: float, *, weekly_reset_at: int = 1785763200) -> dict[str, Any]:
+    return {
+        "plan_type": "plus",
+        "rate_limit": {
+            "allowed": True,
+            "limit_reached": False,
+            "primary_window": {
+                "used_percent": weekly_percent,
+                "limit_window_seconds": 604800,
+                "reset_after_seconds": 551663,
+                "reset_at": weekly_reset_at,
+            },
+        },
+    }
+
+
+def _enterprise_shaped_usage(
+    five_hour_percent: float,
+    weekly_percent: float,
+    *,
+    five_hour_reset_at: int = 1785214800,
+    weekly_reset_at: int = 1785732000,
+) -> dict[str, Any]:
+    return {
+        "plan_type": "enterprise",
+        "rate_limit": {
+            "allowed": True,
+            "limit_reached": False,
+            "primary_window": {
+                "used_percent": five_hour_percent,
+                "limit_window_seconds": 18000,
+                "reset_after_seconds": 4200,
+                "reset_at": five_hour_reset_at,
+            },
+            "secondary_window": {
+                "used_percent": weekly_percent,
+                "limit_window_seconds": 604800,
+                "reset_after_seconds": 518000,
+                "reset_at": weekly_reset_at,
+            },
+        },
+    }
+
+
+def test_probe_records_weekly_signal_from_weekly_only_payload(tmp_path: Path) -> None:
+    """A Plus-shaped payload has only the weekly window; its percentage is
+    the capacity signal (and 91% used is nowhere near a bench)."""
+    import time
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+    pool = _pool(settings, [a], RecordingTraffic())
+    account = pool._accounts[0]
+    pool._bench_from_usage(account, _plus_shaped_usage(91), time.monotonic())
+    assert account.used_percent == 91.0
+    assert not account.is_limited(time.monotonic())
+
+
+def test_probe_records_weekly_signal_not_the_5h_one(tmp_path: Path) -> None:
+    """An Enterprise-shaped payload keeps a 5h window in the primary slot;
+    the signal must still be the WEEKLY percentage — slot position does not
+    identify a horizon, limit_window_seconds does."""
+    import time
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+    pool = _pool(settings, [a], RecordingTraffic())
+    account = pool._accounts[0]
+    pool._bench_from_usage(account, _enterprise_shaped_usage(37, 4), time.monotonic())
+    assert account.used_percent == 4.0
+
+
+@pytest.mark.asyncio
+async def test_balanced_pool_routes_by_weekly_percent_across_plan_shapes(tmp_path: Path) -> None:
+    """A Plus account deep into its weekly budget must not receive traffic
+    while an Enterprise account's weekly budget is nearly untouched — even
+    though the Enterprise PRIMARY slot (its busy 5h window) reads worse than
+    the Plus primary slot. Comparing primary slots did exactly that and
+    hammered the small plan's scarce weekly budget."""
+    settings = _settings(tmp_path)
+    a, b = FakeBackend("a"), FakeBackend("b")
+
+    async def plus_usage(request_id):
+        return _plus_shaped_usage(91)
+
+    async def enterprise_usage(request_id):
+        return _enterprise_shaped_usage(95, 4)
+
+    a.get_subscription_status = plus_usage  # type: ignore[assignment]
+    b.get_subscription_status = enterprise_usage  # type: ignore[assignment]
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    await pool.subscription_statuses("probe", force=True)
+    for _ in range(5):
+        await pool.collect_response({}, "req", None)
+    assert (a.calls, b.calls) == (0, 5)
+
+
+@pytest.mark.asyncio
+async def test_windowless_usage_payload_keeps_signal_none_and_rotates(tmp_path: Path) -> None:
+    """A payload carrying no windows at all yields no comparable capacity
+    signal: the account keeps signal None and the pool falls back to fair
+    rotation instead of trusting a fabricated percentage."""
+    settings = _settings(tmp_path)
+    a, b = FakeBackend("a"), FakeBackend("b")
+
+    async def windowless(request_id):
+        return {"plan_type": "plus", "rate_limit": {"allowed": True, "limit_reached": False}}
+
+    a.get_subscription_status = windowless  # type: ignore[assignment]
+    b.get_subscription_status = windowless  # type: ignore[assignment]
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    await pool.subscription_statuses("probe", force=True)
+    assert pool._accounts[0].used_percent is None
+    assert pool._accounts[1].used_percent is None
+    for _ in range(4):
+        await pool.collect_response({}, "req", None)
+    assert (a.calls, b.calls) == (2, 2)
 
 
 @pytest.mark.asyncio
@@ -817,6 +943,106 @@ async def test_window_token_tally_captures_streamed_usage(tmp_path: Path) -> Non
     assert snap is not None
     assert snap["models"][0]["model"] == "gpt-stream"
     assert snap["totals"]["input_tokens"] == 200
+
+
+def test_tally_survives_5h_roll_and_clears_on_weekly_roll(tmp_path: Path) -> None:
+    """The per-model breakdown is anchored to the longest (weekly) window:
+    the 5h bucket rolling every few hours must no longer wipe it (that left
+    the desktop "more" panel permanently empty on 5h+weekly plans), a probe
+    without windows must not touch it, and a weekly rollover still clears
+    it because the numbers no longer describe the shown percentage."""
+    import time
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+    pool = _pool(settings, [a], RecordingTraffic())
+    account = pool._accounts[0]
+    account_id = account.slot.account_id
+
+    pool._bench_from_usage(
+        account,
+        _enterprise_shaped_usage(80, 4, five_hour_reset_at=1785214800, weekly_reset_at=1785732000),
+        time.monotonic(),
+    )
+    pool._tally.record(account_id, "gpt-test", {"input_tokens": 100, "output_tokens": 10})
+    assert pool._tally.snapshot(account_id) is not None
+
+    # The 5h bucket rolls (new primary anchor); the weekly anchor is
+    # unchanged, so the breakdown survives.
+    pool._bench_from_usage(
+        account,
+        _enterprise_shaped_usage(1, 5, five_hour_reset_at=1785232800, weekly_reset_at=1785732000),
+        time.monotonic(),
+    )
+    snap = pool._tally.snapshot(account_id)
+    assert snap is not None and snap["totals"]["input_tokens"] == 100
+
+    # A degenerate probe with no windows keeps the current tally.
+    pool._bench_from_usage(account, {"rate_limit": {"allowed": True}}, time.monotonic())
+    assert pool._tally.snapshot(account_id) is not None
+
+    # The weekly window itself rolls: cleared.
+    pool._bench_from_usage(
+        account,
+        _enterprise_shaped_usage(0, 0, five_hour_reset_at=1785250800, weekly_reset_at=1786336800),
+        time.monotonic(),
+    )
+    assert pool._tally.snapshot(account_id) is None
+
+
+def test_tally_loads_state_written_before_window_seconds_existed(tmp_path: Path) -> None:
+    """STATE_VERSION deliberately stayed at 1: a pre-upgrade state file (no
+    window_seconds) must load with its tokens intact and an unlabeled
+    snapshot; the next probe fills the metadata in place when the anchor
+    still matches (Plus-shaped accounts were already weekly-anchored)."""
+    from airelay.usage_tally import WindowTokenTally
+
+    path = tmp_path / "tokens.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "accounts": {
+                    "acct-1": {
+                        "reset_at": 1785763200,
+                        "models": {"gpt-test": {"input": 5, "output": 2, "cached": 0}},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    tally = WindowTokenTally(path)
+    snap = tally.snapshot("acct-1")
+    assert snap is not None and snap["totals"]["input_tokens"] == 5
+    assert snap["window_label"] is None and snap["window_seconds"] is None
+    # Same anchor re-probed, now with the duration: metadata only, kept.
+    tally.set_window("acct-1", 1785763200, 604800)
+    snap = tally.snapshot("acct-1")
+    assert snap is not None
+    assert snap["window_label"] == "weekly"
+    assert snap["totals"]["input_tokens"] == 5
+
+
+def test_tally_snapshot_labels_the_window(tmp_path: Path) -> None:
+    """The "more" panel title derives from the tally payload, so the
+    snapshot must say WHICH window the numbers cover instead of a fixed 5h
+    claim — and keep every field existing consumers read."""
+    import time
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+    pool = _pool(settings, [a], RecordingTraffic())
+    account = pool._accounts[0]
+    account_id = account.slot.account_id
+    pool._bench_from_usage(account, _plus_shaped_usage(91), time.monotonic())
+    pool._tally.record(account_id, "gpt-test", {"input_tokens": 10, "output_tokens": 1})
+    snap = pool._tally.snapshot(account_id)
+    assert snap is not None
+    assert snap["window_label"] == "weekly"
+    assert snap["window_seconds"] == 604800
+    assert snap["scope"] == "current_usage_window_via_this_relay"
+    assert snap["window_reset_at"] == 1785763200
+    assert snap["models"][0]["model"] == "gpt-test"
+    assert snap["totals"]["input_tokens"] == 10
 
 
 @pytest.mark.asyncio

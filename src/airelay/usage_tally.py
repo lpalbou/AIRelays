@@ -2,11 +2,15 @@
 
 The upstream usage endpoint reports quota only as a percentage; this tally
 records the ground truth the relay itself observes — input/output tokens per
-model served through each account — scoped to the account's current 5h
-window (identified by the upstream `reset_at`, a fixed bucket anchored at
-first use). No estimation, no extrapolation: the numbers answer "what did
-the shown percentage cost, via this relay". Traffic from outside the relay
-is invisible here by design, and the UI says so.
+model served through each account — scoped to the account's longest-horizon
+usage window (today: the weekly budget; identified by that window's upstream
+`reset_at` anchor). Anchoring to the longest window is deliberate: which
+windows a plan reports is upstream policy (current Plus plans carry no 5h
+window at all), and anchoring to a short window wiped the breakdown every
+few hours, leaving the desktop's per-model panel permanently empty. No
+estimation, no extrapolation: the numbers answer "what did the shown
+percentage cost, via this relay". Traffic from outside the relay is
+invisible here by design, and the UI says so.
 
 State survives restarts through a small JSON file in the data dir, written
 atomically like the other state files.
@@ -19,6 +23,14 @@ import os
 from pathlib import Path
 from typing import Any
 
+from airelay.usage_windows import window_label
+
+# Still 1 across the longest-window change: the schema gained only the
+# optional `window_seconds` field, and entries the old code anchored to a
+# short (5h) window self-correct on the first probe — their stored anchor no
+# longer matches the longest window's, which clears them — while entries
+# already anchored to a weekly window survive correctly scoped. A version
+# bump would discard that valid data for no correctness gain.
 STATE_VERSION = 1
 # Persist at most once per this many recorded requests (probes and shutdown
 # also save), so a crash loses at most a sliver of tooltip data without
@@ -28,12 +40,14 @@ SAVE_EVERY_RECORDS = 50
 
 class WindowTokenTally:
     """Tokens served per account, per model, within the account's current
-    usage window. Keys are upstream account ids (stable across re-logins);
-    the window identity is the upstream `reset_at` anchor."""
+    longest-horizon usage window. Keys are upstream account ids (stable
+    across re-logins); the window identity is that window's upstream
+    `reset_at` anchor, with `window_seconds` kept as display metadata."""
 
     def __init__(self, state_path: Path) -> None:
         self._state_path = state_path
-        # account_id -> {"reset_at": int | None, "models": {model: {"input", "output", "cached"}}}
+        # account_id -> {"reset_at": int | None, "window_seconds": int | None,
+        #                "models": {model: {"input", "output", "cached"}}}
         self._accounts: dict[str, dict[str, Any]] = {}
         self._unsaved_records = 0
         self._load()
@@ -56,7 +70,9 @@ class WindowTokenTally:
             return
         details = usage.get("input_tokens_details")
         cached = details.get("cached_tokens") if isinstance(details, dict) else None
-        entry = self._accounts.setdefault(account_id, {"reset_at": None, "models": {}})
+        entry = self._accounts.setdefault(
+            account_id, {"reset_at": None, "window_seconds": None, "models": {}}
+        )
         bucket = entry["models"].setdefault(
             str(model or "unknown"), {"input": 0, "output": 0, "cached": 0}
         )
@@ -67,19 +83,45 @@ class WindowTokenTally:
         if self._unsaved_records >= SAVE_EVERY_RECORDS:
             self.save()
 
-    def set_window(self, account_id: str | None, reset_at: Any) -> None:
-        """Aligns the tally with the account's current window. A changed
-        `reset_at` means the 5h bucket rolled over: the old breakdown no
-        longer describes the shown percentage, so it is cleared."""
+    def set_window(
+        self, account_id: str | None, reset_at: Any, window_seconds: Any = None
+    ) -> None:
+        """Aligns the tally with the account's current (longest-horizon)
+        window. A changed `reset_at` anchor means that window rolled over —
+        even when it drifted while the relay sat idle — so the old breakdown
+        no longer describes the shown percentage and is cleared.
+        `window_seconds` is display metadata (it labels the breakdown); the
+        anchor alone is the window's identity. Callers that observe no
+        windows simply never call this, which keeps the current tally."""
         if not account_id or not isinstance(reset_at, (int, float)):
             return
-        entry = self._accounts.setdefault(account_id, {"reset_at": None, "models": {}})
+        seconds = (
+            int(window_seconds)
+            if isinstance(window_seconds, (int, float))
+            and not isinstance(window_seconds, bool)
+            and window_seconds > 0
+            else None
+        )
+        entry = self._accounts.setdefault(
+            account_id, {"reset_at": None, "window_seconds": None, "models": {}}
+        )
         known = entry.get("reset_at")
         if known is None:
+            # Tokens recorded before the first probe stay attributed to the
+            # window that probe then identifies.
             entry["reset_at"] = int(reset_at)
+            entry["window_seconds"] = seconds
         elif int(reset_at) != known:
-            self._accounts[account_id] = {"reset_at": int(reset_at), "models": {}}
+            self._accounts[account_id] = {
+                "reset_at": int(reset_at),
+                "window_seconds": seconds,
+                "models": {},
+            }
             self.save()
+        elif seconds is not None and entry.get("window_seconds") != seconds:
+            # Same window, newly learned duration (e.g. state written before
+            # the duration was persisted): metadata only, tokens are kept.
+            entry["window_seconds"] = seconds
 
     # ----- reading -----
 
@@ -106,10 +148,18 @@ class WindowTokenTally:
             total_output += bucket.get("output", 0)
             total_cached += bucket.get("cached", 0)
         models.sort(key=lambda m: m["input_tokens"] + m["output_tokens"], reverse=True)
+        seconds = entry.get("window_seconds")
+        if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
+            seconds = None  # tolerate hand-edited/older state files
         return {
             "object": "relay_window_tokens",
-            "scope": "current_primary_window_via_this_relay",
+            # Horizon-neutral: WHICH window the numbers cover is data
+            # (window_label/window_seconds below), not a baked-in 5h claim —
+            # plans differ in which windows they even have.
+            "scope": "current_usage_window_via_this_relay",
             "window_reset_at": entry.get("reset_at"),
+            "window_seconds": seconds,
+            "window_label": window_label(seconds),
             "models": models,
             "totals": {
                 "input_tokens": total_input,

@@ -39,6 +39,7 @@ from airelay.backend import BackendError, ChatGptCodexBackend, SSEEvent
 from airelay.config import Settings
 from airelay.traffic import TrafficLogger
 from airelay.usage_tally import WindowTokenTally
+from airelay.usage_windows import UsageWindow, longest_window, parse_rate_limit_windows
 
 ACCOUNTS_DIRNAME = "accounts"
 MANIFEST_FILENAME = "manifest.json"
@@ -200,10 +201,13 @@ class _PooledAccount:
     # and model filters), which starves accounts; a per-account timestamp is
     # fair under any churn.
     last_selected_at: float = 0.0
-    # Capacity signal for the balanced strategy: the short-window (5h)
-    # used_percent from the account's last usage probe, and when it was
-    # observed. Plans differ wildly in absolute quota, so equalizing this
-    # percentage is what actually balances charge across accounts.
+    # Capacity signal for the balanced strategy: the used_percent of the
+    # account's longest-horizon usage window (today: the weekly budget) from
+    # its last probe, and when it was observed. Plans differ wildly in
+    # absolute quota AND in which windows they report (a current Plus plan
+    # has no 5h window at all), so equalizing the percentage of the one
+    # scarce budget every plan shape shares is what actually balances charge
+    # across accounts.
     used_percent: float | None = None
     usage_observed_at: float = 0.0
     # Cached usage payload (for status consumers) with fetch time; protects
@@ -539,12 +543,16 @@ class OpenAiAccountPool:
         return chosen
 
     def _pick_balanced(self, pick_from: list[_PooledAccount], now: float) -> _PooledAccount:
-        """Routes to the account with the most remaining short-window quota
-        (lowest used_percent), so consumption equalizes as a percentage of
-        each plan's own capacity — equal request counts would drain a small
-        plan many times faster than a large one. Accounts whose usage signal
-        is missing or stale fall back to least-recently-selected, and win
-        over usage-known accounts only when everything is stale."""
+        """Routes to the account with the most remaining quota in its
+        longest-horizon window (lowest weekly used_percent today), so
+        consumption equalizes as a percentage of each plan's scarce budget —
+        equal request counts would drain a small plan many times faster than
+        a large one. Short (5h-style) windows are deliberately not the
+        signal: they recover within hours and their exhaustion is already
+        handled by proactive benching and reactive 429 failover, while the
+        weekly budget only drains. Accounts whose usage signal is missing or
+        stale fall back to least-recently-selected, and win over usage-known
+        accounts only when everything is stale."""
         fresh = [
             account
             for account in pick_from
@@ -936,35 +944,42 @@ class OpenAiAccountPool:
         # from releasing an exhausted account back into rotation.
         reached = bool(usage.get("rate_limit_reached_type"))
         rate = usage.get("rate_limit")
-        windows = []
+        windows: list[UsageWindow] = []
         if isinstance(rate, dict):
             if rate.get("limit_reached") is True or rate.get("allowed") is False:
                 reached = True
-            windows = [rate.get("primary_window"), rate.get("secondary_window")]
-            # Capacity signal for balanced routing: the short-window
-            # percentage, recorded on every probe (limited or not).
-            primary = rate.get("primary_window")
-            if isinstance(primary, dict) and isinstance(
-                primary.get("used_percent"), (int, float)
-            ):
-                account.used_percent = float(primary["used_percent"])
+            windows = parse_rate_limit_windows(rate)
+        # Which windows a payload carries is plan-dependent (observed live
+        # 2026-07: Plus reports its weekly window alone in the primary slot,
+        # Enterprise keeps a 5h primary plus a weekly secondary), so windows
+        # are ranked by duration, never by slot. The longest window is the
+        # scarce, slowest-recovering budget every current shape shares:
+        # - its used_percent is the balanced strategy's capacity signal
+        #   (comparing raw primary slots mixed a weekly percent against a 5h
+        #   percent and routed heavy traffic into the small plan's weekly
+        #   budget), and
+        # - its reset anchor scopes the token tally, so the per-model
+        #   breakdown accumulates over that budget instead of being wiped by
+        #   every short-window roll.
+        # A payload without windows updates neither: the previous signal
+        # ages out through the routing max-age instead of being discarded on
+        # a transient shape glitch, and the tally keeps its current window.
+        anchor = longest_window(windows)
+        if anchor is not None:
+            if anchor.used_percent is not None:
+                account.used_percent = anchor.used_percent
                 account.usage_observed_at = time.monotonic()
-            # Window identity for the token tally: a changed reset anchor
-            # means the 5h bucket rolled and the breakdown starts fresh.
-            if isinstance(primary, dict):
-                self._tally.set_window(account.slot.account_id, primary.get("reset_at"))
+            self._tally.set_window(
+                account.slot.account_id, anchor.reset_at, anchor.window_seconds
+            )
+        # Benching stays shape-agnostic across ALL windows: any exhausted
+        # window blocks the account, whatever its horizon or slot.
         resets: list[int] = []
         for window in windows:
-            if not isinstance(window, dict):
-                continue
-            used = window.get("used_percent")
-            if isinstance(used, (int, float)) and used >= 100:
+            if window.exhausted:
                 reached = True
-                secs = window.get("reset_after_seconds")
-                if not isinstance(secs, (int, float)) or secs <= 0:
-                    secs = window.get("resets_in_seconds")
-                if isinstance(secs, (int, float)) and secs > 0:
-                    resets.append(int(secs))
+                if window.reset_after_seconds is not None:
+                    resets.append(window.reset_after_seconds)
         now = time.monotonic()
         if not reached:
             # Authoritative recovery signal: usage says there is capacity, so

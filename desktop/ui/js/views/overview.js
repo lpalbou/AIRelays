@@ -720,13 +720,6 @@ function usageWindowRow(label, window) {
   bar.className = "usage-bar";
   row.append(head, bar);
 
-  // No active window right now: the upstream anchors the 5h bucket at the
-  // first request, so between windows there is nothing to measure yet.
-  if (window.idle) {
-    setUsageDetail(detail, "0% used", " · starts with the next request");
-    return row;
-  }
-
   // A null used_percent means the window rolled over while we couldn't
   // reach the endpoint (stale snapshot): the old numbers are meaningless,
   // so show an empty bar and say so rather than fabricating "0% · <1m".
@@ -754,24 +747,17 @@ function usageWindowRow(label, window) {
 }
 
 // Flattens a normalized subscription-status payload into labeled windows.
+// Only windows the upstream actually reports are rendered: which windows a
+// plan has is upstream policy now (current OpenAI Plus plans report a weekly
+// window only, while Enterprise keeps 5h + weekly), so synthesizing a
+// placeholder "5h" row — as an earlier iteration did when only long windows
+// were present — would show a quota that does not exist for the plan.
 function usageWindows(status) {
   const limits = status?.rate_limits ?? {};
   const windows = [];
   const push = (window, baseLabel) => {
     if (window) windows.push([windowLabel(window, baseLabel), window]);
   };
-  // Between 5h buckets the upstream reports no short window at all (it
-  // anchors the bucket at the first request — the weekly window may even
-  // arrive alone in the primary slot). Hiding the row read as a bug: show
-  // an explicit idle 5h row whenever only long windows are present.
-  const defaults = [limits.default?.primary_window, limits.default?.secondary_window]
-    .filter(Boolean);
-  const hasShortWindow = defaults.some(
-    (w) => (w.window_seconds ?? w.limit_window_seconds ?? 0) < 86400
-  );
-  if (defaults.length > 0 && !hasShortWindow) {
-    windows.push(["5h window", { idle: true }]);
-  }
   push(limits.default?.primary_window, "Requests");
   push(limits.default?.secondary_window, "Requests");
   for (const extra of limits.additional ?? []) {
@@ -1080,9 +1066,11 @@ function formatTokens(n) {
 }
 
 // Ground truth behind the usage bars: what this relay served on the account
-// during the current 5h window, per model — revealed on hover of "more".
-// Every account gets the affordance; without data the panel says so
-// instead of the trigger silently missing.
+// during its current usage window, per model — revealed on hover of "more".
+// The window's horizon is plan-dependent (weekly on current OpenAI plans),
+// so the title names the window the tally payload reports instead of
+// hardcoding "5h". Every account gets the affordance; without data the
+// panel says so instead of the trigger silently missing.
 function windowTokensDetail(windowTokens) {
   const models = Array.isArray(windowTokens?.models) ? windowTokens.models : [];
   const wrap = document.createElement("div");
@@ -1094,7 +1082,10 @@ function windowTokensDetail(windowTokens) {
   panel.className = "account-more-panel";
   const title = document.createElement("div");
   title.className = "account-more-title";
-  title.textContent = "This 5h window, via this relay";
+  const label = typeof windowTokens?.window_label === "string" ? windowTokens.window_label : null;
+  title.textContent = label
+    ? `This ${label} window, via this relay`
+    : "Current window, via this relay";
   panel.appendChild(title);
   if (models.length === 0) {
     const empty = document.createElement("div");

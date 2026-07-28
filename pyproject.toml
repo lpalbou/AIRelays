@@ -55,6 +55,13 @@ airelays = "airelays.cli:main"
 "Documentation" = "https://www.lpalbou.info/AIRelays/"
 "Changelog" = "https://github.com/lpalbou/AIRelays/blob/main/CHANGELOG.md"
 
+[tool.pytest.ini_options]
+# Only the real suite: a bare `pytest` used to crawl into the gitignored
+# desktop runtime bundles (desktop/src-tauri/runtime, target/), whose
+# vendored site-packages both fail to collect and shadow src/airelay with a
+# stale bundled copy.
+testpaths = ["tests"]
+
 [tool.hatch.version]
 path = "src/airelay/__init__.py"
 

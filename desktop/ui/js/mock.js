@@ -71,19 +71,41 @@ const state = () => ({
             email: "perso@gmail.com",
             plan_type: "plus",
             balance: "balanced",
+            // The two real plan shapes observed live (2026-07): a Plus
+            // account (weekly window only) and an Enterprise account (5h +
+            // weekly). The tally is anchored to each account's longest
+            // window, hence the weekly window_label on both breakdowns.
             accounts: [
               { slug: "default", email: "perso@gmail.com", plan_type: "plus", ready_for_requests: true, limited: false,
                 window_tokens: {
                   object: "relay_window_tokens",
-                  scope: "current_primary_window_via_this_relay",
-                  window_reset_at: 1783805892,
+                  scope: "current_usage_window_via_this_relay",
+                  window_reset_at: 1785748463,
+                  window_seconds: 604800,
+                  window_label: "weekly",
                   models: [
                     { model: "gpt-5.5", input_tokens: 1234567, output_tokens: 89012, cached_input_tokens: 800000 },
                     { model: "gpt-5.4-mini", input_tokens: 456789, output_tokens: 12345, cached_input_tokens: 300000 },
                   ],
                   totals: { input_tokens: 1691356, output_tokens: 101357, cached_input_tokens: 1100000 },
                 } },
-              { slug: "work-x", email: "work@company.com", plan_type: "enterprise", ready_for_requests: true, limited: true, limited_for_seconds: 7800 },
+              { slug: "work-x", email: "work@company.com", plan_type: "enterprise", ready_for_requests: true, limited: false,
+                window_tokens: {
+                  object: "relay_window_tokens",
+                  scope: "current_usage_window_via_this_relay",
+                  window_reset_at: 1785714800,
+                  window_seconds: 604800,
+                  window_label: "weekly",
+                  models: [
+                    { model: "gpt-5.5", input_tokens: 84210, output_tokens: 6021, cached_input_tokens: 41000 },
+                  ],
+                  totals: { input_tokens: 84210, output_tokens: 6021, cached_input_tokens: 41000 },
+                } },
+              // Exhausted Plus-shaped account: keeps the "At limit" badge,
+              // the full-bar tint, and the empty "more" panel reviewable in
+              // mock mode (no window_tokens on purpose).
+              { slug: "backup", email: "backup@gmail.com", plan_type: "plus", ready_for_requests: true,
+                limited: true, limited_for_seconds: 172800 },
             ],
           },
           claude: {
@@ -210,15 +232,15 @@ export async function mockInvoke(command, args = {}) {
                 default: {
                   allowed: true,
                   limit_reached: false,
-                  // Between 5h buckets the upstream reports no short window
-                  // at all (it anchors at the first request): the weekly
-                  // window arrives alone and the UI must render an explicit
-                  // idle 5h row — the longest detail text the card shows.
+                  // Current Plus shape (observed live 2026-07): the weekly
+                  // window arrives ALONE in the primary slot — the plan has
+                  // no 5h window at all, so the card renders exactly one
+                  // bar. High usage exercises the "high" bar tint.
                   primary_window: {
-                    used_percent: 23,
+                    used_percent: 91,
                     window_seconds: 604800,
                     window_label: "weekly",
-                    reset_after_seconds: 536400,
+                    reset_after_seconds: 551663,
                   },
                 },
                 additional: [],
@@ -230,22 +252,47 @@ export async function mockInvoke(command, args = {}) {
             email: "work@company.com",
             status: {
               account: { email: "work@company.com", plan_type: "enterprise" },
-              rate_limit_reached_type: "secondary",
+              rate_limit_reached_type: null,
+              rate_limits: {
+                default: {
+                  allowed: true,
+                  limit_reached: false,
+                  // Current Enterprise shape: the classic 5h primary window
+                  // plus the weekly secondary, both nearly untouched.
+                  primary_window: {
+                    used_percent: 0,
+                    window_seconds: 18000,
+                    window_label: "5h",
+                    reset_after_seconds: 18000,
+                  },
+                  secondary_window: {
+                    used_percent: 4,
+                    window_seconds: 604800,
+                    window_label: "weekly",
+                    reset_after_seconds: 518000,
+                  },
+                },
+                additional: [],
+              },
+            },
+          },
+          {
+            slug: "backup",
+            email: "backup@gmail.com",
+            status: {
+              account: { email: "backup@gmail.com", plan_type: "plus" },
+              rate_limit_reached_type: "primary",
               rate_limits: {
                 default: {
                   allowed: false,
                   limit_reached: true,
+                  // Plus shape at its weekly limit: exercises the "full"
+                  // bar tint alongside the At-limit badge.
                   primary_window: {
-                    used_percent: 12,
-                    window_seconds: 18000,
-                    window_label: "5h",
-                    reset_after_seconds: 900,
-                  },
-                  secondary_window: {
                     used_percent: 100,
                     window_seconds: 604800,
                     window_label: "weekly",
-                    reset_after_seconds: 7800,
+                    reset_after_seconds: 172800,
                   },
                 },
                 additional: [],

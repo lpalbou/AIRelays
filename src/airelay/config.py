@@ -166,9 +166,11 @@ class Settings:
     enable_openai_provider: bool = True
     models_cache_ttl_seconds: float = 300.0
     # Multiple own accounts: "balanced" (default) routes to the account with
-    # the most remaining short-window quota so consumption equalizes as a
-    # percentage of each plan's capacity; "round_robin" sends strictly equal
-    # request counts; "ordered" drains the first account before the next.
+    # the most remaining quota in its longest usage window (the weekly
+    # budget — which windows a plan reports is upstream policy) so
+    # consumption equalizes as a percentage of each plan's capacity;
+    # "round_robin" sends strictly equal request counts; "ordered" drains
+    # the first account before the next.
     openai_balance: str = "balanced"
     # Extra OpenAI model ids to advertise in /v1/models beyond the upstream
     # catalog (which lags what the backend actually serves).

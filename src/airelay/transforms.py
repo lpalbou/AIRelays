@@ -9,6 +9,10 @@ from typing import Any
 
 from airelay.store import AppStore
 
+# One label vocabulary for window durations across the normalized status
+# payload and the token tally (usage_windows owns the implementation).
+from airelay.usage_windows import window_label as _window_label
+
 
 TEXT_MIME_PREFIXES = (
     "text/",
@@ -925,20 +929,6 @@ def _window_minutes_from_seconds(seconds: int | None) -> int | None:
     if seconds is None or seconds <= 0:
         return None
     return (seconds + 59) // 60
-
-
-def _window_label(seconds: int | None) -> str | None:
-    if seconds is None or seconds <= 0:
-        return None
-    if seconds == 604800:
-        return "weekly"
-    if seconds % 86400 == 0:
-        return f"{seconds // 86400}d"
-    if seconds % 3600 == 0:
-        return f"{seconds // 3600}h"
-    if seconds % 60 == 0:
-        return f"{seconds // 60}m"
-    return f"{seconds}s"
 
 
 def _timestamp_to_iso8601(timestamp: int | None) -> str | None:
