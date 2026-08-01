@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.1
+
+### Fixed
+
+- Deterministic upstream client errors no longer trigger account rotation, benching, or backoff retries. An in-stream `invalid_request_error` (e.g. "Your input exceeds the context window of this model") was previously classified with everything non-quota as a retriable 502, so one unacceptable request could be retried across every account and several backoff rounds — multiplying paid upstream calls — before answering with a misleading account-limits error. Stream failures are now classified once, in `failure_backend_error`, into three classes: quota/rate-limit vocabulary → `429` (bench + failover, unchanged); `invalid_request_error` type, request-shape codes, or a `param`-bearing error → `400` surfaced immediately with the upstream `type`/`code`/`message`/`param` passed through verbatim, after exactly one upstream call; anything unknown → `502` (short bench + failover + retry, deliberately kept for genuine upstream bad windows). All OpenAI lanes (non-streaming collect, streaming chat/completions, `/v1/responses` passthrough) share that single classifier.
+- "All N OpenAI accounts are at their limits (earliest retry in Xs)" is now only claimed when every account is benched by limit-class evidence (an explicit quota rejection or the upstream usage report). Benches carry their evidence kind (`quota` / `auth` / `transient`); rounds of transient 5xx failures answer "All N OpenAI accounts failed for this request" with the last upstream error, and `resets_in_seconds` is only advertised on all-quota rounds, where the horizon is authoritative. Account statuses expose the bench kind as `limited_kind`.
+- The traffic log no longer scrubs upstream error codes. The blanket `code` redaction (meant for OAuth authorization codes) also hit `error.code` inside error objects, logging `"code": "[REDACTED]"` where the diagnostic vocabulary belongs. Redaction of `code` is now scoped: kept readable inside error objects (under an `error` key, or alongside a `message` sibling), still scrubbed everywhere else (OAuth callbacks, token exchanges). Client-visible response bodies were never affected — redaction always ran at log-serialization time only.
+
 ## 0.12.0
 
 ### Added
