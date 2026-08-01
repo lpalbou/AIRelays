@@ -18,11 +18,54 @@ class BackendError(RuntimeError):
         self.detail = detail
 
 
-# Upstream failure events that mean the account's quota window is spent map
-# to 429 so the pool benches the account for the full cooldown; anything
-# else is the upstream's fault and maps to 502 (short bench, quick retry).
+# The status assigned to an upstream in-stream failure decides everything
+# downstream: the account pool benches-and-fails-over on 429/5xx, the retry
+# layer backs off on 429/5xx, and the client sees the status verbatim. The
+# taxonomy has three classes, checked in this order:
+#
+#   limit  -> 429  this account's quota/rate window is spent; another
+#                  account can serve, so bench this one and fail over.
+#   client -> 400  deterministic: the REQUEST is unacceptable and every
+#                  account rejects it identically. Surface immediately with
+#                  the upstream error passed through — no rotation, no
+#                  bench, no backoff, no second paid upstream call.
+#   other  -> 502  the upstream's fault until proven otherwise; short bench,
+#                  failover, and backoff retry (episodic bad windows like
+#                  the 2026-08-01 `server_is_overloaded` incident recover
+#                  exactly this way).
+#
+# operator 2026-08-01 (req_7d3b0b16f7ee43a5a6569c38b6d46133): before the
+# client class existed, "anything else is the upstream's fault" mapped a
+# deterministic context-window invalid_request_error to 502. That benched
+# BOTH accounts as "transient", burned 8 paid upstream calls across 4
+# backoff rounds on a 1.5MB request that could never succeed, and told the
+# client "All 2 OpenAI accounts are at their limits (earliest retry in
+# 25s)" while the accounts had 64%/33% of their weekly budgets left.
 _USAGE_LIMIT_CODES = frozenset(
-    {"usage_limit_reached", "rate_limit_reached", "rate_limit_exceeded"}
+    {
+        "usage_limit_reached",
+        "rate_limit_reached",
+        "rate_limit_exceeded",
+        # Spent-balance vocabulary: capacity class, not request class — a
+        # sibling account with quota can still serve the request.
+        "insufficient_quota",
+    }
+)
+# OpenAI's canonical client-error type, plus the unambiguous request-shape
+# rejection codes. The limit check runs FIRST: if an upstream ever labels a
+# quota rejection `invalid_request_error`, the limit code still wins and
+# failover still happens.
+_CLIENT_ERROR_TYPES = frozenset({"invalid_request_error"})
+_CLIENT_ERROR_CODES = frozenset(
+    {
+        "context_length_exceeded",
+        "invalid_prompt",
+        "invalid_value",
+        "unsupported_value",
+        "unsupported_parameter",
+        "unknown_parameter",
+        "string_above_max_length",
+    }
 )
 
 # Shared with app.py's streaming lanes: the events that legitimately end a
@@ -56,8 +99,13 @@ def failure_backend_error(error: dict[str, Any] | None) -> BackendError:
     """A structured BackendError for a stream that ended without success.
 
     The detail is the OpenAI error JSON (never fabricated emptiness) so
-    clients see the upstream reason and the account pool can classify
-    usage-limit failures from the body.
+    clients see the upstream reason with its real type/code/message/param,
+    and the status carries the taxonomy class every downstream layer (pool
+    failover, retry backoff, the final HTTP response) acts on. This is the
+    single place stream failure events are classified — the non-streaming
+    collect path, the pool's streaming path, and the app's first-event
+    probe (chat, completions, and the /v1/responses passthrough) all raise
+    through here, so the taxonomy cannot drift between lanes.
     """
     if error is None:
         error = {
@@ -65,8 +113,27 @@ def failure_backend_error(error: dict[str, Any] | None) -> BackendError:
             "type": "upstream_error",
             "code": "incomplete_stream",
         }
-    limit_hit = {error.get("code"), error.get("type")} & _USAGE_LIMIT_CODES
-    status = 429 if limit_hit else 502
+    labels = {error.get("code"), error.get("type")}
+    if labels & _USAGE_LIMIT_CODES:
+        status = 429
+    elif labels & _CLIENT_ERROR_TYPES or labels & _CLIENT_ERROR_CODES or (
+        # A `param` naming a request field is OpenAI's own statement that
+        # the REQUEST was at fault (the incident error carried
+        # param="input"); capacity and server errors ship param as null.
+        isinstance(error.get("param"), str)
+        and error.get("param")
+    ):
+        status = 400
+    else:
+        # Unknown/ambiguous stream errors default to the retriable class.
+        # Deliberate: genuine upstream bad windows arrive with vocabulary
+        # this relay has never seen, and failing fast on them would trade
+        # away the resilience the retry layer exists for. Deterministic
+        # client rejections, by contrast, arrive with OpenAI's explicit
+        # type/code/param labels (the 2026-08-01 incident error carried all
+        # three), so the client class above catches them before any paid
+        # rotation happens.
+        status = 502
     return BackendError(status, json.dumps({"error": error}, ensure_ascii=True))
 
 

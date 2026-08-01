@@ -25,7 +25,11 @@ T = TypeVar("T")
 # What retrying can plausibly fix: transient upstream failures (5xx, incl.
 # the structured 502s minted for in-stream failures and transport errors)
 # and rate windows (429). Client errors (4xx) would fail identically and
-# auth errors need user action, so both surface immediately.
+# auth errors need user action, so both surface immediately. This check is
+# only as honest as the status it is given: the 2026-08-01 incident burned
+# three futile backoff rounds because a deterministic context-window
+# rejection arrived here as a 502 — backend.failure_backend_error now
+# classifies stream failures into 400/429/502 so this boundary holds.
 _RETRIABLE_EXACT = 429
 _RETRIABLE_MIN = 500
 

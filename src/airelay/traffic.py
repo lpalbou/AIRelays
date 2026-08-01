@@ -16,6 +16,8 @@ REDACTED_KEYS = {
     "refresh_token",
     "id_token",
     "api_key",
+    # OAuth authorization codes; scoped by _is_error_object so upstream
+    # error codes (diagnostic vocabulary, not secrets) stay readable.
     "code",
     "bearer_token",
     "relay_token",
@@ -36,17 +38,43 @@ def _is_text_content_type(content_type: str | None) -> bool:
     )
 
 
-def redact_value(value: Any) -> Any:
+def _is_error_object(container: dict[str, Any], parent_key: str | None) -> bool:
+    """Whether a dict is an OpenAI-style error object, where `code` is
+    diagnostic vocabulary ("context_length_exceeded"), not a credential.
+
+    The blanket `code` redaction exists for OAuth authorization codes
+    (callback query params {"code", "state"}, token-exchange bodies) — a
+    one-time credential that never lives under an "error" key and never
+    carries a "message" sibling. Error objects always do one or the other:
+    the stream `error` event nests them under "error", `response.failed`
+    under response["error"], and the inline variant ships code+message at
+    the top level.
+
+    operator 2026-08-01: every upstream error code in the incident's
+    traffic log read "[REDACTED]" — the primary classification signal for
+    diagnosing a misrouted invalid_request_error was scrubbed as if it
+    were a secret, while the actual response sent to the client (composed
+    from the unscrubbed BackendError, not from the log) kept the real
+    code. Redaction happens at log-serialization time only.
+    """
+    return (parent_key or "").lower() == "error" or isinstance(
+        container.get("message"), str
+    )
+
+
+def redact_value(value: Any, *, parent_key: str | None = None) -> Any:
     if isinstance(value, dict):
+        in_error_object = _is_error_object(value, parent_key)
         redacted: dict[str, Any] = {}
         for key, item in value.items():
-            if key.lower() in REDACTED_KEYS:
+            lowered = key.lower()
+            if lowered in REDACTED_KEYS and not (lowered == "code" and in_error_object):
                 redacted[key] = "[REDACTED]"
             else:
-                redacted[key] = redact_value(item)
+                redacted[key] = redact_value(item, parent_key=key)
         return redacted
     if isinstance(value, list):
-        return [redact_value(item) for item in value]
+        return [redact_value(item, parent_key=parent_key) for item in value]
     return value
 
 

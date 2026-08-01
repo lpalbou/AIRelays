@@ -262,6 +262,73 @@ async def test_collect_response_maps_usage_limit_failure_to_429(tmp_path) -> Non
     assert json.loads(excinfo.value.detail)["error"]["code"] == "usage_limit_reached"
 
 
+def _oversized_input_failure_events() -> list[SSEEvent]:
+    """The 2026-08-01 15:26Z incident grammar, verbatim shape
+    (req_7d3b0b16f7ee43a5a6569c38b6d46133): a deterministic
+    invalid_request_error `error` event, then `response.failed`. The
+    incident's real code was scrubbed from the traffic log by the blanket
+    "code" redaction (fixed alongside this test); the code here is a
+    representative stand-in — classification keys on the type and param
+    just as much, so the exact code string is not load-bearing."""
+    message = (
+        "Your input exceeds the context window of this model. "
+        "Please adjust your input and try again."
+    )
+    return [
+        SSEEvent(
+            "error",
+            json.dumps(
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "code": "context_length_exceeded",
+                        "message": message,
+                        "param": "input",
+                    },
+                    "sequence_number": 2,
+                }
+            ),
+        ),
+        SSEEvent(
+            "response.failed",
+            json.dumps(
+                {
+                    "response": {
+                        "id": "resp_fail",
+                        "status": "failed",
+                        "error": {"code": "context_length_exceeded", "message": message},
+                    }
+                }
+            ),
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_collect_response_maps_invalid_request_failure_to_400_passthrough(tmp_path) -> None:
+    """Regression for the 2026-08-01 incident: a deterministic client
+    rejection in the stream must surface as a 400 carrying the upstream
+    error verbatim (type/code/message/param), never as a retriable 502 —
+    the 502 class is what bought 8 paid upstream calls and a fabricated
+    "all accounts are at their limits" answer."""
+    backend = make_event_backend(
+        tmp_path, [_created_event(), *_oversized_input_failure_events()]
+    )
+    try:
+        with pytest.raises(BackendError) as excinfo:
+            await backend.collect_response({}, "req_123", None)
+    finally:
+        await backend.close()
+
+    assert excinfo.value.status_code == 400
+    error = json.loads(excinfo.value.detail)["error"]
+    assert error["type"] == "invalid_request_error"
+    assert error["code"] == "context_length_exceeded"
+    assert error["param"] == "input"
+    assert "context window" in error["message"]
+
+
 @pytest.mark.asyncio
 async def test_collect_response_returns_incomplete_response_as_result(tmp_path) -> None:
     events = [
@@ -628,6 +695,60 @@ def test_snapshot_body_redacts_inline_file_data() -> None:
     assert snapshot["json"]["input"][0]["file_data"] == "[REDACTED]"
 
 
+def test_redact_keeps_error_codes_readable_but_scrubs_auth_codes() -> None:
+    """operator 2026-08-01: every upstream error code in the incident's
+    traffic log read "[REDACTED]" — the blanket "code" redaction (meant for
+    OAuth authorization codes) scrubbed the diagnostic vocabulary needed to
+    classify the failure. Error objects keep their code; credential-shaped
+    "code" keys stay scrubbed. The client-visible response body was never
+    affected either way: redaction runs at log-serialization time only."""
+    from airelay.traffic import redact_value
+
+    # The upstream_stream_error record shape (error object under "error").
+    record = redact_value(
+        {
+            "phase": "upstream_stream_error",
+            "error": {
+                "type": "invalid_request_error",
+                "code": "context_length_exceeded",
+                "message": "Your input exceeds the context window of this model.",
+                "param": "input",
+            },
+        }
+    )
+    assert record["error"]["code"] == "context_length_exceeded"
+
+    # response.failed nests the error inside the response object.
+    failed = redact_value(
+        {"response": {"error": {"code": "server_is_overloaded", "message": "overloaded"}}}
+    )
+    assert failed["response"]["error"]["code"] == "server_is_overloaded"
+
+    # The inline top-level variant carries code+message with no wrapper.
+    inline = redact_value({"code": "invalid_prompt", "message": "rejected"})
+    assert inline["code"] == "invalid_prompt"
+
+    # Snapshot of an outbound error body: the logged JSON keeps the code.
+    snapshot = snapshot_body(
+        "application/json",
+        b'{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too big","param":"input"}}',
+    )
+    assert snapshot["json"]["error"]["code"] == "context_length_exceeded"
+
+    # OAuth shapes stay scrubbed: callback query params and token-exchange
+    # bodies have no "message" sibling and no "error" parent.
+    callback = redact_value({"query": {"code": "authz-one-time-secret", "state": "xyz"}})
+    assert callback["query"]["code"] == "[REDACTED]"
+    exchange = redact_value({"grant_type": "authorization_code", "code": "authz-one-time-secret"})
+    assert exchange["code"] == "[REDACTED]"
+
+    # The scoping frees only "code": other secrets inside an error object
+    # would still be scrubbed.
+    mixed = redact_value({"error": {"code": "x", "message": "m", "access_token": "tok"}})
+    assert mixed["error"]["access_token"] == "[REDACTED]"
+    assert mixed["error"]["code"] == "x"
+
+
 def test_responses_route_ignores_unsupported_sampling_parameters_and_sets_header(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)
@@ -916,6 +1037,42 @@ def test_chat_stream_first_event_failure_returns_http_error(tmp_path) -> None:
     assert response.json()["error"]["code"] == "server_is_overloaded"
 
 
+def test_chat_stream_invalid_request_returns_400_with_real_code(tmp_path) -> None:
+    """Streaming sibling of the 2026-08-01 regression, through the real
+    pool: the pre-content failure event classifies as a client error and
+    surfaces as HTTP 400 before SSE headers, with the upstream code intact
+    in the client-visible body (only the traffic LOG ever scrubbed it)."""
+    settings = make_settings(tmp_path)
+    write_openai_auth(settings)
+    app = create_app(settings)
+
+    async def scripted_stream(payload, request_id, session_id):
+        del payload, request_id, session_id
+        for event in [_created_event(), *_oversized_input_failure_events()]:
+            yield event
+
+    with TestClient(app) as client:
+        pool = client.app.state.backend
+        pool._accounts[0].backend.stream_response_events = scripted_stream
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.4-mini",
+                "stream": True,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        benched = pool._accounts[0].is_limited(time.monotonic())
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["type"] == "invalid_request_error"
+    assert error["code"] == "context_length_exceeded"
+    assert error["param"] == "input"
+    assert "at their limits" not in error["message"]
+    assert benched is False
+
+
 def test_chat_stream_empty_upstream_returns_502(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)
@@ -1059,6 +1216,44 @@ def test_responses_stream_first_event_failure_returns_http_error(tmp_path) -> No
 
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "server_is_overloaded"
+
+
+def test_responses_stream_invalid_request_returns_400_passthrough(tmp_path) -> None:
+    """The /v1/responses passthrough shares the one classifier: the same
+    pre-content invalid_request_error surfaces as a 400 with the upstream
+    error object intact, not a 502 or an SSE body."""
+    settings = make_settings(tmp_path)
+    write_openai_auth(settings)
+    app = create_app(settings)
+
+    async def scripted_stream(payload, request_id, session_id):
+        del payload, request_id, session_id
+        for event in [_created_event(), *_oversized_input_failure_events()]:
+            yield event
+
+    with TestClient(app) as client:
+        pool = client.app.state.backend
+        pool._accounts[0].backend.stream_response_events = scripted_stream
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "gpt-5.4-mini",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "hello"}],
+                    }
+                ],
+                "stream": True,
+            },
+        )
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["type"] == "invalid_request_error"
+    assert error["code"] == "context_length_exceeded"
+    assert error["param"] == "input"
 
 
 def test_responses_stream_passes_post_content_failure_events_verbatim(tmp_path) -> None:
@@ -1300,6 +1495,70 @@ def test_chat_route_rate_limited_account_fails_over_then_is_skipped(tmp_path, mo
     # it); the second request routed directly to the available account.
     assert calls["limited"] == 1
     assert calls["healthy"] == 2
+
+
+def test_chat_route_oversized_input_fails_fast_without_rotation_or_retry(tmp_path, monkeypatch) -> None:
+    """The 2026-08-01 incident, end to end through the real two-account
+    pool WITH retry enabled (req_7d3b0b16f7ee43a5a6569c38b6d46133): a
+    request whose input exceeds the context window is rejected
+    deterministically by the upstream, so it must cost exactly ONE paid
+    upstream call — no failover to the second account, no backoff rounds,
+    no benches — and the client must receive the upstream 400 verbatim.
+
+    operator 2026-08-01: this exact shape previously burned 8 upstream
+    calls across 4 backoff rounds on both accounts and answered 502 "All 2
+    OpenAI accounts are at their limits (earliest retry in 25s)" while the
+    accounts had 64%/33% of their weekly budgets left — a wrong error AND
+    wasted inference spend for one client mistake."""
+    _quiet_pool_background(monkeypatch)
+    settings = make_settings(
+        tmp_path, openai_retry_attempts=2, openai_retry_backoff_seconds=(0.0,)
+    )
+    write_openai_auth(settings)
+    _write_second_account(settings, "second", "acct_456")
+    app = create_app(settings)
+    calls = {"first": 0, "second": 0}
+
+    def scripted_stream(name: str):
+        async def stream(payload, request_id, session_id):
+            del payload, request_id, session_id
+            calls[name] += 1
+            for event in [_created_event(), *_oversized_input_failure_events()]:
+                yield event
+
+        return stream
+
+    with TestClient(app) as client:
+        pool = client.app.state.backend
+        assert pool.size == 2
+        # Override the raw per-account streams: the pool's REAL collect
+        # logic and the REAL classifier run over the incident grammar.
+        pool._accounts[0].backend.stream_response_events = scripted_stream("first")
+        pool._accounts[1].backend.stream_response_events = scripted_stream("second")
+
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.4-mini",
+                "stream": False,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        now = time.monotonic()
+        benched = [account.is_limited(now) for account in pool._accounts]
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["type"] == "invalid_request_error"
+    assert error["code"] == "context_length_exceeded"
+    assert error["param"] == "input"
+    assert "context window" in error["message"]
+    # The message is the upstream's own: no fabricated account-limit claim.
+    assert "at their limits" not in error["message"]
+    # One attempt total: no rotation onto the second account, no retry.
+    assert calls["first"] + calls["second"] == 1
+    # And no account was benched over a request-scoped error.
+    assert benched == [False, False]
 
 
 def test_chat_route_retry_repass_survives_a_full_pool_outage(tmp_path, monkeypatch) -> None:

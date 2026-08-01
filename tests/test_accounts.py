@@ -385,8 +385,58 @@ async def test_all_accounts_limited_error_stays_structured_for_retry(tmp_path: P
     error = json.loads(excinfo.value.detail)["error"]
     assert error["type"] == "usage_limit_reached"
     assert "2 OpenAI accounts" in error["message"]
+    # Both benches are quota-kind, so claiming "at their limits" is factual.
+    assert "at their limits" in error["message"]
     assert error["resets_in_seconds"] >= 1
     assert _resets_in_seconds(excinfo.value) == error["resets_in_seconds"]
+
+
+def _transient_502_error() -> BackendError:
+    return BackendError(
+        502, json.dumps({"error": {"code": "server_is_overloaded", "message": "down"}})
+    )
+
+
+@pytest.mark.asyncio
+async def test_all_transient_failures_do_not_claim_account_limits(tmp_path) -> None:
+    """operator 2026-08-01: the relay answered "All 2 OpenAI accounts are
+    at their limits (earliest retry in 25s)" off the back of 30-second
+    transient cooldowns while the accounts had 64%/33% of their weekly
+    budgets left. "At their limits" is a factual claim about the accounts:
+    a round of transient 5xx benches must say what actually happened and
+    must not advertise a recovery horizon it does not have."""
+    settings = _settings(tmp_path)
+    a = FakeBackend("a", fail_with=_transient_502_error())
+    b = FakeBackend("b", fail_with=_transient_502_error())
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    with pytest.raises(BackendError) as excinfo:
+        await pool.collect_response({}, "req", None)
+
+    assert excinfo.value.status_code == 502
+    error = json.loads(excinfo.value.detail)["error"]
+    assert "All 2 OpenAI accounts failed for this request" in error["message"]
+    assert "at their limits" not in error["message"]
+    assert "resets_in_seconds" not in error
+    # The benches themselves are labeled as the heuristic rests they are.
+    assert [account.limited_kind for account in pool._accounts] == ["transient", "transient"]
+
+
+@pytest.mark.asyncio
+async def test_mixed_bench_kinds_do_not_claim_account_limits(tmp_path) -> None:
+    """One account genuinely at its limit plus one transient failure is NOT
+    "all accounts at their limits" — the claim requires every bench in the
+    round to be limit-class evidence."""
+    settings = _settings(tmp_path)
+    a = FakeBackend("a", fail_with=_usage_limit_error())
+    b = FakeBackend("b", fail_with=_transient_502_error())
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    with pytest.raises(BackendError) as excinfo:
+        await pool.collect_response({}, "req", None)
+
+    error = json.loads(excinfo.value.detail)["error"]
+    assert "at their limits" not in error["message"]
+    assert "All 2 OpenAI accounts failed for this request" in error["message"]
+    assert {account.limited_kind for account in pool._accounts} == {"quota", "transient"}
 
 
 def _created_stream_event(response_id: str = "resp_1") -> SSEEvent:
@@ -493,6 +543,151 @@ async def test_stream_pre_content_silent_death_fails_over(tmp_path: Path) -> Non
     events = [event async for event in pool.stream_response_events({}, "req", None)]
 
     assert json.loads(events[-1].data)["response"]["served_by"] == "b"
+
+
+def _invalid_request_stream_events() -> list[SSEEvent]:
+    """The 2026-08-01 incident grammar (req_7d3b0b16f7ee43a5a6569c38b6d46133):
+    a deterministic invalid_request_error with param="input", then
+    response.failed. Its real code was scrubbed from the incident log; the
+    stand-in code is also client-class on its own."""
+    message = (
+        "Your input exceeds the context window of this model. "
+        "Please adjust your input and try again."
+    )
+    return [
+        SSEEvent(
+            "error",
+            json.dumps(
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "code": "context_length_exceeded",
+                        "message": message,
+                        "param": "input",
+                    },
+                }
+            ),
+        ),
+        SSEEvent(
+            "response.failed",
+            json.dumps(
+                {
+                    "response": {
+                        "id": "resp_fail",
+                        "status": "failed",
+                        "error": {"code": "context_length_exceeded", "message": message},
+                    }
+                }
+            ),
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_invalid_request_stream_error_fails_fast_without_rotation_or_bench(tmp_path: Path) -> None:
+    """The 2026-08-01 incident regression at pool level: a request-scoped
+    upstream rejection (oversized input) must surface immediately as the
+    upstream's own 400 — zero failover, zero benching, zero extra paid
+    upstream calls. Rotating accounts on a deterministic client error can
+    only reproduce it at full price (8 calls burned in the incident)."""
+    import time
+
+    settings = _settings(tmp_path)
+    a = EventStreamBackend("a", [_created_stream_event(), *_invalid_request_stream_events()])
+    b = EventStreamBackend("b", [_created_stream_event("resp_b"), _completed_stream_event("b")])
+    traffic = RecordingTraffic()
+    pool = _pool(settings, [a, b], traffic)
+
+    with pytest.raises(BackendError) as excinfo:
+        async for _ in pool.stream_response_events({}, "req", None):
+            pass
+
+    assert excinfo.value.status_code == 400
+    error = json.loads(excinfo.value.detail)["error"]
+    # Faithful passthrough: the client sees the real upstream vocabulary.
+    assert error["type"] == "invalid_request_error"
+    assert error["code"] == "context_length_exceeded"
+    assert error["param"] == "input"
+    assert "context window" in error["message"]
+    assert "at their limits" not in error["message"]
+    assert b.calls == 0
+    assert "account_failover" not in traffic.phases()
+    assert not pool._accounts[0].is_limited(time.monotonic())
+    assert pool._accounts[0].limited_kind is None
+
+
+@pytest.mark.asyncio
+async def test_invalid_request_error_fails_fast_on_collect_path(tmp_path: Path) -> None:
+    """Same taxonomy on the non-streaming collect path, entering through
+    the real classifier (failure_backend_error) rather than a hand-built
+    400 — the two paths must never diverge."""
+    import time
+
+    from airelay.backend import failure_backend_error
+
+    settings = _settings(tmp_path)
+    upstream_error = {
+        "type": "invalid_request_error",
+        "code": "context_length_exceeded",
+        "message": "Your input exceeds the context window of this model.",
+        "param": "input",
+    }
+    a = FakeBackend("a", fail_with=failure_backend_error(upstream_error))
+    b = FakeBackend("b")
+    traffic = RecordingTraffic()
+    pool = _pool(settings, [a, b], traffic)
+
+    with pytest.raises(BackendError) as excinfo:
+        await pool.collect_response({}, "req", None)
+
+    assert excinfo.value.status_code == 400
+    assert json.loads(excinfo.value.detail)["error"] == upstream_error
+    assert b.calls == 0
+    assert "account_failover" not in traffic.phases()
+    assert not pool._accounts[0].is_limited(time.monotonic())
+
+
+@pytest.mark.asyncio
+async def test_unknown_stream_error_defaults_to_failover_with_transient_bench(tmp_path: Path) -> None:
+    """Pins the chosen default for AMBIGUOUS stream errors (no limit
+    vocabulary, no client vocabulary, no param): treat as upstream-fault —
+    short transient bench, fail over, stay retriable. Rationale: genuine
+    upstream bad windows arrive with vocabulary the relay has never seen
+    and failing fast would trade away the resilience the retry layer
+    exists for, while deterministic client rejections carry OpenAI's
+    explicit labels (the incident error carried type, code AND param) and
+    are caught before any rotation. The bench kind is what keeps this
+    default honest: an unknown-error round can no longer masquerade as
+    "all accounts at their limits"."""
+    import time
+
+    settings = _settings(tmp_path)
+    unknown = SSEEvent(
+        "error",
+        json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "type": "weird_error",
+                    "code": "mysterious_upstream_hiccup",
+                    "message": "something went wrong",
+                    "param": None,
+                },
+            }
+        ),
+    )
+    a = EventStreamBackend("a", [_created_stream_event(), unknown])
+    b = EventStreamBackend("b", [_created_stream_event("resp_b"), _completed_stream_event("b")])
+    traffic = RecordingTraffic()
+    pool = _pool(settings, [a, b], traffic)
+
+    events = [event async for event in pool.stream_response_events({}, "req", None)]
+
+    assert json.loads(events[-1].data)["response"]["served_by"] == "b"
+    assert "account_failover" in traffic.phases()
+    assert pool._accounts[0].is_limited(time.monotonic())
+    assert pool._accounts[0].limited_kind == "transient"
 
 
 class FlakyBackend(FakeBackend):

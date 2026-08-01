@@ -209,6 +209,16 @@ class _PooledAccount:
     # can never erase a bench placed after the snapshot was taken.
     limited_since: float = 0.0
     last_error: str | None = None
+    # What KIND of evidence benched this account — "quota" (an explicit
+    # usage/rate-limit rejection or usage-report exhaustion: the account
+    # really is at its limit), "auth" (dead credentials: needs user action),
+    # or "transient" (a heuristic rest after a 5xx: the account is NOT known
+    # to be limited). The final all-accounts error message may only claim
+    # "at their limits" when every bench is quota-kind. operator 2026-08-01:
+    # the relay claimed both accounts were at their limits while they had
+    # 64%/33% of their weekly budgets left — the benches were 30s transient
+    # cooldowns, not limits.
+    limited_kind: str | None = None
     # Rotation state: least-recently-selected wins. A plain round-robin
     # counter indexes a list whose membership changes between calls (health
     # and model filters), which starves accounts; a per-account timestamp is
@@ -261,8 +271,12 @@ class OpenAiAccountPool:
         self._sticky_cap = 5000
         # Bench state of accounts that briefly left the pool (transient
         # keyring/storage read failures make a slot vanish and reappear);
-        # without this, every flap would launder an active bench.
-        self._bench_memory: dict[str, tuple[str | None, float, float, str | None]] = {}
+        # without this, every flap would launder an active bench. Carries
+        # the bench kind too, so a flap cannot turn a quota bench into an
+        # anonymous one that the final-error honesty check misreads.
+        self._bench_memory: dict[
+            str, tuple[str | None, float, float, str | None, str | None]
+        ] = {}
         # Backends whose account was dropped by reconciliation; closed on
         # shutdown (or immediately when an event loop is available) instead
         # of leaking their connection pools.
@@ -349,11 +363,12 @@ class OpenAiAccountPool:
                 # failure) must not return with its bench laundered.
                 remembered = self._bench_memory.pop(slot.slug, None)
                 if remembered is not None:
-                    account_id, limited_until, limited_since, last_error = remembered
+                    account_id, limited_until, limited_since, last_error, limited_kind = remembered
                     if account_id == slot.account_id and limited_until > time.monotonic():
                         fresh.limited_until = limited_until
                         fresh.limited_since = limited_since
                         fresh.last_error = last_error
+                        fresh.limited_kind = limited_kind
                 reconciled.append(fresh)
         for slug, account in existing.items():
             if slug in kept:
@@ -364,6 +379,7 @@ class OpenAiAccountPool:
                     account.limited_until,
                     account.limited_since,
                     account.last_error,
+                    account.limited_kind,
                 )
                 # Bounded: drop the oldest memory once past a sane cap.
                 while len(self._bench_memory) > 64:
@@ -409,6 +425,11 @@ class OpenAiAccountPool:
             status["limited"] = account.is_limited(now)
             if account.is_limited(now):
                 status["limited_for_seconds"] = int(account.limited_until - now)
+                # Lets status consumers distinguish "really at its limit"
+                # (quota) from "briefly rested after a 5xx" (transient) —
+                # during the 2026-08-01 incident the desktop showed both
+                # accounts Ready while the relay claimed both were limited.
+                status["limited_kind"] = account.limited_kind
             if account.last_error:
                 status["last_error"] = account.last_error
             # Ground truth behind the usage bars: what this relay served on
@@ -609,8 +630,17 @@ class OpenAiAccountPool:
             return error["type"]
         return None
 
-    def _cooldown_seconds(self, error: BackendError) -> float | None:
-        """Returns the cooldown when the error should trigger failover."""
+    def _bench_decision(self, error: BackendError) -> tuple[float, str] | None:
+        """(cooldown_seconds, bench_kind) when the error should bench this
+        account and let the request fail over; None when it should not.
+
+        None means the error is request-scoped: a client error (400/403/
+        404/422...) fails identically on every account, so rotating would
+        only mask the real problem and multiply paid upstream calls.
+        operator 2026-08-01: an oversized input misclassified as 502 was
+        retried through 8 upstream requests across both accounts — the
+        taxonomy in backend.failure_backend_error now hands such errors to
+        this method as 400s, which land on the None branch below."""
         detail = error.detail or ""
         error_type = self._structured_error_type(detail)
         limit_hit = error_type in USAGE_LIMIT_MARKERS or (
@@ -622,40 +652,54 @@ class OpenAiAccountPool:
                 payload = json.loads(detail)
                 resets = payload.get("error", {}).get("resets_in_seconds")
                 if isinstance(resets, (int, float)) and resets > 0:
-                    return float(resets)
+                    return float(resets), "quota"
             except (json.JSONDecodeError, AttributeError):
                 pass
-            return float(self._settings.openai_account_cooldown_seconds)
+            return float(self._settings.openai_account_cooldown_seconds), "quota"
         if error.status_code == 401:
             # One account's credentials are dead (the backend already spent
             # its refresh retry). Other accounts can still serve; recovery
             # needs user action, so bench for the full cooldown.
-            return float(self._settings.openai_account_cooldown_seconds)
+            return float(self._settings.openai_account_cooldown_seconds), "auth"
         if error.status_code >= RETRIABLE_STATUS_MIN:
             # Transient 5xx: short cooldown so one bad gateway response does
             # not bench an account for minutes.
-            return min(30.0, float(self._settings.openai_account_cooldown_seconds))
+            return (
+                min(30.0, float(self._settings.openai_account_cooldown_seconds)),
+                "transient",
+            )
         # Client errors (400/403/404/422...) would fail identically on the
         # next account; failing over would just mask the real problem.
         return None
 
-    def _failover_cooldown(self, error: Exception) -> float | None:
-        """Cooldown for any exception the attempt loop may see. Transport
-        and auth failures are account-scoped problems: the next account gets
-        its chance instead of the client eating the error."""
+    def _cooldown_seconds(self, error: BackendError) -> float | None:
+        """Back-compat view of _bench_decision for callers that only need
+        to know whether the error is in the bench-and-fail-over class."""
+        decision = self._bench_decision(error)
+        return None if decision is None else decision[0]
+
+    def _failover_bench(self, error: Exception) -> tuple[float, str] | None:
+        """Bench decision for any exception the attempt loop may see.
+        Transport and auth failures are account-scoped problems: the next
+        account gets its chance instead of the client eating the error."""
         if isinstance(error, BackendError):
-            return self._cooldown_seconds(error)
+            return self._bench_decision(error)
         if isinstance(error, AuthenticationError):
-            return float(self._settings.openai_account_cooldown_seconds)
+            return float(self._settings.openai_account_cooldown_seconds), "auth"
         return None
 
-    def _mark_limited(self, account: _PooledAccount, seconds: float, reason: str) -> None:
+    def _mark_limited(
+        self, account: _PooledAccount, seconds: float, reason: str, kind: str = "transient"
+    ) -> None:
         now = time.monotonic()
         # Extend-only: a short transient-error cooldown must never truncate
         # an authoritative multi-hour usage bench.
         account.limited_until = max(account.limited_until, now + seconds)
         account.limited_since = now
         account.last_error = reason
+        # The kind mirrors last_error: it describes the freshest evidence,
+        # which is what the final all-accounts message reports on.
+        account.limited_kind = kind
 
     def _log_failover(
         self, request_id: str, decision: _FailoverDecision, cooldown: float
@@ -738,14 +782,18 @@ class OpenAiAccountPool:
                     )
                 return result
             except (BackendError, AuthenticationError) as error:
-                cooldown = self._failover_cooldown(error)
-                if cooldown is None:
+                bench = self._failover_bench(error)
+                if bench is None:
+                    # Request-scoped failure (client error): every account
+                    # would reject it identically, so surface it now with
+                    # zero additional paid upstream calls.
                     raise self._final_error(error) from error
+                cooldown, kind = bench
                 # Bench on every failing attempt, including the last one:
                 # otherwise an exhausted final account is re-selected as
                 # "healthy" by every subsequent request and hammered with
                 # guaranteed 429s.
-                self._mark_limited(account, cooldown, self._error_reason(error))
+                self._mark_limited(account, cooldown, self._error_reason(error), kind)
                 if index == len(attempts) - 1:
                     raise self._final_error(error) from error
                 self._log_failover(
@@ -803,11 +851,14 @@ class OpenAiAccountPool:
                 return
             except (BackendError, AuthenticationError) as error:
                 # Failover is only honest before the first byte reached the
-                # client; afterwards the stream must die visibly.
-                cooldown = self._failover_cooldown(error)
-                if cooldown is None or started:
+                # client; afterwards the stream must die visibly. Client
+                # errors (bench is None) never rotate at all: the request
+                # itself is what upstream rejected.
+                bench = self._failover_bench(error)
+                if bench is None or started:
                     raise self._final_error(error) from error
-                self._mark_limited(account, cooldown, self._error_reason(error))
+                cooldown, kind = bench
+                self._mark_limited(account, cooldown, self._error_reason(error), kind)
                 if index == len(attempts) - 1:
                     raise self._final_error(error) from error
                 self._log_failover(
@@ -1029,6 +1080,7 @@ class OpenAiAccountPool:
             if account.limited_until > now and probe_started > account.limited_since:
                 account.limited_until = 0.0
                 account.last_error = None
+                account.limited_kind = None
             return
         # The account cannot serve until every exhausted window has reset:
         # with a maxed 5h window AND a maxed weekly window, using the shorter
@@ -1039,6 +1091,9 @@ class OpenAiAccountPool:
             account.limited_until = now + cooldown
             account.limited_since = now
             account.last_error = "usage limit reached (from usage report)"
+            # The usage report is the authoritative limit signal, so this
+            # bench may honestly be described as "at its limit".
+            account.limited_kind = "quota"
 
     async def close(self) -> None:
         self._tally.save()
@@ -1052,7 +1107,7 @@ class OpenAiAccountPool:
         if (
             isinstance(error, BackendError)
             and len(self._accounts) > 1
-            and self._cooldown_seconds(error) is not None
+            and self._bench_decision(error) is not None
         ):
             now = time.monotonic()
             # Only claim "all unavailable" when it is true.
@@ -1068,14 +1123,32 @@ class OpenAiAccountPool:
                 inner = self._structured_error_object(error.detail)
                 last_message = (inner or {}).get("message") or (error.detail or "")[:300]
                 rewritten: dict[str, Any] = dict(inner or {})
-                rewritten["message"] = (
-                    f"All {count} OpenAI accounts are at their limits "
-                    f"(earliest retry in {earliest}s). Last error: {last_message}"
+                # "At their limits" is a factual claim about the accounts
+                # and may only be made when every active bench IS a limit
+                # (quota-kind) bench. operator 2026-08-01: the relay told
+                # the client all accounts were at their limits while they
+                # had 64%/33% of their weekly budgets left — the benches
+                # were 30s transient cooldowns minted from a misclassified
+                # client error, and "retry in 25s" was advice that could
+                # never fix the request. Transient/auth rounds now say what
+                # actually happened instead.
+                all_quota = all(
+                    account.limited_kind == "quota" for account in self._accounts
                 )
+                if all_quota:
+                    rewritten["message"] = (
+                        f"All {count} OpenAI accounts are at their limits "
+                        f"(earliest retry in {earliest}s). Last error: {last_message}"
+                    )
+                else:
+                    rewritten["message"] = (
+                        f"All {count} OpenAI accounts failed for this request. "
+                        f"Last error: {last_message}"
+                    )
                 if not rewritten.get("code") and not rewritten.get("type"):
                     rewritten["type"] = "upstream_error"
                     rewritten["code"] = "all_accounts_limited"
-                if error.status_code == RETRIABLE_STATUS_EXACT:
+                if error.status_code == RETRIABLE_STATUS_EXACT and all_quota:
                     # Quota benches derive from upstream reset times, so the
                     # earliest bench is an authoritative recovery horizon and
                     # the retry layer may treat waiting past it as futile.

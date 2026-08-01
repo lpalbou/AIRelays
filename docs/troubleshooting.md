@@ -115,6 +115,14 @@ When the Claude runtime is enabled:
 - a `429` that names a reset far in the future is not retried (waiting a
   minute cannot help a window that resets in hours); with several accounts
   enrolled, the message reports the earliest account recovery
+- a `400` `invalid_request_error` (for example an input that exceeds the
+  model's context window) is answered immediately with the upstream's own
+  error: it is deterministic, so it is never retried, never rotated to
+  another account, and never benches an account — fix the request instead
+- "All N OpenAI accounts are at their limits" is only claimed when every
+  account is benched by real limit evidence (a quota rejection or the usage
+  report); rounds of transient upstream failures answer
+  "All N OpenAI accounts failed for this request" instead
 
 ## Live upstream verification
 
