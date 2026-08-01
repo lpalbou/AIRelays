@@ -325,6 +325,16 @@ conversation keeps using the account that served its first turn (preserving
 upstream prompt caching); it only fails over to another account at a turn
 boundary when the pinned account is at its limit.
 
+**Failed calls are retried automatically.** Transient upstream failures
+(e.g. `server_is_overloaded`) are retried with exponential backoff — by
+default 3 retries waiting 5s/20s/60s, each re-running account failover —
+as long as no response byte has reached the client. A retry that succeeds
+returns the normal response; a request that keeps failing returns
+OpenAI-shaped error JSON with the real HTTP status and the upstream's own
+reason. Tune with `retry_attempts` / `retry_backoff_seconds`
+(`[providers.openai]`, desktop Settings → Providers; `0` disables).
+Retries appear in the traffic log as `retry_backoff` records.
+
 ## Compatibility Boundary
 
 OpenAI runtime:

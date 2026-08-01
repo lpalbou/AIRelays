@@ -17,10 +17,19 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from airelay import __version__
 from airelay.accounts import build_pool
 from airelay.auth import AuthManager, AuthenticationError
-from airelay.backend import BackendError, ChatGptCodexBackend, SSEEvent, encode_sse
+from airelay.backend import (
+    FAILURE_EVENTS,
+    BackendError,
+    ChatGptCodexBackend,
+    SSEEvent,
+    encode_sse,
+    failure_backend_error,
+    stream_error_object,
+)
 from airelay.config import APP_NAME, Settings
 from airelay.html import render_home
 from airelay.providers import ProviderError, ProviderRegistry
+from airelay.retry import RetryPolicy, retry_call
 from airelay.security import EndpointProtector
 from airelay.store import AppStore
 from airelay.traffic import TrafficLogger, snapshot_body
@@ -78,7 +87,63 @@ def _stream_error_event(message: str, code: str) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=True)}\n\n".encode("utf-8")
 
 
-def _http_error(exc: Exception) -> HTTPException:
+def _parse_event_data(event: SSEEvent) -> Any:
+    try:
+        return json.loads(event.data)
+    except json.JSONDecodeError:
+        return None
+
+
+def _stream_failure_event(parsed: Any) -> bytes:
+    """In-band error for an upstream failure event, carrying the upstream
+    reason instead of a silently truncated stream."""
+    error = stream_error_object(parsed) or {}
+    message = error.get("message")
+    code = error.get("code") or error.get("type")
+    return _stream_error_event(
+        message if isinstance(message, str) and message else "The upstream response failed.",
+        code if isinstance(code, str) and code else "upstream_error",
+    )
+
+
+_INCOMPLETE_STREAM_EVENT = _stream_error_event(
+    "Upstream stream ended before response.completed.", "incomplete_stream"
+)
+
+
+def _synthetic_failure_event(exc: BackendError) -> SSEEvent:
+    """A BackendError raised after headers were committed (mid-stream pool
+    exhaustion, transport death), rendered in the upstream's own failure-
+    event grammar so each lane's existing failure handling applies: chat and
+    completions translate it to an in-band error, the Responses passthrough
+    delivers it verbatim as an `error` event."""
+    payload = {"type": "error", "error": _backend_error_payload(exc)["error"]}
+    return SSEEvent("error", json.dumps(payload, ensure_ascii=True))
+
+
+def _backend_error_payload(exc: BackendError) -> dict[str, Any]:
+    """OpenAI-shaped error body for upstream failures. The upstream error
+    object is passed through when the detail already carries one. The
+    top-level "detail" mirror keeps pre-existing readers of FastAPI's
+    default shape working (the desktop usage view parses it)."""
+    error: dict[str, Any] | None = None
+    detail = exc.detail or ""
+    try:
+        parsed = json.loads(detail)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict) and isinstance(parsed.get("error"), dict):
+        error = parsed["error"]
+    if error is None:
+        error = {"message": detail, "type": "upstream_error", "code": None}
+    message = error.get("message")
+    return {
+        "error": error,
+        "detail": message if isinstance(message, str) and message else detail,
+    }
+
+
+def _http_error(exc: Exception) -> Exception:
     if isinstance(exc, HTTPException):
         return exc
     if isinstance(exc, BackendError):
@@ -87,7 +152,9 @@ def _http_error(exc: Exception) -> HTTPException:
                 "Upstream ChatGPT login is missing or expired. Run `airelays login` first.",
                 code="upstream_auth_rejected",
             )
-        return HTTPException(status_code=exc.status_code, detail=exc.detail)
+        # Returned as-is so the BackendError handler renders an OpenAI-shaped
+        # error body instead of FastAPI's {"detail": ...} envelope.
+        return exc
     if isinstance(exc, ProviderError):
         return HTTPException(status_code=exc.status_code, detail=exc.detail)
     if isinstance(exc, AuthenticationError):
@@ -124,6 +191,10 @@ def create_app(settings: Settings) -> FastAPI:
         account_pool=backend,
     )
     protector = EndpointProtector(settings, traffic)
+    retry_policy = RetryPolicy(
+        attempts=settings.openai_retry_attempts,
+        backoff_seconds=settings.openai_retry_backoff_seconds,
+    )
     supported_routes = [
         "/v1/models",
         "/v1/subscription/status",
@@ -223,6 +294,11 @@ def create_app(settings: Settings) -> FastAPI:
         request_id = _request_id(request)
         status_code, payload, headers = authentication_error_payload(exc)
         return logged_json(request_id, payload, status_code=status_code, headers=headers)
+
+    @app.exception_handler(BackendError)
+    async def backend_error_handler(request: Request, exc: BackendError) -> JSONResponse:
+        request_id = _request_id(request)
+        return logged_json(request_id, _backend_error_payload(exc), status_code=exc.status_code)
 
     @app.middleware("http")
     async def guard_requests(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -348,6 +424,52 @@ def create_app(settings: Settings) -> FastAPI:
                 status_code=501,
                 detail="This route is currently available only when the OpenAI runtime is enabled.",
             )
+
+    async def collect_response_with_retry(
+        payload: dict[str, Any],
+        request_id: str,
+        conversation_id: str | None,
+        request: Request,
+    ) -> dict[str, Any]:
+        return await retry_call(
+            lambda: backend.collect_response(payload, request_id, conversation_id),
+            policy=retry_policy,
+            request_id=request_id,
+            traffic=traffic,
+            should_abort=request.is_disconnected,
+        )
+
+    async def open_upstream_stream(
+        payload: dict[str, Any], request_id: str, conversation_id: str | None
+    ) -> tuple[AsyncIterator[SSEEvent], SSEEvent]:
+        """Opens the upstream stream and awaits its first event — the
+        pre-header phase of the streaming lanes. A stream that is dead on
+        arrival (no events, or a failure event first) raises the structured
+        error here, while no byte has reached the client, which is also
+        what makes this phase safely retriable."""
+        upstream_events = backend.stream_response_events(payload, request_id, conversation_id)
+        try:
+            first_event = await anext(upstream_events)
+        except StopAsyncIteration:
+            raise BackendError(502, "Upstream stream ended without a response payload.")
+        if first_event.event in FAILURE_EVENTS:
+            await upstream_events.aclose()
+            raise failure_backend_error(stream_error_object(_parse_event_data(first_event)))
+        return upstream_events, first_event
+
+    async def open_upstream_stream_with_retry(
+        payload: dict[str, Any],
+        request_id: str,
+        conversation_id: str | None,
+        request: Request,
+    ) -> tuple[AsyncIterator[SSEEvent], SSEEvent]:
+        return await retry_call(
+            lambda: open_upstream_stream(payload, request_id, conversation_id),
+            policy=retry_policy,
+            request_id=request_id,
+            traffic=traffic,
+            should_abort=request.is_disconnected,
+        )
 
     @app.get("/", response_class=HTMLResponse)
     async def home(request: Request) -> Response:
@@ -705,14 +827,34 @@ def create_app(settings: Settings) -> FastAPI:
             else:
                 conversation = None
             if not wants_stream:
-                response_payload = await backend.collect_response(payload, request_id, conversation_id)
+                response_payload = await collect_response_with_retry(
+                    payload, request_id, conversation_id, request
+                )
                 if conversation_id:
                     store.touch_conversation(conversation_id, response_payload.get("id"))
                 return logged_json(request_id, response_payload, headers=response_headers)
 
+            # Same eager first-event contact as the translated lanes: dead-
+            # on-arrival streams become real status codes (with automatic
+            # retry) instead of empty 200 streams. Events are still passed
+            # through verbatim once the stream has started — including any
+            # later `response.failed`, per the Responses API contract.
+            upstream_events, first_event = await open_upstream_stream_with_retry(
+                payload, request_id, conversation_id, request
+            )
+
             async def event_stream() -> AsyncIterator[bytes]:
                 latest_response_id: str | None = None
-                async for event in backend.stream_response_events(payload, request_id, conversation_id):
+
+                async def upstream_iter() -> AsyncIterator[SSEEvent]:
+                    try:
+                        yield first_event
+                        async for upstream_event in upstream_events:
+                            yield upstream_event
+                    except BackendError as error:
+                        yield _synthetic_failure_event(error)
+
+                async for event in upstream_iter():
                     try:
                         parsed = json.loads(event.data)
                     except json.JSONDecodeError:
@@ -843,7 +985,9 @@ def create_app(settings: Settings) -> FastAPI:
             else:
                 conversation = None
             if not wants_stream:
-                response_payload = await backend.collect_response(payload, request_id, conversation_id)
+                response_payload = await collect_response_with_retry(
+                    payload, request_id, conversation_id, request
+                )
                 if conversation_id:
                     store.touch_conversation(conversation_id, response_payload.get("id"))
                 chat_payload = responses_to_chat_completion(response_payload)
@@ -853,12 +997,12 @@ def create_app(settings: Settings) -> FastAPI:
             # rejection (e.g. an invalid reasoning effort) raised inside the
             # response generator can only surface as an empty 200 stream, so
             # the first upstream event is awaited eagerly and errors become
-            # real status codes.
-            upstream_events = backend.stream_response_events(payload, request_id, conversation_id)
-            try:
-                first_event: SSEEvent | None = await anext(upstream_events)
-            except StopAsyncIteration:
-                first_event = None
+            # real status codes. The same applies to a stream that dies (or
+            # fails) before its first event — and since no byte has reached
+            # the client yet, this phase is where automatic retry happens.
+            upstream_events, first_event = await open_upstream_stream_with_retry(
+                payload, request_id, conversation_id, request
+            )
 
             async def event_stream() -> AsyncIterator[bytes]:
                 response_id = f"chatcmpl_{uuid.uuid4().hex}"
@@ -870,12 +1014,15 @@ def create_app(settings: Settings) -> FastAPI:
                 usage_requested = bool((body.get("stream_options") or {}).get("include_usage"))
                 latest_response_id: str | None = None
                 latest_usage: dict[str, Any] | None = None
+                finished = False
 
                 async def upstream_iter() -> AsyncIterator[SSEEvent]:
-                    if first_event is not None:
+                    try:
                         yield first_event
-                    async for upstream_event in upstream_events:
-                        yield upstream_event
+                        async for upstream_event in upstream_events:
+                            yield upstream_event
+                    except BackendError as error:
+                        yield _synthetic_failure_event(error)
 
                 async for event in upstream_iter():
                     try:
@@ -919,7 +1066,13 @@ def create_app(settings: Settings) -> FastAPI:
                             encoded = f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
                             yield encoded
                         continue
-                    if event.event == "response.completed":
+                    if event.event in FAILURE_EVENTS:
+                        # Headers are already on the wire; signal the failure
+                        # in-band (no [DONE]) instead of silently truncating.
+                        yield _stream_failure_event(parsed)
+                        await upstream_events.aclose()
+                        return
+                    if event.event in ("response.completed", "response.incomplete"):
                         response_obj = parsed.get("response") or {}
                         latest_response_id = response_obj.get("id")
                         latest_usage = response_obj.get("usage")
@@ -932,7 +1085,12 @@ def create_app(settings: Settings) -> FastAPI:
                                 "usage": latest_usage,
                             }
                         )
-                        finish_reason = "tool_calls" if saw_tool_calls else "stop"
+                        if event.event == "response.incomplete":
+                            # Truncated but legitimate output (e.g. token
+                            # limit), which chat clients read as "length".
+                            finish_reason = "length"
+                        else:
+                            finish_reason = "tool_calls" if saw_tool_calls else "stop"
                         final_chunk = chat_completion_chunk(
                             response_id,
                             created_at,
@@ -952,6 +1110,10 @@ def create_app(settings: Settings) -> FastAPI:
                             )
                             yield f"data: {json.dumps(usage_chunk, ensure_ascii=True)}\n\n".encode("utf-8")
                         yield b"data: [DONE]\n\n"
+                        finished = True
+                if not finished:
+                    # The upstream died without any terminal event.
+                    yield _INCOMPLETE_STREAM_EVENT
                 if conversation_id:
                     store.touch_conversation(conversation_id, latest_response_id)
 
@@ -1048,7 +1210,9 @@ def create_app(settings: Settings) -> FastAPI:
                 if conversation["seed_items"] and not conversation["latest_response_id"]:
                     payload["input"] = conversation["seed_items"] + payload["input"]
             if not wants_stream:
-                response_payload = await backend.collect_response(payload, request_id, conversation_id)
+                response_payload = await collect_response_with_retry(
+                    payload, request_id, conversation_id, request
+                )
                 if conversation_id:
                     store.touch_conversation(conversation_id, response_payload.get("id"))
                 return logged_json(
@@ -1058,24 +1222,25 @@ def create_app(settings: Settings) -> FastAPI:
                 )
 
             # Same eager first-event contact as the chat route, for real
-            # pre-stream status codes.
-            upstream_events = backend.stream_response_events(payload, request_id, conversation_id)
-            try:
-                first_event: SSEEvent | None = await anext(upstream_events)
-            except StopAsyncIteration:
-                first_event = None
+            # pre-stream status codes and pre-header automatic retry.
+            upstream_events, first_event = await open_upstream_stream_with_retry(
+                payload, request_id, conversation_id, request
+            )
 
             async def event_stream() -> AsyncIterator[bytes]:
                 response_id = f"cmpl_{uuid.uuid4().hex}"
                 created_at = int(time.time())
                 model = body.get("model", "unknown")
                 latest_response_id: str | None = None
+                finished = False
 
                 async def upstream_iter() -> AsyncIterator[SSEEvent]:
-                    if first_event is not None:
+                    try:
                         yield first_event
-                    async for upstream_event in upstream_events:
-                        yield upstream_event
+                        async for upstream_event in upstream_events:
+                            yield upstream_event
+                    except BackendError as error:
+                        yield _synthetic_failure_event(error)
 
                 async for event in upstream_iter():
                     try:
@@ -1098,7 +1263,13 @@ def create_app(settings: Settings) -> FastAPI:
                         )
                         yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
                         continue
-                    if event.event == "response.completed":
+                    if event.event in FAILURE_EVENTS:
+                        # Headers are already on the wire; signal the failure
+                        # in-band (no [DONE]) instead of silently truncating.
+                        yield _stream_failure_event(parsed)
+                        await upstream_events.aclose()
+                        return
+                    if event.event in ("response.completed", "response.incomplete"):
                         response_obj = parsed.get("response") or {}
                         latest_response_id = response_obj.get("id")
                         traffic.write(
@@ -1115,10 +1286,14 @@ def create_app(settings: Settings) -> FastAPI:
                             created_at,
                             model,
                             "",
-                            finish_reason="stop",
+                            finish_reason="length" if event.event == "response.incomplete" else "stop",
                         )
                         yield f"data: {json.dumps(final_chunk, ensure_ascii=True)}\n\n".encode("utf-8")
                         yield b"data: [DONE]\n\n"
+                        finished = True
+                if not finished:
+                    # The upstream died without any terminal event.
+                    yield _INCOMPLETE_STREAM_EVENT
                 if conversation_id:
                     store.touch_conversation(conversation_id, latest_response_id)
 

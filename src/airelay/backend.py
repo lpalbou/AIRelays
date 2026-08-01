@@ -18,6 +18,58 @@ class BackendError(RuntimeError):
         self.detail = detail
 
 
+# Upstream failure events that mean the account's quota window is spent map
+# to 429 so the pool benches the account for the full cooldown; anything
+# else is the upstream's fault and maps to 502 (short bench, quick retry).
+_USAGE_LIMIT_CODES = frozenset(
+    {"usage_limit_reached", "rate_limit_reached", "rate_limit_exceeded"}
+)
+
+# Shared with app.py's streaming lanes: the events that legitimately end a
+# response (with output and billed usage) versus the ones that abort it.
+SUCCESS_TERMINAL_EVENTS = ("response.completed", "response.incomplete")
+FAILURE_EVENTS = ("response.failed", "error")
+
+
+def stream_error_object(parsed: Any) -> dict[str, Any] | None:
+    """The upstream error object carried by a failure event, or None.
+
+    `error` events nest it under "error" (the top-level "type" is the event
+    discriminator, never an error classification); `response.failed` nests
+    it under response["error"]. Some upstream variants inline code/message
+    at the top level, so that shape is accepted last.
+    """
+    if not isinstance(parsed, dict):
+        return None
+    error = parsed.get("error")
+    if isinstance(error, dict):
+        return error
+    response = parsed.get("response")
+    if isinstance(response, dict) and isinstance(response.get("error"), dict):
+        return response["error"]
+    if isinstance(parsed.get("message"), str) or isinstance(parsed.get("code"), str):
+        return {key: parsed[key] for key in ("code", "message", "param") if key in parsed}
+    return None
+
+
+def failure_backend_error(error: dict[str, Any] | None) -> BackendError:
+    """A structured BackendError for a stream that ended without success.
+
+    The detail is the OpenAI error JSON (never fabricated emptiness) so
+    clients see the upstream reason and the account pool can classify
+    usage-limit failures from the body.
+    """
+    if error is None:
+        error = {
+            "message": "Upstream stream ended before response.completed.",
+            "type": "upstream_error",
+            "code": "incomplete_stream",
+        }
+    limit_hit = {error.get("code"), error.get("type")} & _USAGE_LIMIT_CODES
+    status = 429 if limit_hit else 502
+    return BackendError(status, json.dumps({"error": error}, ensure_ascii=True))
+
+
 @dataclass(slots=True)
 class SSEEvent:
     event: str
@@ -74,6 +126,13 @@ class ChatGptCodexBackend:
     ) -> dict[str, Any]:
         latest_response: dict[str, Any] | None = None
         output_by_index: dict[int, dict[str, Any]] = {}
+        # `response.incomplete` counts as success: it carries real partial
+        # output and billed usage (e.g. token-limit truncation). Anything
+        # short of a success terminal must raise — a merged `failed`
+        # response returned as a result becomes an empty 200 downstream.
+        succeeded = False
+        saw_failure = False
+        failure: dict[str, Any] | None = None
         async for event in self.stream_response_events(payload, request_id, session_id):
             try:
                 parsed = json.loads(event.data)
@@ -82,11 +141,23 @@ class ChatGptCodexBackend:
             response = parsed.get("response")
             if isinstance(response, dict):
                 latest_response = {**(latest_response or {}), **response}
+            if event.event in SUCCESS_TERMINAL_EVENTS:
+                succeeded = True
+            elif event.event in FAILURE_EVENTS:
+                saw_failure = True
+                if failure is None:
+                    failure = stream_error_object(parsed)
             if event.event == "response.output_item.done":
                 item = parsed.get("item")
                 output_index = parsed.get("output_index")
                 if isinstance(item, dict) and isinstance(output_index, int):
                     output_by_index[output_index] = item
+        if not succeeded:
+            if saw_failure:
+                raise failure_backend_error(failure)
+            if latest_response is None:
+                raise BackendError(502, "Upstream stream ended without a response payload.")
+            raise failure_backend_error(None)
         if latest_response is None:
             raise BackendError(502, "Upstream stream ended without a response payload.")
         if output_by_index:
@@ -191,7 +262,7 @@ class ChatGptCodexBackend:
                 raise BackendError(502, f"Upstream connection failed: {exc}") from exc
 
     def _log_stream_summary(self, request_id: str, event: SSEEvent) -> None:
-        if event.event != "response.completed":
+        if event.event not in SUCCESS_TERMINAL_EVENTS and event.event not in FAILURE_EVENTS:
             return
         try:
             parsed = json.loads(event.data)
@@ -199,6 +270,24 @@ class ChatGptCodexBackend:
             return
         response = parsed.get("response")
         if not isinstance(response, dict):
+            response = {}
+        if event.event in FAILURE_EVENTS:
+            # Failure events must leave a trace: without this record a bad
+            # upstream window is invisible in the traffic log (requests jump
+            # from upstream_request straight to outbound_response).
+            self._traffic.write(
+                {
+                    "request_id": request_id,
+                    "phase": "upstream_stream_error",
+                    "event": event.event,
+                    "response_id": response.get("id"),
+                    "model": response.get("model"),
+                    "status": response.get("status"),
+                    "error": stream_error_object(parsed),
+                }
+            )
+            return
+        if not response:
             return
         self._traffic.write(
             {

@@ -31,6 +31,8 @@ const settings = {
   modelsCacheTtlSeconds: 300,
   openaiBalance: "balanced",
   openaiExtraModelsCsv: "gpt-5.6-sol, gpt-5.6-terra",
+  openaiRetryAttempts: 3,
+  openaiRetryBackoffCsv: "5, 20, 60",
   enableClaude: true,
   claudeBin: "claude",
   claudeTimeoutSeconds: 600,

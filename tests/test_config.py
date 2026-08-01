@@ -84,6 +84,57 @@ def test_openai_extra_models_default_and_override(tmp_path, monkeypatch) -> None
     assert loaded.openai_extra_models == ("my-model-a", "my-model-b")
 
 
+def test_openai_retry_defaults(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("AIRELAYS_OPENAI_RETRY_ATTEMPTS", raising=False)
+    monkeypatch.delenv("AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS", raising=False)
+    loaded = Settings.from_sources(tmp_path / "missing.toml")
+    assert loaded.openai_retry_attempts == 3
+    assert loaded.openai_retry_backoff_seconds == (5.0, 20.0, 60.0)
+
+
+def test_openai_retry_env_and_config_round_trip(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.toml"
+    settings = Settings(
+        config_path=config_path,
+        data_dir=tmp_path / "data",
+        logs_dir=tmp_path / "logs",
+        bearer_token_file=tmp_path / "data" / "relay-token",
+        openai_retry_attempts=2,
+        openai_retry_backoff_seconds=(1.5, 4.0),
+    )
+    settings.write_config_file(force=True)
+
+    loaded = Settings.from_sources(config_path)
+    assert loaded.openai_retry_attempts == 2
+    assert loaded.openai_retry_backoff_seconds == (1.5, 4.0)
+
+    monkeypatch.setenv("AIRELAYS_OPENAI_RETRY_ATTEMPTS", "5")
+    monkeypatch.setenv("AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS", "2, 8, 30")
+    loaded = Settings.from_sources(config_path)
+    assert loaded.openai_retry_attempts == 5
+    assert loaded.openai_retry_backoff_seconds == (2.0, 8.0, 30.0)
+
+
+def test_openai_retry_rejects_bad_values_back_to_defaults(tmp_path, monkeypatch) -> None:
+    # A malformed schedule must not half-apply: the whole value falls back.
+    monkeypatch.setenv("AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS", "5, soon, 60")
+    loaded = Settings.from_sources(tmp_path / "missing.toml")
+    assert loaded.openai_retry_backoff_seconds == (5.0, 20.0, 60.0)
+    monkeypatch.setenv("AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS", "5, -3")
+    loaded = Settings.from_sources(tmp_path / "missing.toml")
+    assert loaded.openai_retry_backoff_seconds == (5.0, 20.0, 60.0)
+    # Non-finite delays would sleep forever while holding a concurrency slot.
+    for poison in ("inf", "5, inf", "nan"):
+        monkeypatch.setenv("AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS", poison)
+        loaded = Settings.from_sources(tmp_path / "missing.toml")
+        assert loaded.openai_retry_backoff_seconds == (5.0, 20.0, 60.0)
+    # Negative attempt counts clamp to "disabled" rather than erroring.
+    monkeypatch.delenv("AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS", raising=False)
+    monkeypatch.setenv("AIRELAYS_OPENAI_RETRY_ATTEMPTS", "-2")
+    loaded = Settings.from_sources(tmp_path / "missing.toml")
+    assert loaded.openai_retry_attempts == 0
+
+
 def test_claude_is_enabled_by_default(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "missing.toml"
     monkeypatch.delenv("AIRELAYS_ENABLE_CLAUDE", raising=False)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import secrets
 import tomllib
@@ -98,6 +99,31 @@ def _path(value: Any, default: Path) -> Path:
     return Path(str(value)).expanduser()
 
 
+def _float_list(value: Any, default: tuple[float, ...]) -> tuple[float, ...]:
+    """CSV string (env) or TOML array of numbers; non-numeric, negative, or
+    non-finite entries (an `inf` delay would sleep forever while holding a
+    concurrency slot) invalidate the whole value back to the default rather
+    than silently dropping pieces of a backoff schedule."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        segments = [segment.strip() for segment in value.split(",") if segment.strip()]
+    elif isinstance(value, (list, tuple)):
+        segments = list(value)
+    else:
+        return default
+    items: list[float] = []
+    for segment in segments:
+        try:
+            number = float(segment)
+        except (TypeError, ValueError):
+            return default
+        if not math.isfinite(number) or number < 0:
+            return default
+        items.append(number)
+    return tuple(items) if items else default
+
+
 def _str_list(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:
     if value is None:
         return default
@@ -176,6 +202,12 @@ class Settings:
     # catalog (which lags what the backend actually serves).
     openai_extra_models: tuple[str, ...] = DEFAULT_OPENAI_EXTRA_MODELS
     openai_account_cooldown_seconds: int = 300
+    # Automatic retry for failed upstream LLM calls (each retry re-runs the
+    # full account-pool failover pass). 0 disables. The backoff schedule
+    # lists the wait before each retry; a schedule shorter than the attempt
+    # count repeats its last delay.
+    openai_retry_attempts: int = 3
+    openai_retry_backoff_seconds: tuple[float, ...] = (5.0, 20.0, 60.0)
     enable_claude: bool = True
     claude_bin: str = "claude"
     claude_timeout_seconds: float = 600.0
@@ -386,6 +418,19 @@ class Settings:
                 or _cfg(payload, "providers", "openai", "account_cooldown_seconds"),
                 300,
             ),
+            openai_retry_attempts=max(
+                0,
+                _int(
+                    _env("AIRELAYS_OPENAI_RETRY_ATTEMPTS")
+                    or _cfg(payload, "providers", "openai", "retry_attempts"),
+                    3,
+                ),
+            ),
+            openai_retry_backoff_seconds=_float_list(
+                _env("AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS")
+                or _cfg(payload, "providers", "openai", "retry_backoff_seconds"),
+                (5.0, 20.0, 60.0),
+            ),
             enable_claude=_bool(
                 _env(
                     "AIRELAYS_ENABLE_CLAUDE",
@@ -592,6 +637,8 @@ enabled = {str(self.enable_openai_provider).lower()}
 models_cache_ttl_seconds = {self.models_cache_ttl_seconds}
 balance = "{self.openai_balance}"
 account_cooldown_seconds = {self.openai_account_cooldown_seconds}
+retry_attempts = {self.openai_retry_attempts}
+retry_backoff_seconds = [{", ".join(str(delay) for delay in self.openai_retry_backoff_seconds)}]
 extra_models = [{", ".join(f'"{model}"' for model in self.openai_extra_models)}]
 
 [providers.claude]
@@ -641,6 +688,8 @@ models = [{", ".join(f'"{model}"' for model in self.claude_models)}]
                     "models_cache_ttl_seconds": self.models_cache_ttl_seconds,
                     "balance": self.openai_balance,
                     "account_cooldown_seconds": self.openai_account_cooldown_seconds,
+                    "retry_attempts": self.openai_retry_attempts,
+                    "retry_backoff_seconds": list(self.openai_retry_backoff_seconds),
                     "extra_models": list(self.openai_extra_models),
                 },
                 "claude": {

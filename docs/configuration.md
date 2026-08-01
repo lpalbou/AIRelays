@@ -78,6 +78,15 @@ extra_models = ["gpt-5.6-sol", "gpt-5.6-terra"]
 # Fallback bench duration (seconds) when a limited account's reset time is
 # unknown; upstream-reported reset times are used when available.
 account_cooldown_seconds = 300
+# Automatic retry for failed upstream LLM calls. Each retry re-runs the
+# full account-pool failover pass, then waits the next backoff delay.
+# 0 disables. A schedule shorter than the attempt count repeats its last
+# delay. Retries only happen before any response byte reached the client
+# (non-streaming requests, and the pre-header phase of streaming ones);
+# retries that cannot succeed (a quota window that resets far beyond the
+# backoff budget) are skipped so the honest 429 is not delayed.
+retry_attempts = 3
+retry_backoff_seconds = [5, 20, 60]
 
 [providers.claude]
 enabled = false
@@ -112,6 +121,8 @@ models = ["claude:sonnet", "claude:opus", "claude:haiku", "claude:fable"]
 - `AIRELAYS_OPENAI_BALANCE` (`balanced` default, `round_robin`, or `ordered`)
 - `AIRELAYS_OPENAI_EXTRA_MODELS` (comma-separated ids advertised beyond the upstream catalog)
 - `AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS`
+- `AIRELAYS_OPENAI_RETRY_ATTEMPTS` (automatic retries for failed upstream calls; `3` default, `0` disables)
+- `AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS` (comma-separated wait before each retry; `5,20,60` default)
 - `AIRELAYS_ENABLE_CLAUDE` (legacy `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL` is still honored)
 - `AIRELAYS_CLAUDE_BIN`
 - `AIRELAYS_CLAUDE_TIMEOUT_SECONDS`

@@ -66,6 +66,8 @@ const FIELDS = [
       { key: "enableOpenaiProvider", label: "Enable OpenAI provider", kind: "bool" },
       { key: "modelsCacheTtlSeconds", label: "OpenAI models cache TTL (seconds)", kind: "number", min: 0, max: 86400 },
       { key: "openaiBalance", label: "OpenAI account balancing", kind: "select", options: ["balanced", "round_robin", "ordered"] },
+      { key: "openaiRetryAttempts", label: "OpenAI retry attempts (0 disables)", kind: "number", min: 0, max: 10 },
+      { key: "openaiRetryBackoffCsv", label: "OpenAI retry backoff seconds (comma-separated; empty = 5, 20, 60)", kind: "text" },
       { key: "openaiExtraModelsCsv", label: "OpenAI extra models (comma-separated)", kind: "text" },
       { key: "enableClaude", label: "Enable Claude", kind: "bool" },
       { key: "claudeBin", label: "Claude CLI binary", kind: "text" },

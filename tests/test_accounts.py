@@ -369,6 +369,230 @@ async def test_all_accounts_limited_reports_actionable_error(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_all_accounts_limited_error_stays_structured_for_retry(tmp_path: Path) -> None:
+    """The all-benched rewrite must keep OpenAI error JSON with the pool's
+    bench horizon in resets_in_seconds: the retry layer's futile-wait check
+    and machine-readable client handling both parse it."""
+    from airelay.retry import _resets_in_seconds
+
+    settings = _settings(tmp_path)
+    a = FakeBackend("a", fail_with=_usage_limit_error())
+    b = FakeBackend("b", fail_with=_usage_limit_error())
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    with pytest.raises(BackendError) as excinfo:
+        await pool.collect_response({}, "req", None)
+
+    error = json.loads(excinfo.value.detail)["error"]
+    assert error["type"] == "usage_limit_reached"
+    assert "2 OpenAI accounts" in error["message"]
+    assert error["resets_in_seconds"] >= 1
+    assert _resets_in_seconds(excinfo.value) == error["resets_in_seconds"]
+
+
+def _created_stream_event(response_id: str = "resp_1") -> SSEEvent:
+    return SSEEvent(
+        "response.created",
+        json.dumps({"response": {"id": response_id, "status": "in_progress"}}),
+    )
+
+
+def _delta_stream_event(text: str = "hi") -> SSEEvent:
+    return SSEEvent("response.output_text.delta", json.dumps({"delta": text}))
+
+
+def _completed_stream_event(served_by: str) -> SSEEvent:
+    return SSEEvent(
+        "response.completed",
+        json.dumps(
+            {
+                "response": {
+                    "id": f"resp_{served_by}",
+                    "status": "completed",
+                    "served_by": served_by,
+                    "usage": {"total_tokens": 2},
+                }
+            }
+        ),
+    )
+
+
+def _failure_stream_events(code: str = "usage_limit_reached") -> list[SSEEvent]:
+    return [
+        SSEEvent(
+            "error",
+            json.dumps(
+                {
+                    "type": "error",
+                    "error": {"type": code, "code": code, "message": "limit hit"},
+                    "sequence_number": 2,
+                }
+            ),
+        ),
+        SSEEvent(
+            "response.failed",
+            json.dumps(
+                {
+                    "response": {
+                        "id": "resp_fail",
+                        "status": "failed",
+                        "error": {"code": code, "message": "limit hit"},
+                    }
+                }
+            ),
+        ),
+    ]
+
+
+class EventStreamBackend(FakeBackend):
+    """FakeBackend whose stream yields a scripted event sequence."""
+
+    def __init__(self, name: str, events: list[SSEEvent]) -> None:
+        super().__init__(name)
+        self.events = events
+
+    async def stream_response_events(self, payload, request_id, session_id) -> AsyncIterator[SSEEvent]:
+        self.calls += 1
+        for event in self.events:
+            yield event
+
+
+@pytest.mark.asyncio
+async def test_stream_failure_event_before_content_benches_and_fails_over(tmp_path: Path) -> None:
+    """The 2026-08-01 incident grammar (`created` then failure events, no
+    content): the pool must bench the failing account and serve the request
+    from the next one, exactly like the non-streaming path."""
+    import time
+
+    settings = _settings(tmp_path)
+    a = EventStreamBackend("a", [_created_stream_event(), *_failure_stream_events()])
+    b = EventStreamBackend(
+        "b", [_created_stream_event("resp_b"), _delta_stream_event(), _completed_stream_event("b")]
+    )
+    traffic = RecordingTraffic()
+    pool = _pool(settings, [a, b], traffic)
+
+    events = [event async for event in pool.stream_response_events({}, "req", None)]
+
+    assert [event.event for event in events] == [
+        "response.created",
+        "response.output_text.delta",
+        "response.completed",
+    ]
+    assert json.loads(events[-1].data)["response"]["served_by"] == "b"
+    assert "account_failover" in traffic.phases()
+    assert pool._accounts[0].is_limited(time.monotonic())
+
+
+@pytest.mark.asyncio
+async def test_stream_pre_content_silent_death_fails_over(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    a = EventStreamBackend("a", [_created_stream_event()])  # dies before content
+    b = EventStreamBackend("b", [_created_stream_event("resp_b"), _completed_stream_event("b")])
+    pool = _pool(settings, [a, b], RecordingTraffic())
+
+    events = [event async for event in pool.stream_response_events({}, "req", None)]
+
+    assert json.loads(events[-1].data)["response"]["served_by"] == "b"
+
+
+class FlakyBackend(FakeBackend):
+    """FakeBackend that raises a scripted list of failures, then serves."""
+
+    def __init__(self, name: str, failures: list[BackendError]) -> None:
+        super().__init__(name)
+        self.failures = list(failures)
+
+    async def collect_response(self, payload, request_id, session_id):
+        self.calls += 1
+        if self.failures:
+            raise self.failures.pop(0)
+        return {"served_by": self.name}
+
+
+@pytest.mark.asyncio
+async def test_retry_repass_recovers_when_the_upstream_window_clears(tmp_path: Path) -> None:
+    """Retry × pool integration: pass 1 fails on every account (transient
+    upstream window), the retry re-runs the whole failover pass, and the
+    request is ultimately served — the client sees only the success."""
+    from airelay.retry import RetryPolicy, retry_call
+
+    settings = _settings(tmp_path)
+    a = FlakyBackend("a", [BackendError(502, "down"), BackendError(502, "down")])
+    b = FlakyBackend("b", [BackendError(502, "down")])
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    retry_traffic = RecordingTraffic()
+
+    result = await retry_call(
+        lambda: pool.collect_response({}, "req", None),
+        policy=RetryPolicy(attempts=2, backoff_seconds=(0.0,)),
+        request_id="req",
+        traffic=retry_traffic,
+    )
+
+    assert result["served_by"] == "b"
+    # Pass 1 tried and benched both accounts; pass 2 (after backoff) tried
+    # the least-limited first and failed over to the one that had recovered.
+    assert a.calls == 2 and b.calls == 2
+    assert retry_traffic.phases().count("retry_backoff") == 1
+
+
+@pytest.mark.asyncio
+async def test_usage_maxed_account_is_skipped_directly(tmp_path: Path) -> None:
+    """An account whose usage probe says the window is spent is benched
+    proactively: requests route straight to the available account — no
+    upstream hit on the maxed one, no failover round trip."""
+    import time
+
+    settings = _settings(tmp_path)
+    a, b = FakeBackend("a"), FakeBackend("b")
+    traffic = RecordingTraffic()
+    pool = _pool(settings, [a, b], traffic)
+    pool._bench_from_usage(
+        pool._accounts[0],
+        {
+            "rate_limit_reached_type": "usage_limit_reached",
+            "rate_limit": {
+                "secondary_window": {"used_percent": 100, "reset_after_seconds": 3600},
+            },
+        },
+        time.monotonic(),
+    )
+
+    for request_id in ("req1", "req2"):
+        result = await pool.collect_response({}, request_id, None)
+        assert result["served_by"] == "b"
+
+    assert a.calls == 0
+    assert "account_failover" not in traffic.phases()
+
+
+@pytest.mark.asyncio
+async def test_stream_failure_after_content_passes_through_verbatim(tmp_path: Path) -> None:
+    """Once content reached the consumer, failover would be dishonest: the
+    failure events flow through unchanged (translated lanes render them
+    in-band; the Responses passthrough delivers them verbatim)."""
+    import time
+
+    settings = _settings(tmp_path)
+    a = EventStreamBackend(
+        "a", [_created_stream_event(), _delta_stream_event(), *_failure_stream_events()]
+    )
+    b = EventStreamBackend("b", [_completed_stream_event("b")])
+    pool = _pool(settings, [a, b], RecordingTraffic())
+
+    events = [event async for event in pool.stream_response_events({}, "req", None)]
+
+    assert [event.event for event in events] == [
+        "response.created",
+        "response.output_text.delta",
+        "error",
+        "response.failed",
+    ]
+    assert b.calls == 0
+    assert not pool._accounts[0].is_limited(time.monotonic())
+
+
+@pytest.mark.asyncio
 async def test_default_balance_spreads_load_across_accounts(tmp_path: Path) -> None:
     """The out-of-the-box configuration must balance charge across available
     accounts — no config key required. Without a usage signal the balanced

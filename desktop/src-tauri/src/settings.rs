@@ -56,6 +56,11 @@ pub struct AppSettings {
     /// Extra OpenAI model ids to advertise beyond the upstream catalog
     /// (which lags what the backend actually serves), comma-separated.
     pub openai_extra_models_csv: String,
+    /// Automatic retries for failed upstream LLM calls; 0 disables.
+    pub openai_retry_attempts: u32,
+    /// Wait before each retry, comma-separated seconds. A schedule shorter
+    /// than the attempt count repeats its last delay.
+    pub openai_retry_backoff_csv: String,
     // The serde alias keeps settings files written while the Claude runtime
     // carried the "experimental" label loading unchanged.
     #[serde(alias = "enableClaudeExperimental")]
@@ -105,6 +110,8 @@ impl Default for AppSettings {
             models_cache_ttl_seconds: 300.0,
             openai_balance: "balanced".into(),
             openai_extra_models_csv: "gpt-5.6-sol, gpt-5.6-terra".into(),
+            openai_retry_attempts: 3,
+            openai_retry_backoff_csv: "5, 20, 60".into(),
             enable_claude: true,
             claude_bin: "claude".into(),
             claude_timeout_seconds: 600.0,
@@ -157,6 +164,15 @@ impl AppSettings {
         if !matches!(self.openai_balance.as_str(), "balanced" | "round_robin" | "ordered") {
             return Err("OpenAI account balancing must be balanced, round_robin, or ordered.".into());
         }
+        if self.openai_retry_attempts > 10 {
+            return Err("OpenAI retry attempts must be between 0 and 10.".into());
+        }
+        if self.openai_retry_backoff_seconds().is_none() {
+            return Err(
+                "OpenAI retry backoff must be comma-separated non-negative seconds (e.g. 5, 20, 60)."
+                    .into(),
+            );
+        }
         for (label, value) in [
             ("Upstream base URL", &self.upstream_base_url),
             ("Issuer base URL", &self.issuer_base_url),
@@ -174,6 +190,23 @@ impl AppSettings {
 
     pub fn openai_extra_models(&self) -> Vec<String> {
         Self::csv_models(&self.openai_extra_models_csv)
+    }
+
+    /// Parsed backoff schedule; None when any entry is not a non-negative
+    /// number. An empty field means "use the relay default schedule".
+    pub fn openai_retry_backoff_seconds(&self) -> Option<Vec<f64>> {
+        let mut delays = Vec::new();
+        for segment in self.openai_retry_backoff_csv.split(',') {
+            let trimmed = segment.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            match trimmed.parse::<f64>() {
+                Ok(value) if value.is_finite() && value >= 0.0 => delays.push(value),
+                _ => return None,
+            }
+        }
+        Some(delays)
     }
 
     fn csv_models(csv: &str) -> Vec<String> {
@@ -246,6 +279,14 @@ impl AppSettings {
                     enabled: self.enable_openai_provider,
                     models_cache_ttl_seconds: self.models_cache_ttl_seconds,
                     balance: &self.openai_balance,
+                    retry_attempts: self.openai_retry_attempts,
+                    // validate() gates every render path (save and launch),
+                    // so this branch is defense-in-depth against a future
+                    // caller skipping validation — never a silent repair
+                    // users would observe.
+                    retry_backoff_seconds: self
+                        .openai_retry_backoff_seconds()
+                        .unwrap_or_else(|| vec![5.0, 20.0, 60.0]),
                     extra_models: self.openai_extra_models(),
                 },
                 claude: ClaudeSection {
@@ -335,6 +376,8 @@ struct OpenAiSection<'a> {
     enabled: bool,
     models_cache_ttl_seconds: f64,
     balance: &'a str,
+    retry_attempts: u32,
+    retry_backoff_seconds: Vec<f64>,
     extra_models: Vec<String>,
 }
 

@@ -14,7 +14,8 @@ flowchart LR
 
     subgraph Relay["AIRelays (local)"]
         Edge["FastAPI edge\nauth · rate limits · traffic log"] --> Registry["Provider registry\nmodel id → runtime"]
-        Registry -->|"other model ids"| Pool["OpenAI account pool\nbalanced selection · benching · failover"]
+        Registry -->|"other model ids"| Retry["Retry layer\nexponential backoff\npre-first-byte only"]
+        Retry --> Pool["OpenAI account pool\nbalanced selection · benching · failover"]
         Registry -->|"claude:* model ids"| ClaudeRT["Claude runtime\nvalidation · text transcript"]
         Pool --> B1["Backend adapter\naccount 1"]
         Pool --> B2["Backend adapter\naccount N"]
@@ -32,9 +33,10 @@ flowchart LR
 2. Middleware enforces relay auth and local abuse controls.
 3. AIRelays resolves the request model id to a provider runtime.
 4. Claude-specific validation and invocation stay inside the Claude runtime, while the OpenAI runtime currently uses shared request/response transforms plus the OpenAI backend adapter.
-5. On the OpenAI runtime, the account pool picks the account: conversation affinity first, then — among accounts with capacity that serve the requested model — the one with the most remaining quota in its longest usage window (`balance = "balanced"`, the default), strict rotation (`"round_robin"`), or the first such account (`"ordered"`). Which usage windows an account reports is plan-dependent, so the pool ranks windows by duration and balances on the longest (weekly) budget — the scarce one — while short-window exhaustion is handled by benching and failover. Account-scoped failures (usage limits, dead credentials, transport errors) bench the account until it recovers and fail over to the next one — only before the first byte reaches the client.
-6. The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope.
-7. AIRelays logs the request, runtime selection, account selection, and result.
+5. On the OpenAI runtime, the account pool picks the account: conversation affinity first, then — among accounts with capacity that serve the requested model — the one with the most remaining quota in its longest usage window (`balance = "balanced"`, the default), strict rotation (`"round_robin"`), or the first such account (`"ordered"`). Which usage windows an account reports is plan-dependent, so the pool ranks windows by duration and balances on the longest (weekly) budget — the scarce one — while short-window exhaustion is handled by benching and failover. Accounts already benched (a usage probe or an earlier request showed their window is spent) are skipped outright, so requests route straight to accounts with capacity. Account-scoped failures (usage limits, in-stream failure events, dead credentials, transport errors) bench the account until it recovers and fail over to the next one — only before any content byte reaches the client; on streams, events that precede content are buffered so this guarantee holds.
+6. If every account fails, the retry layer waits an exponential backoff (`retry_attempts`, default 3 retries at 5s/20s/60s) and re-runs the whole pool pass — again only while no response byte has reached the client. Quota errors whose reset lies beyond the backoff budget return immediately.
+7. The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope; failures return OpenAI-shaped error JSON with the upstream's own reason, and failures after streaming started surface in-band.
+8. AIRelays logs the request, runtime selection, account selection, retries, and result.
 
 ## Account Pool Lifecycle
 
@@ -87,7 +89,13 @@ and model-aware balancing works from the first request.
 ### `airelays.backend`
 
 - OpenAI runtime HTTP calls to the verified ChatGPT backend
-- structured errors for upstream HTTP and transport failures
+- structured errors for upstream HTTP, transport, and in-stream failures
+
+### `airelays.retry`
+
+- automatic retry with exponential backoff for failed OpenAI upstream calls
+- runs only while no response byte has reached the client
+- skips retries a quota reset horizon proves futile; stops for disconnected clients
 
 ### `airelays.providers`
 

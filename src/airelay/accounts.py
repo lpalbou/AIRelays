@@ -35,7 +35,15 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from airelay.auth import AuthenticationError, AuthManager, AuthRecord, AuthStorage
-from airelay.backend import BackendError, ChatGptCodexBackend, SSEEvent
+from airelay.backend import (
+    FAILURE_EVENTS,
+    SUCCESS_TERMINAL_EVENTS,
+    BackendError,
+    ChatGptCodexBackend,
+    SSEEvent,
+    failure_backend_error,
+    stream_error_object,
+)
 from airelay.config import Settings
 from airelay.traffic import TrafficLogger
 from airelay.usage_tally import WindowTokenTally
@@ -49,6 +57,11 @@ DEFAULT_SLUG = "default"
 RETRIABLE_STATUS_MIN = 500
 RETRIABLE_STATUS_EXACT = 429
 USAGE_LIMIT_MARKERS = ("usage_limit_reached", "rate_limit_reached")
+# Stream events that precede any model output. They carry nothing a client
+# acts on, so the pool buffers them until the stream proves healthy; a
+# failure event or a dead stream before that point can then bench this
+# account and fail over — honestly, because nothing was yielded downstream.
+PRE_CONTENT_EVENTS = ("response.created", "response.in_progress")
 # Usage probes hit a personal upstream endpoint: cache briefly, coalesce
 # concurrent callers, refresh in the background, and let routing trust the
 # signal for a bounded window before falling back to plain rotation.
@@ -757,14 +770,36 @@ class OpenAiAccountPool:
             self._log_selection(request_id, account, index)
             stream = account.backend.stream_response_events(payload, request_id, session_id)
             started = False
+            buffered: list[SSEEvent] = []
             try:
                 async for event in stream:
                     if not started:
+                        if event.event in PRE_CONTENT_EVENTS:
+                            buffered.append(event)
+                            continue
+                        if event.event in FAILURE_EVENTS:
+                            # Convert a pre-content failure event into the
+                            # structured error so this attempt benches and
+                            # fails over exactly like the non-streaming
+                            # path (the 2026-08-01 incident grammar was
+                            # `created` → `error` → `response.failed`).
+                            try:
+                                parsed = json.loads(event.data)
+                            except json.JSONDecodeError:
+                                parsed = None
+                            raise failure_backend_error(stream_error_object(parsed))
                         started = True
                         self._repin(session_id, account)
-                    if event.event == "response.completed":
+                        for pending in buffered:
+                            yield pending
+                        buffered = []
+                    if event.event in SUCCESS_TERMINAL_EVENTS:
                         self._record_stream_usage(account, event)
                     yield event
+                if not started:
+                    # The upstream closed the stream before producing any
+                    # content, terminal, or failure event.
+                    raise failure_backend_error(None)
                 return
             except (BackendError, AuthenticationError) as error:
                 # Failover is only honest before the first byte reached the
@@ -784,6 +819,11 @@ class OpenAiAccountPool:
                     ),
                     cooldown,
                 )
+            finally:
+                # A consumer that stops mid-stream (in-band failure, client
+                # disconnect) must release the upstream HTTP stream now, not
+                # whenever the abandoned generator happens to be finalized.
+                await stream.aclose()
 
     @staticmethod
     def _error_reason(error: Exception) -> str:
@@ -1017,15 +1057,47 @@ class OpenAiAccountPool:
             now = time.monotonic()
             # Only claim "all unavailable" when it is true.
             if all(account.is_limited(now) for account in self._accounts):
-                earliest = min(account.limited_until - now for account in self._accounts)
-                names = len(self._accounts)
+                earliest = max(
+                    1, int(min(account.limited_until - now for account in self._accounts))
+                )
+                count = len(self._accounts)
+                # The rewrite stays structured OpenAI error JSON: readers
+                # (clients, and the retry layer's futile-wait check) must
+                # keep seeing the machine-readable code and a
+                # resets_in_seconds carrying the pool's own bench horizon.
+                inner = self._structured_error_object(error.detail)
+                last_message = (inner or {}).get("message") or (error.detail or "")[:300]
+                rewritten: dict[str, Any] = dict(inner or {})
+                rewritten["message"] = (
+                    f"All {count} OpenAI accounts are at their limits "
+                    f"(earliest retry in {earliest}s). Last error: {last_message}"
+                )
+                if not rewritten.get("code") and not rewritten.get("type"):
+                    rewritten["type"] = "upstream_error"
+                    rewritten["code"] = "all_accounts_limited"
+                if error.status_code == RETRIABLE_STATUS_EXACT:
+                    # Quota benches derive from upstream reset times, so the
+                    # earliest bench is an authoritative recovery horizon and
+                    # the retry layer may treat waiting past it as futile.
+                    # Transient-5xx benches are only heuristic cooldowns —
+                    # benched accounts still serve — so no horizon is
+                    # advertised and retries proceed on their own schedule.
+                    rewritten["resets_in_seconds"] = earliest
                 return BackendError(
                     error.status_code,
-                    f"All {names} OpenAI accounts are at their limits "
-                    f"(earliest retry in {max(1, int(earliest))}s). "
-                    f"Last error: {error.detail[:300]}",
+                    json.dumps({"error": rewritten}, ensure_ascii=True),
                 )
         return error
+
+    @staticmethod
+    def _structured_error_object(detail: str) -> dict[str, Any] | None:
+        try:
+            payload = json.loads(detail or "")
+        except json.JSONDecodeError:
+            return None
+        if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+            return payload["error"]
+        return None
 
 
 def build_pool(settings: Settings, traffic: TrafficLogger) -> OpenAiAccountPool:

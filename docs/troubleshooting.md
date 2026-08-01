@@ -101,6 +101,21 @@ When the Claude runtime is enabled:
 - confirm the file is below the per-file upload ceiling
 - confirm the relay has not reached the total stored-upload quota
 
+## `502` / `429` with `server_is_overloaded` or `usage_limit_reached`, or slow answers while the upstream is degraded
+
+- the upstream itself is failing or out of quota; the error body carries the
+  upstream's own code and message
+- before surfacing the error, the relay retried automatically (default 3
+  retries waiting 5s/20s/60s, each re-running account failover), which is why
+  a failing request can take a minute or more before answering — check the
+  traffic log for `retry_backoff` / `retry_skipped` / `upstream_stream_error`
+  records to see what happened
+- tune or disable with `retry_attempts` / `retry_backoff_seconds`
+  (`[providers.openai]`, or desktop Settings → Providers)
+- a `429` that names a reset far in the future is not retried (waiting a
+  minute cannot help a window that resets in hours); with several accounts
+  enrolled, the message reports the earliest account recovery
+
 ## Live upstream verification
 
 Use `airelays doctor` when local state looks correct but client requests still
