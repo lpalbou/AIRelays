@@ -546,6 +546,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#airelaysretry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        airelays.retry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#airelaysproviders" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1025,6 +1036,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#airelaysretry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        airelays.retry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#airelaysproviders" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1128,7 +1150,8 @@
 
     subgraph Relay[&quot;AIRelays (local)&quot;]
         Edge[&quot;FastAPI edge\nauth · rate limits · traffic log&quot;] --&gt; Registry[&quot;Provider registry\nmodel id → runtime&quot;]
-        Registry --&gt;|&quot;other model ids&quot;| Pool[&quot;OpenAI account pool\nbalanced selection · benching · failover&quot;]
+        Registry --&gt;|&quot;other model ids&quot;| Retry[&quot;Retry layer\nexponential backoff\npre-first-byte only&quot;]
+        Retry --&gt; Pool[&quot;OpenAI account pool\nbalanced selection · benching · failover&quot;]
         Registry --&gt;|&quot;claude:* model ids&quot;| ClaudeRT[&quot;Claude runtime\nvalidation · text transcript&quot;]
         Pool --&gt; B1[&quot;Backend adapter\naccount 1&quot;]
         Pool --&gt; B2[&quot;Backend adapter\naccount N&quot;]
@@ -1145,9 +1168,10 @@
 <li>Middleware enforces relay auth and local abuse controls.</li>
 <li>AIRelays resolves the request model id to a provider runtime.</li>
 <li>Claude-specific validation and invocation stay inside the Claude runtime, while the OpenAI runtime currently uses shared request/response transforms plus the OpenAI backend adapter.</li>
-<li>On the OpenAI runtime, the account pool picks the account: conversation affinity first, then — among accounts with capacity that serve the requested model — the one with the most remaining quota in its longest usage window (<code>balance = "balanced"</code>, the default), strict rotation (<code>"round_robin"</code>), or the first such account (<code>"ordered"</code>). Which usage windows an account reports is plan-dependent, so the pool ranks windows by duration and balances on the longest (weekly) budget — the scarce one — while short-window exhaustion is handled by benching and failover. Account-scoped failures (usage limits, dead credentials, transport errors) bench the account until it recovers and fail over to the next one — only before the first byte reaches the client.</li>
-<li>The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope.</li>
-<li>AIRelays logs the request, runtime selection, account selection, and result.</li>
+<li>On the OpenAI runtime, the account pool picks the account: conversation affinity first, then — among accounts with capacity that serve the requested model — the one with the most remaining quota in its longest usage window (<code>balance = "balanced"</code>, the default), strict rotation (<code>"round_robin"</code>), or the first such account (<code>"ordered"</code>). Which usage windows an account reports is plan-dependent, so the pool ranks windows by duration and balances on the longest (weekly) budget — the scarce one — while short-window exhaustion is handled by benching and failover. Accounts already benched (a usage probe or an earlier request showed their window is spent) are skipped outright, so requests route straight to accounts with capacity. Account-scoped failures (usage limits, in-stream failure events, dead credentials, transport errors) bench the account until it recovers and fail over to the next one — only before any content byte reaches the client; on streams, events that precede content are buffered so this guarantee holds.</li>
+<li>If every account fails, the retry layer waits an exponential backoff (<code>retry_attempts</code>, default 3 retries at 5s/20s/60s) and re-runs the whole pool pass — again only while no response byte has reached the client. Quota errors whose reset lies beyond the backoff budget return immediately.</li>
+<li>The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope; failures return OpenAI-shaped error JSON with the upstream's own reason, and failures after streaming started surface in-band.</li>
+<li>AIRelays logs the request, runtime selection, account selection, retries, and result.</li>
 </ol>
 <h2 id="account-pool-lifecycle">Account Pool Lifecycle<a class="headerlink" href="#account-pool-lifecycle" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>stateDiagram-v2
@@ -1195,7 +1219,13 @@ and model-aware balancing works from the first request.</p>
 <h3 id="airelaysbackend"><code>airelays.backend</code><a class="headerlink" href="#airelaysbackend" title="Permanent link">&para;</a></h3>
 <ul>
 <li>OpenAI runtime HTTP calls to the verified ChatGPT backend</li>
-<li>structured errors for upstream HTTP and transport failures</li>
+<li>structured errors for upstream HTTP, transport, and in-stream failures</li>
+</ul>
+<h3 id="airelaysretry"><code>airelays.retry</code><a class="headerlink" href="#airelaysretry" title="Permanent link">&para;</a></h3>
+<ul>
+<li>automatic retry with exponential backoff for failed OpenAI upstream calls</li>
+<li>runs only while no response byte has reached the client</li>
+<li>skips retries a quota reset horizon proves futile; stops for disconnected clients</li>
 </ul>
 <h3 id="airelaysproviders"><code>airelays.providers</code><a class="headerlink" href="#airelaysproviders" title="Permanent link">&para;</a></h3>
 <ul>

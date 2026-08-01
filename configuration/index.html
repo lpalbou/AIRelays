@@ -959,6 +959,15 @@
 <span class="c1"># Fallback bench duration (seconds) when a limited account&#39;s reset time is</span>
 <span class="c1"># unknown; upstream-reported reset times are used when available.</span>
 <span class="n">account_cooldown_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">300</span>
+<span class="c1"># Automatic retry for failed upstream LLM calls. Each retry re-runs the</span>
+<span class="c1"># full account-pool failover pass, then waits the next backoff delay.</span>
+<span class="c1"># 0 disables. A schedule shorter than the attempt count repeats its last</span>
+<span class="c1"># delay. Retries only happen before any response byte reached the client</span>
+<span class="c1"># (non-streaming requests, and the pre-header phase of streaming ones);</span>
+<span class="c1"># retries that cannot succeed (a quota window that resets far beyond the</span>
+<span class="c1"># backoff budget) are skipped so the honest 429 is not delayed.</span>
+<span class="n">retry_attempts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span>
+<span class="n">retry_backoff_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">20</span><span class="p">,</span><span class="w"> </span><span class="mi">60</span><span class="p">]</span>
 
 <span class="k">[providers.claude]</span>
 <span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
@@ -992,6 +1001,8 @@
 <li><code>AIRELAYS_OPENAI_BALANCE</code> (<code>balanced</code> default, <code>round_robin</code>, or <code>ordered</code>)</li>
 <li><code>AIRELAYS_OPENAI_EXTRA_MODELS</code> (comma-separated ids advertised beyond the upstream catalog)</li>
 <li><code>AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS</code></li>
+<li><code>AIRELAYS_OPENAI_RETRY_ATTEMPTS</code> (automatic retries for failed upstream calls; <code>3</code> default, <code>0</code> disables)</li>
+<li><code>AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS</code> (comma-separated wait before each retry; <code>5,20,60</code> default)</li>
 <li><code>AIRELAYS_ENABLE_CLAUDE</code> (legacy <code>AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL</code> is still honored)</li>
 <li><code>AIRELAYS_CLAUDE_BIN</code></li>
 <li><code>AIRELAYS_CLAUDE_TIMEOUT_SECONDS</code></li>

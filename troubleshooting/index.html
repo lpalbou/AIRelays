@@ -637,6 +637,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#502-429-with-server_is_overloaded-or-usage_limit_reached-or-slow-answers-while-the-upstream-is-degraded" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        502 / 429 with server_is_overloaded or usage_limit_reached, or slow answers while the upstream is degraded
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#live-upstream-verification" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -985,6 +996,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#502-429-with-server_is_overloaded-or-usage_limit_reached-or-slow-answers-while-the-upstream-is-degraded" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        502 / 429 with server_is_overloaded or usage_limit_reached, or slow answers while the upstream is degraded
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#live-upstream-verification" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1103,6 +1125,21 @@ usually heavy system load or a long request burst.</p>
 <ul>
 <li>confirm the file is below the per-file upload ceiling</li>
 <li>confirm the relay has not reached the total stored-upload quota</li>
+</ul>
+<h2 id="502-429-with-server_is_overloaded-or-usage_limit_reached-or-slow-answers-while-the-upstream-is-degraded"><code>502</code> / <code>429</code> with <code>server_is_overloaded</code> or <code>usage_limit_reached</code>, or slow answers while the upstream is degraded<a class="headerlink" href="#502-429-with-server_is_overloaded-or-usage_limit_reached-or-slow-answers-while-the-upstream-is-degraded" title="Permanent link">&para;</a></h2>
+<ul>
+<li>the upstream itself is failing or out of quota; the error body carries the
+  upstream's own code and message</li>
+<li>before surfacing the error, the relay retried automatically (default 3
+  retries waiting 5s/20s/60s, each re-running account failover), which is why
+  a failing request can take a minute or more before answering — check the
+  traffic log for <code>retry_backoff</code> / <code>retry_skipped</code> / <code>upstream_stream_error</code>
+  records to see what happened</li>
+<li>tune or disable with <code>retry_attempts</code> / <code>retry_backoff_seconds</code>
+  (<code>[providers.openai]</code>, or desktop Settings → Providers)</li>
+<li>a <code>429</code> that names a reset far in the future is not retried (waiting a
+  minute cannot help a window that resets in hours); with several accounts
+  enrolled, the message reports the earliest account recovery</li>
 </ul>
 <h2 id="live-upstream-verification">Live upstream verification<a class="headerlink" href="#live-upstream-verification" title="Permanent link">&para;</a></h2>
 <p>Use <code>airelays doctor</code> when local state looks correct but client requests still

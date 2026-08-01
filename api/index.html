@@ -1081,6 +1081,20 @@ letting them fail, and always discloses what it changed:</p>
   pinned to the account that served its first turn (protects upstream
   prompt caching); failover to another account happens only at turn
   boundaries, logged as an <code>account_failover</code> traffic record.</li>
+<li><strong>Upstream failures and automatic retry:</strong> failed OpenAI calls are
+  retried automatically with exponential backoff (<code>retry_attempts</code>,
+  default 3 retries waiting 5s/20s/60s; each retry re-runs account
+  failover) while no response byte has reached the client —
+  non-streaming requests and the pre-header phase of streaming ones. On
+  final failure the client gets OpenAI-shaped error JSON
+  (<code>{"error": {...}}</code>) with the real HTTP status: the upstream's own code
+  (e.g. <code>server_is_overloaded</code>) and, for quota errors,
+  <code>resets_in_seconds</code>. After a stream has started, failures surface as an
+  in-band <code>data: {"error": ...}</code> event (chat/completions) or a verbatim
+  <code>response.failed</code>/<code>error</code> event (responses passthrough); mid-stream
+  failures are not retried. Retries are logged as <code>retry_backoff</code> traffic
+  records (<code>retry_skipped</code> explains deliberate non-retries), and upstream
+  failure events as <code>upstream_stream_error</code> records.</li>
 </ul>
 <h2 id="get-v1models"><code>GET /v1/models</code><a class="headerlink" href="#get-v1models" title="Permanent link">&para;</a></h2>
 <p>Returns an OpenAI-style models list built from the enabled provider runtimes.</p>
