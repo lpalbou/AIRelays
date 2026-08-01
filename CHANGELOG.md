@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.0
+
+### Added
+
+- Automatic retry with exponential backoff for failed upstream OpenAI calls. A failed call is retried 3 times by default, waiting 5s, 20s, then 60s, and each retry re-runs the full account-pool failover pass, so a transient upstream disruption resolves without the client seeing an error; a request that keeps failing returns the real error. Configure with `retry_attempts` and `retry_backoff_seconds` (`[providers.openai]`; env `AIRELAYS_OPENAI_RETRY_ATTEMPTS` / `AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS`; desktop Settings → Providers). `0` disables retrying, and a schedule shorter than the attempt count repeats its last delay. Retries run only while no response byte has reached the client — non-streaming requests and the pre-header phase of streaming ones. Retries that cannot succeed are skipped: a quota error whose reset lies beyond the remaining backoff budget returns immediately, and a disconnected client stops the loop. Retries appear in the traffic log as `retry_backoff` records; deliberately skipped retries as `retry_skipped`.
+
+### Fixed
+
+- Upstream failures surface as OpenAI-shaped errors instead of empty successes. A ChatGPT-backend stream that ends in `response.failed`/`error` events, or closes without completing, previously produced an HTTP 200 with `content: null` and no usage on the non-streaming routes; it now returns `{"error": {...}}` JSON with the real HTTP status and the upstream's own code and message — 429 for quota errors (including `resets_in_seconds`, and the earliest account recovery when every enrolled account is at its limit), 502 otherwise. Clients reading FastAPI's default envelope keep working: the body carries a `detail` string alongside the `error` object.
+- Streaming failures are signaled, not truncated. On `/v1/chat/completions` and `/v1/completions`, a failure after streaming started emits an OpenAI-style in-band `data: {"error": ...}` event and ends the stream without `[DONE]`; a stream that ends with no terminal event emits an `incomplete_stream` error event; `response.incomplete` terminals finish with `finish_reason: "length"` and `[DONE]`. On `/v1/responses`, upstream failure events pass through verbatim and transport failures surface as an in-band `error` event. All three streaming lanes contact the upstream before committing SSE headers, so a stream that fails before its first event returns a real HTTP status and participates in automatic retry.
+- The account pool benches and fails over on in-stream failure events for streaming requests, matching the non-streaming path. Events that precede model output are buffered until the stream proves healthy, so a stream that fails before any content moves to the next account transparently; conversation stickiness only pins to accounts that actually delivered content, and requests skip benched or usage-maxed accounts outright. Failover and retry both stop once content has reached the client. The pool also releases the upstream HTTP stream deterministically when a consumer stops mid-stream.
+- The traffic log records why upstream calls fail: `response.failed`/`error` SSE events are written as `upstream_stream_error` records with the upstream error payload, and `upstream_usage` records (plus the account token tally) cover `response.incomplete` terminals, which bill real usage.
+
 ## 0.11.0
 
 ### Changed
