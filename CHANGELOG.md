@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.2
+
+### Fixed
+
+- Cursor custom-endpoint compatibility on `/v1/chat/completions`. AIRelays now accepts both malformed Cursor request families publicly reported in 2026: full Responses-style bodies sent to the chat route, and flat Responses-style `custom` tools / tool choices / assistant tool calls such as `ApplyPatch`. These requests are normalized locally, sent upstream in the canonical Responses shape, and upstream `custom_tool_call` items are translated back into chat-completions `tool_calls` on both streaming and non-streaming responses. Tool-only streamed turns now emit the initial `role: "assistant"` chunk that strict chat-stream consumers expect.
+- Chat tool-route hardening. `/no-tools/v1/chat/completions` now rejects non-`none` `tool_choice` values instead of forwarding them upstream, and `role:"tool"` messages must reference a preceding assistant tool call in the same request. AIRelays no longer guesses a function-tool output type for orphaned tool results; malformed transcripts fail loudly instead of silently shifting semantics.
+- Cursor-facing docs now state exactly what AIRelays normalizes on the chat route, how to verify it in traffic logs, and which malformed payloads are still rejected by design.
+
 ## 0.12.1
 
 ### Fixed

@@ -1013,6 +1013,59 @@ def test_chat_stream_surfaces_mid_stream_failure_in_band(tmp_path) -> None:
     assert "data: [DONE]" not in response.text
 
 
+def test_chat_stream_emits_custom_tool_calls(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+
+    async def fake_stream_response_events(payload, request_id, session_id):
+        del payload, request_id, session_id
+        yield _created_event()
+        yield SSEEvent(
+            "response.output_item.done",
+            json.dumps(
+                {
+                    "item": {
+                        "type": "custom_tool_call",
+                        "call_id": "call_patch",
+                        "name": "ApplyPatch",
+                        "input": "*** Begin Patch\n*** End Patch\n",
+                    }
+                }
+            ),
+        )
+        yield SSEEvent(
+            "response.completed",
+            json.dumps(
+                {
+                    "response": {
+                        "id": "resp_123",
+                        "created_at": 1,
+                        "model": "gpt-5.4-mini",
+                        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+                    }
+                }
+            ),
+        )
+
+    with TestClient(app) as client:
+        client.app.state.backend.stream_response_events = fake_stream_response_events
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.4-mini",
+                "stream": True,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+
+    assert response.status_code == 200
+    first_chunk = response.text.split("\n\n", 1)[0]
+    assert '"role": "assistant"' in first_chunk
+    assert '"type": "custom"' in response.text
+    assert '"name": "ApplyPatch"' in response.text
+    assert '"finish_reason": "tool_calls"' in response.text
+
+
 def test_chat_stream_first_event_failure_returns_http_error(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)
@@ -1831,6 +1884,172 @@ def test_chat_route_flattens_tools_before_upstream_request(tmp_path) -> None:
         "type": "function",
         "name": "web_search",
     }
+
+
+def test_chat_route_flattens_custom_tools_before_upstream_request(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    captured: dict[str, object] = {}
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del request_id, session_id
+        captured["payload"] = payload
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.4",
+            "output": [
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_patch",
+                    "name": "ApplyPatch",
+                    "input": "*** Begin Patch\n*** End Patch\n",
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+
+    with TestClient(app) as client:
+        client.app.state.backend.collect_response = fake_collect_response
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.4",
+                "stream": False,
+                "messages": [{"role": "user", "content": "hello"}],
+                "tools": [
+                    {
+                        "type": "custom",
+                        "name": "ApplyPatch",
+                        "description": "Apply a patch.",
+                        "format": {
+                            "type": "grammar",
+                            "syntax": "lark",
+                            "definition": "start: patch",
+                        },
+                    }
+                ],
+                "tool_choice": {"type": "custom", "name": "ApplyPatch"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert captured["payload"]["tools"] == [  # type: ignore[index]
+        {
+            "type": "custom",
+            "name": "ApplyPatch",
+            "description": "Apply a patch.",
+            "format": {
+                "type": "grammar",
+                "syntax": "lark",
+                "definition": "start: patch",
+            },
+        }
+    ]
+    assert captured["payload"]["tool_choice"] == {  # type: ignore[index]
+        "type": "custom",
+        "name": "ApplyPatch",
+    }
+    assert response.json()["choices"][0]["message"]["tool_calls"] == [
+        {
+            "id": "call_patch",
+            "type": "custom",
+            "custom": {
+                "name": "ApplyPatch",
+                "input": "*** Begin Patch\n*** End Patch\n",
+            },
+        }
+    ]
+
+
+def test_chat_route_accepts_responses_shape_for_cursor_compatibility(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    captured: dict[str, object] = {}
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del request_id, session_id
+        captured["payload"] = payload
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.4",
+            "output": [
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_patch",
+                    "name": "ApplyPatch",
+                    "input": "*** Begin Patch\n*** End Patch\n",
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+
+    with TestClient(app) as client:
+        client.app.state.backend.collect_response = fake_collect_response
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.4",
+                "stream": False,
+                "input": "hello",
+                "tools": [
+                    {
+                        "type": "custom",
+                        "name": "ApplyPatch",
+                        "description": "Apply a patch.",
+                        "format": {
+                            "type": "grammar",
+                            "syntax": "lark",
+                            "definition": "start: patch",
+                        },
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    assert captured["payload"]["input"] == [  # type: ignore[index]
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hello"}],
+        }
+    ]
+    assert captured["payload"]["tools"] == [  # type: ignore[index]
+        {
+            "type": "custom",
+            "name": "ApplyPatch",
+            "description": "Apply a patch.",
+            "format": {
+                "type": "grammar",
+                "syntax": "lark",
+                "definition": "start: patch",
+            },
+        }
+    ]
+    assert response.json()["choices"][0]["message"]["tool_calls"][0]["type"] == "custom"
+
+
+def test_no_tools_chat_route_rejects_tool_choice(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/no-tools/v1/chat/completions",
+            json={
+                "model": "gpt-5.4",
+                "stream": False,
+                "messages": [{"role": "user", "content": "hello"}],
+                "tool_choice": {"type": "custom", "name": "ApplyPatch"},
+            },
+        )
+
+    assert response.status_code == 422
+    assert "disables tools" in response.json()["detail"]
 
 
 def test_startup_generates_bearer_token_when_explicitly_enabled(tmp_path) -> None:

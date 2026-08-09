@@ -279,10 +279,12 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 ## What The Relay Changes (Compatibility Layer)
 
 The ChatGPT subscription backend is not the public OpenAI platform API, so
-AIRelays adapts some requests instead of letting them fail. Every
-adaptation is visible: it is logged as a `compatibility_adaptation` record
-in the traffic logs and reported in the `x-airelays-ignored-parameters`
-response header.
+AIRelays adapts some requests instead of letting them fail. Parameter
+stripping is always visible: removed parameters are logged as a
+`compatibility_adaptation` record in the traffic logs and reported in the
+`x-airelays-ignored-parameters` response header. Other compatibility
+normalizations are documented below and may log dedicated adaptation
+records when the request shape itself is repaired.
 
 **Sampling parameters are removed.** The upstream rejects `temperature`,
 `top_p`, `presence_penalty`, and `frequency_penalty` outright
@@ -296,6 +298,17 @@ controls — so the same SDK calls work against `claude:*` models too.
 honor client-set output caps (`max_tokens`, `max_completion_tokens`,
 `max_output_tokens`), so AIRelays strips them instead of failing the
 request; responses run to the model's natural stop.
+
+**Cursor BYOK chat-route compatibility is normalized locally.** Some
+current Cursor builds send malformed OpenAI-compatible requests to
+`/v1/chat/completions`: either full Responses-style bodies (`input`,
+`instructions`, flat `tools`, etc.) or flat Responses-style `custom`
+tools/tool choices/tool calls such as `ApplyPatch`. AIRelays accepts those
+shapes on the chat route, normalizes them to the Responses upstream, and
+translates upstream `custom_tool_call` items back to chat-completions
+`tool_calls` on both streaming and non-streaming responses. Requests that
+mix `messages` and `input`, or tool outputs that do not reference a
+preceding assistant tool call in the same request, are rejected loudly.
 
 **Reasoning effort is forwarded, not invented.** `reasoning_effort` (chat
 completions) and `reasoning: {"effort": ...}` (responses) pass through to

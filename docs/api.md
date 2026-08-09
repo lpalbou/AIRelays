@@ -5,7 +5,9 @@
 The verified upstream is the ChatGPT subscription backend, not the public
 platform API. AIRelays adapts requests on the three text-generation routes
 (`/v1/responses`, `/v1/chat/completions`, `/v1/completions`) rather than
-letting them fail, and always discloses what it changed:
+letting them fail. Parameter stripping is always disclosed; other
+compatibility normalizations are documented here and may log dedicated
+adaptation records when the request shape itself is repaired:
 
 - **Removed unsupported parameters:** `temperature`, `top_p`,
   `presence_penalty`, and `frequency_penalty` are stripped before the
@@ -36,6 +38,17 @@ letting them fail, and always discloses what it changed:
   `json_schema` and `json_object` are honored via the claude CLI's native
   `--json-schema` enforcement. Supported types per model are published in
   `/v1/models` under `airelays.structured_output`.
+- **Cursor chat-route compatibility:** AIRelays accepts two malformed
+  request families currently observed from Cursor custom OpenAI endpoints
+  on `/v1/chat/completions`: full Responses-style bodies (`input`,
+  `instructions`, flat `tools`, etc.) and flat Responses-style `custom`
+  tool definitions / tool choices / assistant tool calls (for example the
+  `ApplyPatch` tool). AIRelays normalizes those requests locally, sends the
+  canonical Responses shape upstream, and translates upstream
+  `custom_tool_call` items back into chat-completions `tool_calls` on both
+  streaming and non-streaming responses. Mixed-shape requests that contain
+  both `messages` and `input`, or tool outputs that do not reference a
+  preceding assistant tool call in the same request, are rejected loudly.
 - **Rejected loudly instead of adapted:** `store=true`, `n>1`, and
   `best_of`/`echo`/`logprobs`/`suffix` on `/v1/completions`. These change
   semantics in ways silent stripping would hide, so they return a clear
@@ -139,6 +152,12 @@ Claude runtime:
 OpenAI runtime:
 
 - current AIRelays OpenAI compatibility path
+- standard chat-completions `messages` requests supported
+- Responses-shaped request bodies also accepted on this route for Cursor
+  compatibility and translated back to chat-completions responses
+- tool support includes both OpenAI `function` tools and `custom` tools;
+  AIRelays also accepts Cursor's flatter Responses-style `custom` tool
+  shape on this route
 
 Claude runtime:
 

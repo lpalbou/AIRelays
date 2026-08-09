@@ -8,9 +8,11 @@ from airelay.store import AppStore
 from airelay.transforms import (
     TranslationError,
     chat_completions_to_responses,
+    chat_route_request_to_responses,
     completions_to_responses,
     normalize_models_payload,
     prepare_response_request,
+    responses_to_chat_completion,
     strip_unsupported_response_parameters,
 )
 
@@ -510,6 +512,211 @@ def test_chat_completions_to_responses_flattens_function_tools_and_tool_choice(
     assert payload["tool_choice"] == {"type": "function", "name": "web_search"}
 
 
+def test_chat_completions_to_responses_flattens_custom_tools_and_tool_choice(
+    store: AppStore,
+) -> None:
+    payload, _, _ = chat_completions_to_responses(
+        {
+            "model": "gpt-5.4-mini",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {
+                    "type": "custom",
+                    "custom": {
+                        "name": "ApplyPatch",
+                        "description": "Apply a patch.",
+                        "format": {
+                            "type": "grammar",
+                            "grammar": {
+                                "syntax": "lark",
+                                "definition": "start: patch",
+                            },
+                        },
+                    },
+                }
+            ],
+            "tool_choice": {"type": "custom", "custom": {"name": "ApplyPatch"}},
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert payload["tools"] == [
+        {
+            "type": "custom",
+            "name": "ApplyPatch",
+            "description": "Apply a patch.",
+            "format": {
+                "type": "grammar",
+                "syntax": "lark",
+                "definition": "start: patch",
+            },
+        }
+    ]
+    assert payload["tool_choice"] == {"type": "custom", "name": "ApplyPatch"}
+
+
+def test_chat_completions_to_responses_accepts_cursor_flat_custom_tool_shape(
+    store: AppStore,
+) -> None:
+    payload, _, _ = chat_completions_to_responses(
+        {
+            "model": "gpt-5.4-mini",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {
+                    "type": "custom",
+                    "name": "ApplyPatch",
+                    "description": "Apply a patch.",
+                    "format": {
+                        "type": "grammar",
+                        "syntax": "lark",
+                        "definition": "start: patch",
+                    },
+                }
+            ],
+            "tool_choice": {"type": "custom", "name": "ApplyPatch"},
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert payload["tools"] == [
+        {
+            "type": "custom",
+            "name": "ApplyPatch",
+            "description": "Apply a patch.",
+            "format": {
+                "type": "grammar",
+                "syntax": "lark",
+                "definition": "start: patch",
+            },
+        }
+    ]
+    assert payload["tool_choice"] == {"type": "custom", "name": "ApplyPatch"}
+
+
+def test_chat_completions_to_responses_maps_custom_tool_history_and_output(
+    store: AppStore,
+) -> None:
+    payload, _, _ = chat_completions_to_responses(
+        {
+            "model": "gpt-5.4-mini",
+            "messages": [
+                {"role": "user", "content": "Apply this patch"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_patch",
+                            "type": "custom",
+                            "custom": {
+                                "name": "ApplyPatch",
+                                "input": "*** Begin Patch\n*** End Patch\n",
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_patch",
+                    "content": "applied",
+                },
+            ],
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert payload["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Apply this patch"}],
+        },
+        {
+            "type": "custom_tool_call",
+            "call_id": "call_patch",
+            "name": "ApplyPatch",
+            "input": "*** Begin Patch\n*** End Patch\n",
+        },
+        {
+            "type": "custom_tool_call_output",
+            "call_id": "call_patch",
+            "output": "applied",
+        },
+    ]
+
+
+def test_chat_completions_to_responses_accepts_flat_custom_tool_call_history(
+    store: AppStore,
+) -> None:
+    payload, _, _ = chat_completions_to_responses(
+        {
+            "model": "gpt-5.4-mini",
+            "messages": [
+                {"role": "user", "content": "Apply this patch"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_patch",
+                            "type": "custom",
+                            "name": "ApplyPatch",
+                            "input": "*** Begin Patch\n*** End Patch\n",
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_patch",
+                    "content": "applied",
+                },
+            ],
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert payload["input"][1:] == [
+        {
+            "type": "custom_tool_call",
+            "call_id": "call_patch",
+            "name": "ApplyPatch",
+            "input": "*** Begin Patch\n*** End Patch\n",
+        },
+        {
+            "type": "custom_tool_call_output",
+            "call_id": "call_patch",
+            "output": "applied",
+        },
+    ]
+
+
+def test_chat_completions_to_responses_rejects_orphaned_tool_output(store: AppStore) -> None:
+    with pytest.raises(
+        TranslationError,
+        match="preceding assistant tool call",
+    ):
+        chat_completions_to_responses(
+            {
+                "model": "gpt-5.4-mini",
+                "messages": [
+                    {"role": "user", "content": "Apply this patch"},
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_patch",
+                        "content": "applied",
+                    },
+                ],
+            },
+            store,
+            allow_tools=True,
+        )
+
+
 def test_chat_completions_to_responses_flattens_legacy_functions_and_function_call(
     store: AppStore,
 ) -> None:
@@ -539,6 +746,104 @@ def test_chat_completions_to_responses_flattens_legacy_functions_and_function_ca
         }
     ]
     assert payload["tool_choice"] == {"type": "function", "name": "lookup"}
+
+
+def test_chat_route_request_to_responses_accepts_responses_shape_on_chat_route(
+    store: AppStore,
+) -> None:
+    payload, wants_stream, conversation_id = chat_route_request_to_responses(
+        {
+            "model": "gpt-5.4-mini",
+            "input": "hello",
+            "stream": False,
+            "tools": [
+                {
+                    "type": "custom",
+                    "name": "ApplyPatch",
+                    "description": "Apply a patch.",
+                    "format": {
+                        "type": "grammar",
+                        "syntax": "lark",
+                        "definition": "start: patch",
+                    },
+                }
+            ],
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert wants_stream is False
+    assert conversation_id is None
+    assert payload["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hello"}],
+        }
+    ]
+    assert payload["tools"][0]["type"] == "custom"
+    assert payload["tools"][0]["name"] == "ApplyPatch"
+
+
+def test_chat_route_request_to_responses_rejects_mixed_chat_and_responses_shapes(
+    store: AppStore,
+) -> None:
+    with pytest.raises(TranslationError, match="either chat.completions `messages` or Responses `input`"):
+        chat_route_request_to_responses(
+            {
+                "model": "gpt-5.4-mini",
+                "messages": [{"role": "user", "content": "hello"}],
+                "input": "hello",
+            },
+            store,
+            allow_tools=True,
+        )
+
+
+def test_chat_completions_to_responses_rejects_tool_choice_on_no_tools_route(
+    store: AppStore,
+) -> None:
+    with pytest.raises(TranslationError, match="disables tools"):
+        chat_completions_to_responses(
+            {
+                "model": "gpt-5.4-mini",
+                "messages": [{"role": "user", "content": "hello"}],
+                "tool_choice": {"type": "custom", "name": "ApplyPatch"},
+            },
+            store,
+            allow_tools=False,
+        )
+
+
+def test_responses_to_chat_completion_maps_custom_tool_calls() -> None:
+    payload = responses_to_chat_completion(
+        {
+            "id": "resp_123",
+            "created_at": 1,
+            "model": "gpt-5.4-mini",
+            "output": [
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_patch",
+                    "name": "ApplyPatch",
+                    "input": "*** Begin Patch\n*** End Patch\n",
+                }
+            ],
+        }
+    )
+
+    assert payload["choices"][0]["message"]["tool_calls"] == [
+        {
+            "id": "call_patch",
+            "type": "custom",
+            "custom": {
+                "name": "ApplyPatch",
+                "input": "*** Begin Patch\n*** End Patch\n",
+            },
+        }
+    ]
+    assert payload["choices"][0]["finish_reason"] == "tool_calls"
 
 
 def test_chat_completions_to_responses_rejects_legacy_functions_on_no_tools_route(

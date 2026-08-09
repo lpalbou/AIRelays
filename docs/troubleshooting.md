@@ -82,6 +82,35 @@ Checks:
   (`response_format` json_schema/json_object is supported on chat completions)
 - remove unsupported generation controls
 
+## Cursor custom OpenAI endpoint errors
+
+If Cursor is configured to call AIRelays as a custom OpenAI-compatible
+endpoint and Agent/Edit flows fail, first identify which malformed request
+family you are seeing.
+
+AIRelays 0.12.2 and later accepts the two Cursor request shapes reported
+publicly by Cursor users and staff on February 26, 2026 and July 9, 2026:
+
+- full Responses-style bodies sent to `/v1/chat/completions`
+- flat Responses-style `custom` tools / tool choices / tool calls on the
+  chat route (for example `ApplyPatch`)
+
+Checks:
+
+- if you see `Only function tools are currently supported on chat routes.`,
+  upgrade AIRelays
+- inspect the traffic log under `~/.airelays/logs/...` for a
+  `compatibility_adaptation` record showing the chat route accepted a
+  Responses-shaped body
+- if the request mixes both `messages` and `input`, AIRelays rejects it
+  loudly; that payload is ambiguous and must be fixed at the client
+- if a `role:"tool"` message does not reference a preceding assistant
+  tool call in the same request, AIRelays rejects it as malformed instead
+  of guessing the wrong tool type
+- if Cursor still fails after the normalization above, capture the inbound
+  request body from the traffic log and compare it with the documented
+  supported shapes in [docs/api.md](api.md)
+
 ## Claude startup refusal
 
 When the Claude runtime is enabled:

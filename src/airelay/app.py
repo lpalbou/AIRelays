@@ -34,6 +34,7 @@ from airelay.security import EndpointProtector
 from airelay.store import AppStore
 from airelay.traffic import TrafficLogger, snapshot_body
 from airelay.transforms import (
+    chat_route_request_to_responses,
     completion_chunk,
     completions_to_responses,
     strip_unsupported_response_parameters,
@@ -42,6 +43,7 @@ from airelay.transforms import (
     chat_completions_to_responses,
     normalize_subscription_status_payload,
     prepare_response_request,
+    response_item_to_chat_tool_call,
     responses_to_completion,
     responses_to_chat_completion,
 )
@@ -54,6 +56,10 @@ from airelay.transforms import (
 CLAUDE_ADAPTATION_REASON = (
     "The Claude runtime's local CLI has no sampling or output-token-limit "
     "controls, so the compatibility layer omitted these parameters."
+)
+CHAT_ROUTE_RESPONSES_SHAPE_REASON = (
+    "The chat route accepted a Responses-shaped request body and translated "
+    "the response back to chat.completions for client compatibility."
 )
 
 # Endpoints the desktop app and health checks poll continuously. Logging
@@ -975,8 +981,17 @@ def create_app(settings: Settings) -> FastAPI:
                         headers=claude_headers,
                     )
             ignored_parameters = strip_unsupported_response_parameters(body)
-            payload, wants_stream, conversation_id = chat_completions_to_responses(body, store, allow_tools)
+            responses_shape_on_chat_route = "input" in body and "messages" not in body
+            payload, wants_stream, conversation_id = chat_route_request_to_responses(body, store, allow_tools)
             log_adaptation(request_id, ignored_parameters)
+            if responses_shape_on_chat_route:
+                traffic.write(
+                    {
+                        "request_id": request_id,
+                        "phase": "compatibility_adaptation",
+                        "reason": CHAT_ROUTE_RESPONSES_SHAPE_REASON,
+                    }
+                )
             response_headers = _adaptation_headers(ignored_parameters)
             if conversation_id:
                 conversation = store.get_conversation(conversation_id)
@@ -1046,21 +1061,20 @@ def create_app(settings: Settings) -> FastAPI:
                         continue
                     if event.event == "response.output_item.done":
                         item = parsed.get("item") or {}
-                        if item.get("type") == "function_call":
+                        tool_call = response_item_to_chat_tool_call(item)
+                        if tool_call is not None:
                             saw_tool_calls = True
-                            delta_payload = {
+                            delta_payload: dict[str, Any] = {
                                 "tool_calls": [
                                     {
                                         "index": tool_index,
-                                        "id": item.get("call_id"),
-                                        "type": "function",
-                                        "function": {
-                                            "name": item.get("name"),
-                                            "arguments": item.get("arguments", "{}"),
-                                        },
+                                        **tool_call,
                                     }
                                 ]
                             }
+                            if not sent_role:
+                                delta_payload["role"] = "assistant"
+                                sent_role = True
                             tool_index += 1
                             chunk = chat_completion_chunk(response_id, created_at, model, delta_payload)
                             encoded = f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")

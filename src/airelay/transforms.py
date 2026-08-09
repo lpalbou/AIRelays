@@ -189,15 +189,56 @@ def _translate_function_tool(function: Any) -> dict[str, Any]:
     return translated
 
 
+def _translate_custom_tool_format(format_value: Any) -> dict[str, Any]:
+    if not isinstance(format_value, dict):
+        raise TranslationError("Custom tools require `format` to be an object when provided.")
+    translated = copy.deepcopy(format_value)
+    if translated.get("type") != "grammar":
+        return translated
+    grammar = translated.get("grammar")
+    if grammar is None:
+        return translated
+    if not isinstance(grammar, dict):
+        raise TranslationError("Custom grammar tools require `format.grammar` to be an object.")
+    normalized = {"type": "grammar"}
+    if "syntax" in grammar:
+        normalized["syntax"] = grammar.get("syntax")
+    if "definition" in grammar:
+        normalized["definition"] = grammar.get("definition")
+    return normalized
+
+
+def _translate_custom_tool(custom: Any) -> dict[str, Any]:
+    if not isinstance(custom, dict):
+        raise TranslationError("Custom tools must include a `custom` object.")
+    name = custom.get("name")
+    if not isinstance(name, str) or not name:
+        raise TranslationError("Custom tools require a non-empty `name`.")
+    translated = {
+        "type": "custom",
+        "name": name,
+    }
+    if "description" in custom:
+        translated["description"] = custom.get("description")
+    if "format" in custom and custom.get("format") is not None:
+        translated["format"] = _translate_custom_tool_format(custom.get("format"))
+    return translated
+
+
 def _translate_chat_tool(tool: Any) -> dict[str, Any]:
     if not isinstance(tool, dict):
         raise TranslationError("Each tool must be an object.")
     tool_type = tool.get("type")
-    if tool_type != "function":
-        raise TranslationError("Only function tools are currently supported on chat routes.")
-    if "function" in tool:
-        return _translate_function_tool(tool.get("function"))
-    return _translate_function_tool(tool)
+    if tool_type == "function":
+        if "function" in tool:
+            return _translate_function_tool(tool.get("function"))
+        return _translate_function_tool(tool)
+    if tool_type == "custom":
+        if "custom" in tool:
+            return _translate_custom_tool(tool.get("custom"))
+        # Cursor currently sends Responses-shaped custom tools on chat routes.
+        return _translate_custom_tool(tool)
+    raise TranslationError("Only function and custom tools are currently supported on chat routes.")
 
 
 def _translate_chat_tools(tools: Any) -> list[dict[str, Any]]:
@@ -215,6 +256,17 @@ def _translate_chat_tool_choice(value: Any) -> Any:
         raise TranslationError("Unsupported `tool_choice` value.")
     if not isinstance(value, dict):
         raise TranslationError("`tool_choice` must be a string or object.")
+
+    tool_type = value.get("type")
+    if tool_type == "custom":
+        name: Any = value.get("name")
+        if not isinstance(name, str):
+            custom = value.get("custom")
+            if isinstance(custom, dict):
+                name = custom.get("name")
+        if not isinstance(name, str) or not name:
+            raise TranslationError("Custom tool choices require a non-empty `name`.")
+        return {"type": "custom", "name": name}
 
     name: Any = value.get("name")
     if not isinstance(name, str):
@@ -550,6 +602,60 @@ def _responses_message(
     return {"type": "message", "role": role, "content": parts}
 
 
+def _translate_chat_tool_call(tool_call: Any, fallback_index: int) -> tuple[dict[str, Any], str]:
+    if not isinstance(tool_call, dict):
+        raise TranslationError("Each tool call must be an object.")
+    tool_type = tool_call.get("type")
+    call_id = tool_call.get("id") or f"call_{fallback_index}"
+    if tool_type == "function":
+        function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else tool_call
+        return (
+            {
+                "type": "function_call",
+                "call_id": call_id,
+                "name": function.get("name", ""),
+                "arguments": function.get("arguments", "{}"),
+            },
+            "function",
+        )
+    if tool_type == "custom":
+        custom = tool_call.get("custom") if isinstance(tool_call.get("custom"), dict) else tool_call
+        return (
+            {
+                "type": "custom_tool_call",
+                "call_id": call_id,
+                "name": custom.get("name", ""),
+                "input": custom.get("input", ""),
+            },
+            "custom",
+        )
+    raise TranslationError("Only function and custom tool calls are supported.")
+
+
+def response_item_to_chat_tool_call(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    if item.get("type") == "function_call":
+        return {
+            "id": item.get("call_id"),
+            "type": "function",
+            "function": {
+                "name": item.get("name"),
+                "arguments": item.get("arguments", "{}"),
+            },
+        }
+    if item.get("type") == "custom_tool_call":
+        return {
+            "id": item.get("call_id"),
+            "type": "custom",
+            "custom": {
+                "name": item.get("name"),
+                "input": item.get("input", ""),
+            },
+        }
+    return None
+
+
 class _StorePlaceholder:
     def __init__(self) -> None:
         self._store: AppStore | None = None
@@ -581,6 +687,9 @@ def chat_completions_to_responses(
         raise TranslationError("Only `n=1` is supported.")
     if not allow_tools and (body.get("tools") or body.get("functions")):
         raise TranslationError("This route disables tools.")
+    tool_choice_value = body.get("tool_choice")
+    if not allow_tools and tool_choice_value is not None and tool_choice_value != "none":
+        raise TranslationError("This route disables tools.")
     if not allow_tools and body.get("function_call") not in {None, "none"}:
         raise TranslationError("This route disables tools.")
     if body.get("store") not in {None, False}:
@@ -594,6 +703,7 @@ def chat_completions_to_responses(
 
     input_items: list[dict[str, Any]] = []
     instruction_parts: list[str] = []
+    tool_call_types: dict[str, str] = {}
     top_level_instructions = body.get("instructions")
     if isinstance(top_level_instructions, str) and top_level_instructions.strip():
         instruction_parts.append(top_level_instructions)
@@ -618,9 +728,14 @@ def chat_completions_to_responses(
             tool_call_id = message.get("tool_call_id")
             if not isinstance(tool_call_id, str) or not tool_call_id:
                 raise TranslationError("Tool messages must include `tool_call_id`.")
+            if tool_call_id not in tool_call_types:
+                raise TranslationError(
+                    "Tool messages must reference a preceding assistant tool call in the same request."
+                )
+            output_type = "custom_tool_call_output" if tool_call_types.get(tool_call_id) == "custom" else "function_call_output"
             input_items.append(
                 {
-                    "type": "function_call_output",
+                    "type": output_type,
                     "call_id": tool_call_id,
                     "output": _content_to_text(message.get("content")),
                 }
@@ -634,17 +749,11 @@ def chat_completions_to_responses(
             if role != "assistant":
                 raise TranslationError("Only assistant messages can include `tool_calls`.")
             for tool_call in tool_calls:
-                if not isinstance(tool_call, dict) or tool_call.get("type") != "function":
-                    raise TranslationError("Only function tool calls are supported.")
-                function = tool_call.get("function") or {}
-                input_items.append(
-                    {
-                        "type": "function_call",
-                        "call_id": tool_call.get("id") or f"call_{len(input_items)}",
-                        "name": function.get("name", ""),
-                        "arguments": function.get("arguments", "{}"),
-                    }
-                )
+                translated_call, call_type = _translate_chat_tool_call(tool_call, len(input_items))
+                input_items.append(translated_call)
+                call_id = translated_call.get("call_id")
+                if isinstance(call_id, str) and call_id:
+                    tool_call_types[call_id] = call_type
 
     tools = body.get("tools")
     if tools is not None:
@@ -706,6 +815,22 @@ def chat_completions_to_responses(
     if conversation_id is not None and not isinstance(conversation_id, str):
         raise TranslationError("`conversation` must be a string when provided.")
     return payload, wants_stream, conversation_id
+
+
+def chat_route_request_to_responses(
+    body: dict[str, Any],
+    store: AppStore,
+    allow_tools: bool,
+) -> tuple[dict[str, Any], bool, str | None]:
+    has_messages = "messages" in body
+    has_input = "input" in body
+    if has_messages and has_input:
+        raise TranslationError(
+            "Chat route requests must use either chat.completions `messages` or Responses `input`, not both."
+        )
+    if has_input:
+        return prepare_response_request(body, store, allow_tools)
+    return chat_completions_to_responses(body, store, allow_tools)
 
 
 def completions_to_responses(body: dict[str, Any]) -> tuple[dict[str, Any], bool, str | None]:
@@ -952,17 +1077,9 @@ def responses_to_chat_completion(response: dict[str, Any]) -> dict[str, Any]:
                     text = part.get("text")
                     if isinstance(text, str):
                         text_parts.append(text)
-        if item.get("type") == "function_call":
-            tool_calls.append(
-                {
-                    "id": item.get("call_id"),
-                    "type": "function",
-                    "function": {
-                        "name": item.get("name"),
-                        "arguments": item.get("arguments", "{}"),
-                    },
-                }
-            )
+        tool_call = response_item_to_chat_tool_call(item)
+        if tool_call is not None:
+            tool_calls.append(tool_call)
     assistant_message: dict[str, Any] = {
         "role": "assistant",
         "content": "".join(text_parts) or None,
