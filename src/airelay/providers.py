@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import errno
 import hashlib
 import json
@@ -134,6 +135,81 @@ def _openai_model_record(model_id: str) -> ProviderModel:
         reasoning_default="none",
         structured_output_types=("json_schema",),
     )
+
+
+def _openai_catalog_model_ids(payload: dict[str, Any]) -> list[str]:
+    models = payload.get("models")
+    if not isinstance(models, list):
+        return []
+    ids: list[str] = []
+    seen: set[str] = set()
+    for item in models:
+        if not isinstance(item, dict):
+            continue
+        slug = item.get("slug")
+        if not isinstance(slug, str) or not slug:
+            continue
+        normalized = slug.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        ids.append(slug)
+    return ids
+
+
+def _openai_supported_model_ids(
+    payload: dict[str, Any],
+    extra_models: tuple[str, ...],
+) -> list[str]:
+    ids = _openai_catalog_model_ids(payload)
+    seen = {model.lower() for model in ids}
+    for model_id in extra_models:
+        normalized = model_id.lower()
+        if model_id and normalized not in seen:
+            ids.append(model_id)
+            seen.add(normalized)
+    return ids
+
+
+def _openai_model_prefixes(model_id: str) -> list[str]:
+    parts = [part for part in model_id.lower().split("-") if part]
+    return ["-".join(parts[:length]) for length in range(len(parts) - 1, 1, -1)]
+
+
+def _suggest_openai_models(
+    requested_model: str,
+    supported_models: list[str],
+    *,
+    limit: int = 5,
+) -> list[str]:
+    if not supported_models:
+        return []
+    lower_to_original = {model.lower(): model for model in supported_models}
+    suggestions: list[str] = []
+    seen: set[str] = set()
+    for prefix in _openai_model_prefixes(requested_model):
+        for model in sorted(supported_models):
+            normalized = model.lower()
+            if normalized in seen or not normalized.startswith(prefix):
+                continue
+            suggestions.append(model)
+            seen.add(normalized)
+            if len(suggestions) >= limit:
+                return suggestions
+    close_matches = difflib.get_close_matches(
+        requested_model.lower(),
+        list(lower_to_original),
+        n=limit,
+        cutoff=0.35,
+    )
+    for normalized in close_matches:
+        if normalized in seen:
+            continue
+        suggestions.append(lower_to_original[normalized])
+        seen.add(normalized)
+        if len(suggestions) >= limit:
+            break
+    return suggestions
 
 
 def _claude_routes() -> dict[str, bool]:
@@ -1676,20 +1752,46 @@ class ProviderRegistry:
             code="unsupported_for_provider",
         )
 
+    async def ensure_openai_model_supported(self, model_id: str, request_id: str) -> None:
+        if self._openai_backend is None:
+            return
+        extra_models = {
+            configured.lower(): configured
+            for configured in self._settings.openai_extra_models
+            if configured
+        }
+        normalized = model_id.lower()
+        if normalized in extra_models:
+            return
+        try:
+            payload = await self._openai_models_payload(request_id)
+        except Exception:  # noqa: BLE001 - lack of catalog evidence must not break serving
+            return
+        supported_models = _openai_supported_model_ids(payload, self._settings.openai_extra_models)
+        supported = {supported_model.lower(): supported_model for supported_model in supported_models}
+        if normalized in supported:
+            return
+        detail = (
+            f"Unsupported OpenAI model `{model_id}` for the authenticated ChatGPT/Codex account. "
+            "Use a model id from `/v1/models`."
+        )
+        suggestions = _suggest_openai_models(model_id, supported_models)
+        if suggestions:
+            detail += f" Closest supported ids: {', '.join(suggestions)}."
+        detail += (
+            " If the upstream really serves this id but omits it from `/models`, "
+            "add it to `[providers.openai].extra_models`."
+        )
+        raise ProviderError(422, detail, code="unsupported_for_provider")
+
     async def list_models(self, request_id: str) -> dict[str, Any]:
         data: list[dict[str, Any]] = []
         openai_error: Exception | None = None
         if self._settings.enable_openai_provider and self._openai_backend is not None:
             try:
                 payload = await self._openai_models_payload(request_id)
-                models = payload.get("models")
-                if isinstance(models, list):
-                    for item in models:
-                        if not isinstance(item, dict):
-                            continue
-                        slug = item.get("slug")
-                        if isinstance(slug, str) and slug:
-                            data.append(_openai_model_record(slug).as_wire())
+                for slug in _openai_catalog_model_ids(payload):
+                    data.append(_openai_model_record(slug).as_wire())
             except Exception as exc:  # noqa: BLE001
                 openai_error = exc
             # The upstream catalog lags what the backend actually serves
@@ -1715,6 +1817,33 @@ class ProviderRegistry:
     def _models_cache_ttl_seconds(self) -> float:
         return max(0.0, float(self._settings.models_cache_ttl_seconds))
 
+    @staticmethod
+    def _pool_slot_cache_fragment(slot: Any) -> str:
+        if isinstance(slot, dict):
+            slug = slot.get("slug")
+            account_id = slot.get("account_id")
+            authenticated = slot.get("authenticated")
+        else:
+            slug = getattr(slot, "slug", None)
+            account_id = getattr(slot, "account_id", None)
+            authenticated = getattr(slot, "authenticated", None)
+        return f"{slug or ''}:{account_id or ''}:{int(bool(authenticated))}"
+
+    def _current_openai_account_pool_cache_key(self) -> tuple[str, ...]:
+        if self._account_pool is None:
+            return ()
+        refresh = getattr(self._account_pool, "refresh_if_changed", None)
+        if callable(refresh):
+            refresh()
+        slots = getattr(self._account_pool, "slots", None)
+        if not callable(slots):
+            return ()
+        try:
+            current_slots = slots()
+        except Exception:  # noqa: BLE001 - cache-key refresh must not break serving
+            return ()
+        return tuple(self._pool_slot_cache_fragment(slot) for slot in current_slots)
+
     def _current_openai_models_cache_key(self) -> tuple[str | None, ...] | None:
         record = self._openai_auth.load()
         if record is None or not record.authenticated or not record.account_matches_binding():
@@ -1724,6 +1853,7 @@ class ProviderRegistry:
             self._settings.client_version,
             record.account_id,
             record.bound_account_id,
+            *self._current_openai_account_pool_cache_key(),
         )
 
     def _clear_openai_models_cache(self) -> None:

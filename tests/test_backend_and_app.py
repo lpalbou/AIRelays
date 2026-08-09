@@ -552,6 +552,45 @@ def test_responses_route_strips_max_output_tokens_locally(tmp_path) -> None:
     assert "max_output_tokens" not in captured["payload"]
 
 
+def test_responses_route_strips_user_locally(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    captured: dict[str, object] = {}
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del request_id, session_id
+        captured["payload"] = payload
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.4",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+
+    with TestClient(app) as client:
+        client.app.state.backend.collect_response = fake_collect_response
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "gpt-5.4",
+                "input": "hello",
+                "stream": False,
+                "user": "cursor-user",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["x-airelays-ignored-parameters"] == "user"
+    assert "user" not in captured["payload"]
+
+
 def test_chat_completions_route_strips_max_completion_tokens_locally(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)
@@ -591,6 +630,84 @@ def test_chat_completions_route_strips_max_completion_tokens_locally(tmp_path) -
     assert "max_completion_tokens" not in captured["payload"]
 
 
+def test_chat_route_strips_user_locally(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    captured: dict[str, object] = {}
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del request_id, session_id
+        captured["payload"] = payload
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.4",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+
+    with TestClient(app) as client:
+        client.app.state.backend.collect_response = fake_collect_response
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.4",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+                "user": "cursor-user",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["x-airelays-ignored-parameters"] == "user"
+    assert "user" not in captured["payload"]
+
+
+def test_chat_route_responses_shape_strips_user_locally(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    captured: dict[str, object] = {}
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del request_id, session_id
+        captured["payload"] = payload
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.4",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+
+    with TestClient(app) as client:
+        client.app.state.backend.collect_response = fake_collect_response
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.4",
+                "input": "hello",
+                "stream": False,
+                "user": "cursor-user",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["x-airelays-ignored-parameters"] == "user"
+    assert "user" not in captured["payload"]
+
+
 def test_completions_route_strips_max_tokens_locally(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)
@@ -628,6 +745,45 @@ def test_completions_route_strips_max_tokens_locally(tmp_path) -> None:
     assert response.status_code == 200
     assert response.headers["x-airelays-ignored-parameters"] == "max_tokens"
     assert "max_tokens" not in captured["payload"]
+
+
+def test_completions_route_strips_user_locally(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    captured: dict[str, object] = {}
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del request_id, session_id
+        captured["payload"] = payload
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.4",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+
+    with TestClient(app) as client:
+        client.app.state.backend.collect_response = fake_collect_response
+        response = client.post(
+            "/v1/completions",
+            json={
+                "model": "gpt-5.4",
+                "prompt": "hello",
+                "stream": False,
+                "user": "cursor-user",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["x-airelays-ignored-parameters"] == "user"
+    assert "user" not in captured["payload"]
 
 
 def test_responses_route_rewrites_local_pdf_file_id_as_input_file(tmp_path) -> None:
@@ -1961,6 +2117,177 @@ def test_chat_route_flattens_custom_tools_before_upstream_request(tmp_path) -> N
             },
         }
     ]
+
+
+def test_chat_route_rejects_unknown_openai_model_when_catalog_is_available(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+
+    async def fake_list_models(request_id):
+        del request_id
+        return {
+            "models": [
+                {"slug": "gpt-5.4"},
+                {"slug": "gpt-5.4-mini"},
+                {"slug": "gpt-5.5"},
+            ]
+        }
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.4-medium-1m",
+                "stream": False,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "Unsupported OpenAI model `gpt-5.4-medium-1m`" in detail
+    assert "Use a model id from `/v1/models`." in detail
+    assert "gpt-5.4" in detail
+
+
+def test_responses_route_rejects_unknown_openai_model_when_catalog_is_available(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+
+    async def fake_list_models(request_id):
+        del request_id
+        return {"models": [{"slug": "gpt-5.4"}, {"slug": "gpt-5.4-mini"}]}
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "gpt-5.4-medium-1m",
+                "stream": False,
+                "input": "hello",
+            },
+        )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "Unsupported OpenAI model `gpt-5.4-medium-1m`" in detail
+    assert "Use a model id from `/v1/models`." in detail
+
+
+def test_completions_route_rejects_unknown_openai_model_when_catalog_is_available(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+
+    async def fake_list_models(request_id):
+        del request_id
+        return {"models": [{"slug": "gpt-5.4"}, {"slug": "gpt-5.4-mini"}]}
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        response = client.post(
+            "/v1/completions",
+            json={
+                "model": "gpt-5.4-medium-1m",
+                "stream": False,
+                "prompt": "hello",
+            },
+        )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "Unsupported OpenAI model `gpt-5.4-medium-1m`" in detail
+    assert "Use a model id from `/v1/models`." in detail
+
+
+def test_chat_route_allows_request_when_catalog_lookup_fails(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    calls = {"models": 0, "collect": 0}
+
+    async def fake_list_models(request_id):
+        del request_id
+        calls["models"] += 1
+        raise BackendError(502, "temporary catalog failure")
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del payload, request_id, session_id
+        calls["collect"] += 1
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.4-medium-1m",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        client.app.state.backend.collect_response = fake_collect_response
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.4-medium-1m",
+                "stream": False,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert calls == {"models": 1, "collect": 1}
+
+
+def test_chat_route_allows_configured_extra_model_without_catalog_lookup(tmp_path) -> None:
+    settings = make_settings(tmp_path, openai_extra_models=("gpt-5.6-sol",))
+    app = create_app(settings)
+    calls = {"models": 0, "collect": 0}
+    captured: dict[str, object] = {}
+
+    async def fake_list_models(request_id):
+        del request_id
+        calls["models"] += 1
+        return {"models": [{"slug": "gpt-5.4"}]}
+
+    async def fake_collect_response(payload, request_id, session_id):
+        del request_id, session_id
+        calls["collect"] += 1
+        captured["payload"] = payload
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.6-sol",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+
+    with TestClient(app) as client:
+        client.app.state.backend.list_models = fake_list_models
+        client.app.state.backend.collect_response = fake_collect_response
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.6-sol",
+                "stream": False,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert calls == {"models": 0, "collect": 1}
+    assert captured["payload"]["model"] == "gpt-5.6-sol"  # type: ignore[index]
 
 
 def test_chat_route_accepts_responses_shape_for_cursor_compatibility(tmp_path) -> None:

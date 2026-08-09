@@ -249,7 +249,8 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 
 - models starting with `claude:` use the Claude runtime when it is enabled
 - other model ids use the OpenAI runtime when it is enabled
-- ids the upstream serves but does not list in its catalog (e.g. `gpt-5.6-sol`) can be advertised via `[providers.openai] extra_models`; unlisted ids always pass through to the upstream regardless
+- ids the upstream serves but does not list in its catalog (e.g. `gpt-5.6-sol`) can be advertised via `[providers.openai] extra_models`; when AIRelays can fetch the live OpenAI catalog, other unlisted ids are rejected locally with a clear 422 instead of being forwarded blindly upstream
+- with multiple OpenAI accounts, both `/v1/models` and local OpenAI model admission follow the current enrolled account set rather than a stale cached snapshot
 - AIRelays rejects requests when the selected runtime is disabled or the route is outside that runtime's published subset
 
 ## What AIRelays Exposes

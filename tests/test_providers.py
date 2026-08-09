@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -55,6 +56,37 @@ class _FakeOpenAIBackend:
         self.calls += 1
         await asyncio.sleep(0.01)
         return {"models": [{"slug": "gpt-concurrent-cache"}]}
+
+
+class _DynamicPoolOpenAIBackend:
+    def __init__(self, pool: "_FakeAccountPool") -> None:
+        self.calls = 0
+        self._pool = pool
+
+    async def list_models(self, request_id: str) -> dict[str, object]:
+        del request_id
+        self.calls += 1
+        if len(self._pool.slots()) > 1:
+            return {"models": [{"slug": "gpt-shared"}]}
+        return {"models": [{"slug": "gpt-shared"}, {"slug": "gpt-pool-a-only"}]}
+
+
+class _FakeAccountPool:
+    def __init__(self) -> None:
+        self._slots = [SimpleNamespace(slug="default", account_id="acct_123", authenticated=True)]
+        self.refresh_calls = 0
+
+    def refresh_if_changed(self) -> bool:
+        self.refresh_calls += 1
+        return False
+
+    def slots(self) -> list[SimpleNamespace]:
+        return list(self._slots)
+
+    def add_account(self, slug: str, account_id: str, *, authenticated: bool = True) -> None:
+        self._slots.append(
+            SimpleNamespace(slug=slug, account_id=account_id, authenticated=authenticated)
+        )
 
 
 @pytest.mark.asyncio
@@ -763,6 +795,34 @@ async def test_provider_registry_collapses_concurrent_openai_model_cache_misses(
 
     assert backend.calls == 1
     assert {response["data"][0]["id"] for response in responses} == {"gpt-concurrent-cache"}
+
+
+@pytest.mark.asyncio
+async def test_openai_model_admission_invalidates_cache_when_account_pool_changes(tmp_path) -> None:
+    settings = make_settings(
+        tmp_path,
+        enable_claude=False,
+        models_cache_ttl_seconds=300.0,
+    )
+    pool = _FakeAccountPool()
+    backend = _DynamicPoolOpenAIBackend(pool)
+    registry = ProviderRegistry(
+        settings,
+        openai_auth=_FakeAuthManager(),  # type: ignore[arg-type]
+        openai_backend=backend,  # type: ignore[arg-type]
+        account_pool=pool,  # type: ignore[arg-type]
+    )
+
+    await registry.ensure_openai_model_supported("gpt-pool-a-only", "req_1")
+    assert backend.calls == 1
+
+    pool.add_account("second", "acct_456")
+
+    with pytest.raises(ProviderError, match="Unsupported OpenAI model `gpt-pool-a-only`"):
+        await registry.ensure_openai_model_supported("gpt-pool-a-only", "req_2")
+
+    assert backend.calls == 2
+    assert pool.refresh_calls >= 2
 
 
 def test_subprocess_env_injects_stored_claude_token(tmp_path, monkeypatch) -> None:

@@ -95,10 +95,25 @@ publicly by Cursor users and staff on February 26, 2026 and July 9, 2026:
 - flat Responses-style `custom` tools / tool choices / tool calls on the
   chat route (for example `ApplyPatch`)
 
+AIRelays 0.12.3 and later also strips unsupported top-level caller
+identity fields (`user`, `safety_identifier`) before the upstream request
+and rejects OpenAI model ids that are absent from a working live
+`/v1/models` catalog, instead of letting those failures happen upstream.
+
 Checks:
 
 - if you see `Only function tools are currently supported on chat routes.`,
   upgrade AIRelays
+- if you see `Unsupported parameter: user`, upgrade AIRelays; current
+  versions strip `user` (and `safety_identifier`) locally because the
+  ChatGPT/Codex backend does not accept caller-supplied end-user ids
+- if you see `The '...model...' model is not supported when using Codex
+  with a ChatGPT account.`, compare the chosen model against
+  `GET /v1/models`; with a working upstream catalog AIRelays now rejects
+  unsupported OpenAI ids locally and only `[providers.openai].extra_models`
+  should bypass that check. On multi-account relays, if you just added or
+  removed an account, current versions refresh that admission cache
+  automatically before deciding
 - inspect the traffic log under `~/.airelays/logs/...` for a
   `compatibility_adaptation` record showing the chat route accepted a
   Responses-shaped body

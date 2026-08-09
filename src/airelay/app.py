@@ -374,6 +374,22 @@ def create_app(settings: Settings) -> FastAPI:
             }
         )
 
+    async def resolve_request_model(model: Any, request_id: str):
+        if not isinstance(model, str):
+            return None
+        resolved = providers.resolve_model(model)
+        traffic.write(
+            {
+                "request_id": request_id,
+                "phase": "provider_resolution",
+                "provider": resolved.provider,
+                "model": resolved.public_id,
+            }
+        )
+        if resolved.provider == "openai":
+            await providers.ensure_openai_model_supported(resolved.upstream_id, request_id)
+        return resolved
+
     def logged_json(
         request_id: str,
         payload: Any,
@@ -805,17 +821,8 @@ def create_app(settings: Settings) -> FastAPI:
         await log_inbound(request_id, request, body_bytes)
         try:
             body = load_json(body_bytes)
-            model = body.get("model")
-            if isinstance(model, str):
-                resolved = providers.resolve_model(model)
-                traffic.write(
-                    {
-                        "request_id": request_id,
-                        "phase": "provider_resolution",
-                        "provider": resolved.provider,
-                        "model": resolved.public_id,
-                    }
-                )
+            resolved = await resolve_request_model(body.get("model"), request_id)
+            if resolved is not None:
                 if resolved.provider != "openai":
                     raise ProviderError(
                         422,
@@ -915,17 +922,8 @@ def create_app(settings: Settings) -> FastAPI:
         await log_inbound(request_id, request, body_bytes)
         try:
             body = load_json(body_bytes)
-            model = body.get("model")
-            if isinstance(model, str):
-                resolved = providers.resolve_model(model)
-                traffic.write(
-                    {
-                        "request_id": request_id,
-                        "phase": "provider_resolution",
-                        "provider": resolved.provider,
-                        "model": resolved.public_id,
-                    }
-                )
+            resolved = await resolve_request_model(body.get("model"), request_id)
+            if resolved is not None:
                 if resolved.provider == "claude":
                     claude_runtime = providers.claude
                     if claude_runtime is None:
@@ -1155,17 +1153,8 @@ def create_app(settings: Settings) -> FastAPI:
         await log_inbound(request_id, request, body_bytes)
         try:
             body = load_json(body_bytes)
-            model = body.get("model")
-            if isinstance(model, str):
-                resolved = providers.resolve_model(model)
-                traffic.write(
-                    {
-                        "request_id": request_id,
-                        "phase": "provider_resolution",
-                        "provider": resolved.provider,
-                        "model": resolved.public_id,
-                    }
-                )
+            resolved = await resolve_request_model(body.get("model"), request_id)
+            if resolved is not None:
                 if resolved.provider == "claude":
                     claude_runtime = providers.claude
                     if claude_runtime is None:

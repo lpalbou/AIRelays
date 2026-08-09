@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "airelays-desktop"
-version = "0.12.2"
+version = "0.12.4"
 dependencies = [
  "libc",
  "local-ip-address",

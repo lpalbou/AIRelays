@@ -13,9 +13,10 @@ adaptation records when the request shape itself is repaired:
   `presence_penalty`, and `frequency_penalty` are stripped before the
   upstream call because the upstream rejects them
   (`"Unsupported parameter: temperature"`). Output-token limit fields
-  (`max_tokens`, `max_completion_tokens`, `max_output_tokens`) are also
-  stripped because the verified subscription backend does not honor them.
-  The names of removed parameters are returned in the
+  (`max_tokens`, `max_completion_tokens`, `max_output_tokens`) and
+  caller-supplied end-user identifiers (`user`, `safety_identifier`) are
+  also stripped because the verified subscription backend does not honor
+  them. The names of removed parameters are returned in the
   `x-airelays-ignored-parameters` response header and logged as a
   `compatibility_adaptation` traffic record with the reason. Generation
   runs with the upstream's own defaults. The same adaptation applies on
@@ -53,6 +54,15 @@ adaptation records when the request shape itself is repaired:
   `best_of`/`echo`/`logprobs`/`suffix` on `/v1/completions`. These change
   semantics in ways silent stripping would hide, so they return a clear
   error.
+- **OpenAI model admission:** when AIRelays can fetch the live ChatGPT
+  Codex model catalog for the authenticated OpenAI account(s), OpenAI
+  requests are forwarded only for model ids that appear in that catalog
+  or in `[providers.openai].extra_models`. Other ids are rejected locally
+  with a clear 422 and suggestions from `/v1/models`, instead of failing
+  later upstream with an account-scoped unsupported-model error. In
+  multi-account mode, the same cache is invalidated when the enrolled
+  OpenAI account set changes, so admission follows the current shared
+  model intersection instead of a stale catalog snapshot.
 - **Account affinity:** with multiple OpenAI accounts, a conversation is
   pinned to the account that served its first turn (protects upstream
   prompt caching); failover to another account happens only at turn

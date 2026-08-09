@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.12.4
+
+### Fixed
+
+- Multi-account OpenAI model admission no longer serves a stale `/v1/models` snapshot after the enrolled account set changes. The local model-catalog cache key now follows the current OpenAI account pool, so adding, removing, or reauthenticating a secondary account invalidates the cached catalog before AIRelays decides whether to forward a model id upstream.
+- Added a regression test for the account-pool topology change case, covering the failure mode where a model was valid for one account set, then should become locally rejected after a second authenticated account narrows the shared model intersection.
+
+## 0.12.3
+
+### Fixed
+
+- Cursor and Codex custom-endpoint compatibility is now complete across the remaining OpenAI routes. AIRelays strips unsupported caller identity fields (`user`, `safety_identifier`) before the upstream `/responses` call on `/v1/responses`, `/v1/chat/completions`, and `/v1/completions`, so Cursor-style requests no longer fail upstream with `Unsupported parameter: user`.
+- OpenAI model admission now uses the live ChatGPT/Codex model catalog when it is available. If a requested model id is absent from the catalog and not explicitly configured under `[providers.openai].extra_models`, AIRelays rejects it locally with a clear `422` and `/v1/models` guidance instead of forwarding it upstream and failing late with account-scoped unsupported-model errors.
+- Added route-level regression coverage for the shared OpenAI admission path, including `/v1/responses`, `/v1/chat/completions`, `/v1/completions`, configured extra-model bypasses, and the required fallback behavior when the upstream model catalog is temporarily unavailable.
+
 ## 0.12.2
 
 ### Fixed

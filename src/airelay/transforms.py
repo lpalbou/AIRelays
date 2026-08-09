@@ -25,10 +25,11 @@ TEXT_MIME_PREFIXES = (
 INLINE_TEXT_FILE_MAX_BYTES = 1_000_000
 DEFAULT_MINIMAL_INSTRUCTIONS = "."
 # Parameters the verified upstreams cannot honor: the subscription backend
-# rejects the sampling controls outright, and neither upstream honors a
-# client-set output-token cap. The compatibility layer strips them from the
-# inbound request and discloses the omission (x-airelays-ignored-parameters,
-# compatibility_adaptation traffic record) instead of failing the request.
+# rejects the sampling controls outright, does not honor client-set
+# output-token caps, and rejects caller-supplied end-user identifiers. The
+# compatibility layer strips them from the inbound request and discloses the
+# omission (x-airelays-ignored-parameters, compatibility_adaptation traffic
+# record) instead of failing the request.
 UNSUPPORTED_UPSTREAM_PARAMETERS = (
     "temperature",
     "top_p",
@@ -37,6 +38,8 @@ UNSUPPORTED_UPSTREAM_PARAMETERS = (
     "max_output_tokens",
     "max_completion_tokens",
     "max_tokens",
+    "user",
+    "safety_identifier",
 )
 
 
@@ -505,6 +508,7 @@ def prepare_response_request(
     allow_tools: bool,
 ) -> tuple[dict[str, Any], bool, str | None]:
     payload = _normalize_responses_input(body, store)
+    strip_unsupported_response_parameters(payload)
     wants_stream = bool(payload.get("stream"))
     conversation_id = payload.pop("conversation", None)
     if isinstance(conversation_id, dict):
@@ -796,8 +800,6 @@ def chat_completions_to_responses(
         payload["metadata"] = body["metadata"]
     if "service_tier" in body:
         payload["service_tier"] = body["service_tier"]
-    if "user" in body:
-        payload["user"] = body["user"]
     # An explicit JSON null means "not set" (OpenAI semantics), so key
     # presence alone must not forward `reasoning: {"effort": null}` upstream.
     if body.get("reasoning_effort") is not None:
@@ -887,8 +889,6 @@ def completions_to_responses(body: dict[str, Any]) -> tuple[dict[str, Any], bool
         payload["stop"] = body["stop"]
     if "metadata" in body:
         payload["metadata"] = body["metadata"]
-    if "user" in body:
-        payload["user"] = body["user"]
     # The completions route serves the same reasoning models as chat; the
     # control must not be silently dropped here while chat honors it (the
     # Claude runtime honors it on this route too).

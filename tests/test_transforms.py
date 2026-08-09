@@ -80,6 +80,22 @@ def test_prepare_response_request_defaults_to_minimal_instructions(store: AppSto
     assert payload["input"][0]["content"][0]["text"] == "hello"
 
 
+def test_prepare_response_request_strips_unsupported_identity_fields(store: AppStore) -> None:
+    payload, _, _ = prepare_response_request(
+        {
+            "model": "gpt-5.4-mini",
+            "input": "hello",
+            "user": "cursor-user",
+            "safety_identifier": "hash-123",
+        },
+        store,
+        allow_tools=True,
+    )
+
+    assert "user" not in payload
+    assert "safety_identifier" not in payload
+
+
 def test_prepare_response_request_rejects_store_true(store: AppStore) -> None:
     with pytest.raises(TranslationError, match="store=false"):
         prepare_response_request(
@@ -177,7 +193,7 @@ def test_prepare_response_request_normalizes_raw_base64_input_file_to_data_url(
     ]
 
 
-def test_prepare_response_request_accepts_max_output_tokens(store: AppStore) -> None:
+def test_prepare_response_request_strips_max_output_tokens(store: AppStore) -> None:
     payload, wants_stream, conversation_id = prepare_response_request(
         {
             "model": "gpt-5.4-mini",
@@ -190,7 +206,7 @@ def test_prepare_response_request_accepts_max_output_tokens(store: AppStore) -> 
 
     assert wants_stream is False
     assert conversation_id is None
-    assert payload["max_output_tokens"] == 20
+    assert "max_output_tokens" not in payload
 
 
 def test_prepare_response_request_accepts_conversation_object_id(store: AppStore) -> None:
@@ -1125,7 +1141,7 @@ def test_completions_to_responses_ignores_max_tokens() -> None:
     assert "max_tokens" not in payload
 
 
-def test_strip_unsupported_response_parameters_removes_sampling_and_token_limits() -> None:
+def test_strip_unsupported_response_parameters_removes_sampling_token_and_identity_fields() -> None:
     payload = {
         "model": "gpt-5.4",
         "temperature": 0.7,
@@ -1133,6 +1149,8 @@ def test_strip_unsupported_response_parameters_removes_sampling_and_token_limits
         "presence_penalty": 0,
         "frequency_penalty": 0,
         "max_output_tokens": 32,
+        "user": "cursor-user",
+        "safety_identifier": "hash-123",
     }
 
     ignored = strip_unsupported_response_parameters(payload)
@@ -1143,6 +1161,8 @@ def test_strip_unsupported_response_parameters_removes_sampling_and_token_limits
         "presence_penalty",
         "frequency_penalty",
         "max_output_tokens",
+        "user",
+        "safety_identifier",
     ]
     assert payload == {
         "model": "gpt-5.4",
