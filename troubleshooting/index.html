@@ -604,6 +604,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cursor-custom-openai-endpoint-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cursor custom OpenAI endpoint errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#claude-startup-refusal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -963,6 +974,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cursor-custom-openai-endpoint-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cursor custom OpenAI endpoint errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#claude-startup-refusal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1107,6 +1129,33 @@ usually heavy system load or a long request burst.</p>
 <li>remove tools, files, images, audio, and <code>conversation</code>
   (<code>response_format</code> json_schema/json_object is supported on chat completions)</li>
 <li>remove unsupported generation controls</li>
+</ul>
+<h2 id="cursor-custom-openai-endpoint-errors">Cursor custom OpenAI endpoint errors<a class="headerlink" href="#cursor-custom-openai-endpoint-errors" title="Permanent link">&para;</a></h2>
+<p>If Cursor is configured to call AIRelays as a custom OpenAI-compatible
+endpoint and Agent/Edit flows fail, first identify which malformed request
+family you are seeing.</p>
+<p>AIRelays 0.12.2 and later accepts the two Cursor request shapes reported
+publicly by Cursor users and staff on February 26, 2026 and July 9, 2026:</p>
+<ul>
+<li>full Responses-style bodies sent to <code>/v1/chat/completions</code></li>
+<li>flat Responses-style <code>custom</code> tools / tool choices / tool calls on the
+  chat route (for example <code>ApplyPatch</code>)</li>
+</ul>
+<p>Checks:</p>
+<ul>
+<li>if you see <code>Only function tools are currently supported on chat routes.</code>,
+  upgrade AIRelays</li>
+<li>inspect the traffic log under <code>~/.airelays/logs/...</code> for a
+  <code>compatibility_adaptation</code> record showing the chat route accepted a
+  Responses-shaped body</li>
+<li>if the request mixes both <code>messages</code> and <code>input</code>, AIRelays rejects it
+  loudly; that payload is ambiguous and must be fixed at the client</li>
+<li>if a <code>role:"tool"</code> message does not reference a preceding assistant
+  tool call in the same request, AIRelays rejects it as malformed instead
+  of guessing the wrong tool type</li>
+<li>if Cursor still fails after the normalization above, capture the inbound
+  request body from the traffic log and compare it with the documented
+  supported shapes in <a href="../api/">docs/api.md</a></li>
 </ul>
 <h2 id="claude-startup-refusal">Claude startup refusal<a class="headerlink" href="#claude-startup-refusal" title="Permanent link">&para;</a></h2>
 <p>When the Claude runtime is enabled:</p>

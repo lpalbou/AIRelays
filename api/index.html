@@ -1042,7 +1042,9 @@
 <p>The verified upstream is the ChatGPT subscription backend, not the public
 platform API. AIRelays adapts requests on the three text-generation routes
 (<code>/v1/responses</code>, <code>/v1/chat/completions</code>, <code>/v1/completions</code>) rather than
-letting them fail, and always discloses what it changed:</p>
+letting them fail. Parameter stripping is always disclosed; other
+compatibility normalizations are documented here and may log dedicated
+adaptation records when the request shape itself is repaired:</p>
 <ul>
 <li><strong>Removed unsupported parameters:</strong> <code>temperature</code>, <code>top_p</code>,
   <code>presence_penalty</code>, and <code>frequency_penalty</code> are stripped before the
@@ -1073,6 +1075,17 @@ letting them fail, and always discloses what it changed:</p>
   <code>json_schema</code> and <code>json_object</code> are honored via the claude CLI's native
   <code>--json-schema</code> enforcement. Supported types per model are published in
   <code>/v1/models</code> under <code>airelays.structured_output</code>.</li>
+<li><strong>Cursor chat-route compatibility:</strong> AIRelays accepts two malformed
+  request families currently observed from Cursor custom OpenAI endpoints
+  on <code>/v1/chat/completions</code>: full Responses-style bodies (<code>input</code>,
+  <code>instructions</code>, flat <code>tools</code>, etc.) and flat Responses-style <code>custom</code>
+  tool definitions / tool choices / assistant tool calls (for example the
+  <code>ApplyPatch</code> tool). AIRelays normalizes those requests locally, sends the
+  canonical Responses shape upstream, and translates upstream
+  <code>custom_tool_call</code> items back into chat-completions <code>tool_calls</code> on both
+  streaming and non-streaming responses. Mixed-shape requests that contain
+  both <code>messages</code> and <code>input</code>, or tool outputs that do not reference a
+  preceding assistant tool call in the same request, are rejected loudly.</li>
 <li><strong>Rejected loudly instead of adapted:</strong> <code>store=true</code>, <code>n&gt;1</code>, and
   <code>best_of</code>/<code>echo</code>/<code>logprobs</code>/<code>suffix</code> on <code>/v1/completions</code>. These change
   semantics in ways silent stripping would hide, so they return a clear
@@ -1165,6 +1178,12 @@ relay accepts, grouped by provider (<code>--json</code> supported).</p>
 <p>OpenAI runtime:</p>
 <ul>
 <li>current AIRelays OpenAI compatibility path</li>
+<li>standard chat-completions <code>messages</code> requests supported</li>
+<li>Responses-shaped request bodies also accepted on this route for Cursor
+  compatibility and translated back to chat-completions responses</li>
+<li>tool support includes both OpenAI <code>function</code> tools and <code>custom</code> tools;
+  AIRelays also accepts Cursor's flatter Responses-style <code>custom</code> tool
+  shape on this route</li>
 </ul>
 <p>Claude runtime:</p>
 <ul>
