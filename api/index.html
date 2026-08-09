@@ -1050,9 +1050,10 @@ adaptation records when the request shape itself is repaired:</p>
   <code>presence_penalty</code>, and <code>frequency_penalty</code> are stripped before the
   upstream call because the upstream rejects them
   (<code>"Unsupported parameter: temperature"</code>). Output-token limit fields
-  (<code>max_tokens</code>, <code>max_completion_tokens</code>, <code>max_output_tokens</code>) are also
-  stripped because the verified subscription backend does not honor them.
-  The names of removed parameters are returned in the
+  (<code>max_tokens</code>, <code>max_completion_tokens</code>, <code>max_output_tokens</code>) and
+  caller-supplied end-user identifiers (<code>user</code>, <code>safety_identifier</code>) are
+  also stripped because the verified subscription backend does not honor
+  them. The names of removed parameters are returned in the
   <code>x-airelays-ignored-parameters</code> response header and logged as a
   <code>compatibility_adaptation</code> traffic record with the reason. Generation
   runs with the upstream's own defaults. The same adaptation applies on
@@ -1090,6 +1091,15 @@ adaptation records when the request shape itself is repaired:</p>
   <code>best_of</code>/<code>echo</code>/<code>logprobs</code>/<code>suffix</code> on <code>/v1/completions</code>. These change
   semantics in ways silent stripping would hide, so they return a clear
   error.</li>
+<li><strong>OpenAI model admission:</strong> when AIRelays can fetch the live ChatGPT
+  Codex model catalog for the authenticated OpenAI account(s), OpenAI
+  requests are forwarded only for model ids that appear in that catalog
+  or in <code>[providers.openai].extra_models</code>. Other ids are rejected locally
+  with a clear 422 and suggestions from <code>/v1/models</code>, instead of failing
+  later upstream with an account-scoped unsupported-model error. In
+  multi-account mode, the same cache is invalidated when the enrolled
+  OpenAI account set changes, so admission follows the current shared
+  model intersection instead of a stale catalog snapshot.</li>
 <li><strong>Account affinity:</strong> with multiple OpenAI accounts, a conversation is
   pinned to the account that served its first turn (protects upstream
   prompt caching); failover to another account happens only at turn
