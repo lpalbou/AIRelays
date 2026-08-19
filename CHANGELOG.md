@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.12.5
+
+### Fixed
+
+- An OpenAI account whose stored sign-in was invalidated upstream (`refresh_token_invalidated`) no longer shows a "Ready" badge next to a bare "Usage unavailable" note in the desktop accounts card. The usage probe's verdict now outranks the credentials-on-disk readiness flags: the badge reads "Sign-in expired", the note says what happened, and the badge sits next to a one-click "Sign in again" button that launches the standard OpenAI sign-in — the relay refreshes the matching account slot in place, so no sign-out is needed first. The raw upstream error stays in the tooltip.
+
+### Changed
+
+- `GET /v1/subscription/status?all_accounts=true` now always answers the list shape, one entry per account, with a per-account `error` when a probe fails. Previously a lone enrolled account folded to the bare single-account shape, so its probe failure became a whole-request 503 and single-account installs had no way to see why usage was missing (found by adversarial review). Callers that request `all_accounts=true` with one enrolled account now receive `{"object": "subscription_status_list", "accounts": [...]}` instead of the bare status object.
+
+### Added
+
+- The desktop accounts card now surfaces everything the normalized usage payload reports: the code-review quota renders as its own labeled bar (it was previously dropped), bar details carry the absolute reset time next to the countdown, and the per-account "more" panel lists per-window reset timestamps, credits, spend control, limit-reset credits, and the snapshot time above the existing per-model token table. The panel flips downward when there is no room above the row.
+
 ## 0.12.4
 
 ### Fixed

@@ -30,8 +30,11 @@ curl 'http://127.0.0.1:8080/v1/subscription/status' \
 With multiple enrolled accounts:
 
 - `?account=<email-or-prefix>` selects one account
-- `?all_accounts=true` returns one entry per account (folds to the
-  single-account shape when only one exists)
+- `?all_accounts=true` returns the list shape with one entry per account,
+  regardless of how many are enrolled; an account whose usage probe fails
+  carries an `error` string instead of a `status`, so one broken sign-in
+  never hides the others (releases before 0.12.5 folded a lone account to
+  the bare single-account shape)
 - `?raw=true` includes the raw upstream payload
 
 ## Claude

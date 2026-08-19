@@ -1045,6 +1045,40 @@ def test_subscription_status_route_returns_normalized_windows_and_raw_alias(tmp_
     assert payload["raw"]["plan_type"] == "pro"
 
 
+def test_subscription_status_all_accounts_lists_single_account_with_error(tmp_path) -> None:
+    # all_accounts=true must answer the list shape even with one enrolled
+    # account: the fold-to-single-shape behavior turned a lone account's
+    # probe failure (e.g. an upstream-invalidated refresh token) into a
+    # whole-request 503 with no per-account reason.
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+
+    async def fake_subscription_statuses(request_id, *, force=False):
+        del request_id, force
+        return [
+            {
+                "slug": "default",
+                "email": "dead@example.com",
+                "error": "Token refresh failed: 401 (refresh_token_invalidated)",
+            }
+        ]
+
+    with TestClient(app) as client:
+        client.app.state.backend.subscription_statuses = fake_subscription_statuses
+        response = client.get("/v1/subscription/status?all_accounts=true")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["object"] == "subscription_status_list"
+    assert payload["accounts"] == [
+        {
+            "slug": "default",
+            "email": "dead@example.com",
+            "error": "Token refresh failed: 401 (refresh_token_invalidated)",
+        }
+    ]
+
+
 def test_chat_stream_ignores_non_json_events(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)

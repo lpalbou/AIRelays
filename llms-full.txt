@@ -93,7 +93,7 @@ The verified upstream is the ChatGPT subscription backend, not the public platfo
 
 ## Subscription Usage
 
-`GET /v1/subscription/status` returns per-window `used_percent`, `window_label` ("5h", "weekly", derived from each window's duration), and reset times in one shape for both providers. Which windows appear is plan-dependent upstream policy; only reported windows are returned. OpenAI reads the subscription usage surface; multi-account installs can query one account (`?account=`) or all (`?all_accounts=true`). Claude (`?provider=claude`) returns the 5-hour and weekly windows plus per-model weekly caps when reported; its upstream source is not a publicly documented API, so the relay caches it briefly and degrades gracefully.
+`GET /v1/subscription/status` returns per-window `used_percent`, `window_label` ("5h", "weekly", derived from each window's duration), and reset times in one shape for both providers, plus credits, spend control, and any named extra quotas (for example code review) the plan reports. Which windows appear is plan-dependent upstream policy; only reported windows are returned. OpenAI reads the subscription usage surface; query one account (`?account=`) or all (`?all_accounts=true`, always the list shape — an account whose probe fails carries a per-account `error` instead of a `status`). Claude (`?provider=claude`) returns the 5-hour and weekly windows plus per-model weekly caps when reported; its upstream source is not a publicly documented API, so the relay caches it briefly and degrades gracefully. In the desktop app, an OpenAI account whose stored sign-in was invalidated upstream shows a "Sign-in expired" badge with a one-click "Sign in again" repair that refreshes the account slot in place.
 
 ## Security Defaults
 

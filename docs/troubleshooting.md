@@ -61,6 +61,19 @@ Checks and fix:
   token" (keeps the CLI sign-in)
 - verify with a `claude:*` test request or `airelays doctor`
 
+## Desktop app shows "Sign-in expired" on an OpenAI account
+
+OpenAI ended that account's stored session (for example after signing in to
+Codex elsewhere), so the relay can no longer refresh its token. The account
+is out of rotation until you sign in again.
+
+- click **Sign in again** next to the badge and pick the same account in the
+  browser — the stored sign-in is replaced in place, no sign-out needed
+- the usage bars return within a few seconds of a successful sign-in
+- the raw upstream error is available on hover over the note under the row
+- from the CLI, `airelays login` does the same repair: signing in with an
+  already-enrolled account refreshes that account's stored credentials
+
 ## Desktop app shows "Running — not responding"
 
 The relay process is alive but did not answer the app's health probe —

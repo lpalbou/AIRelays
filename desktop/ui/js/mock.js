@@ -108,6 +108,12 @@ const state = () => ({
               // mock mode (no window_tokens on purpose).
               { slug: "backup", email: "backup@gmail.com", plan_type: "plus", ready_for_requests: true,
                 limited: true, limited_for_seconds: 172800 },
+              // Upstream-invalidated sign-in: the relay's readiness flags
+              // still say ready (they only check credentials exist on
+              // disk), but the usage probe fails — mirrors the live bug
+              // where "Ready" sat next to "Usage unavailable".
+              { slug: "expired", email: "expired@gmail.com", plan_type: "plus",
+                ready_for_requests: true, limited: false },
             ],
           },
           claude: {
@@ -254,6 +260,7 @@ export async function mockInvoke(command, args = {}) {
             email: "work@company.com",
             status: {
               account: { email: "work@company.com", plan_type: "enterprise" },
+              captured_at: new Date().toISOString(),
               rate_limit_reached_type: null,
               rate_limits: {
                 default: {
@@ -261,14 +268,32 @@ export async function mockInvoke(command, args = {}) {
                   limit_reached: false,
                   // Current Enterprise shape: the classic 5h primary window
                   // plus the weekly secondary, both nearly untouched.
+                  // reset_at values exercise the absolute stamps in the
+                  // bar details and the "more" facts.
                   primary_window: {
                     used_percent: 0,
                     window_seconds: 18000,
                     window_label: "5h",
                     reset_after_seconds: 18000,
+                    reset_at: Math.floor(Date.now() / 1000) + 18000,
+                    reset_at_iso: new Date(Date.now() + 18000 * 1000).toISOString(),
                   },
                   secondary_window: {
                     used_percent: 4,
+                    window_seconds: 604800,
+                    window_label: "weekly",
+                    reset_after_seconds: 518000,
+                    reset_at: Math.floor(Date.now() / 1000) + 518000,
+                    reset_at_iso: new Date(Date.now() + 518000 * 1000).toISOString(),
+                  },
+                },
+                // Separate top-level quota in the upstream payload; renders
+                // as its own labeled bar.
+                code_review: {
+                  allowed: true,
+                  limit_reached: false,
+                  primary_window: {
+                    used_percent: 12,
                     window_seconds: 604800,
                     window_label: "weekly",
                     reset_after_seconds: 518000,
@@ -276,6 +301,14 @@ export async function mockInvoke(command, args = {}) {
                 },
                 additional: [],
               },
+              credits: {
+                has_credits: true,
+                unlimited: false,
+                overage_limit_reached: false,
+                balance: "250",
+              },
+              spend_control: { reached: false, individual_limit: null },
+              rate_limit_reset_credits: { available_count: 2, applicable_available_count: 2 },
             },
           },
           {
@@ -300,6 +333,14 @@ export async function mockInvoke(command, args = {}) {
                 additional: [],
               },
             },
+          },
+          // The live failure shape from an upstream-invalidated sign-in:
+          // no status, just the relay's raw error string.
+          {
+            slug: "expired",
+            email: "expired@gmail.com",
+            error:
+              'Token refresh failed: 401 {\n  "error": {\n    "message": "Your session has ended. Please log in again.",\n    "type": "invalid_request_error",\n    "param": null,\n    "code": "refresh_token_invalidated"\n  }\n}',
           },
         ],
       };

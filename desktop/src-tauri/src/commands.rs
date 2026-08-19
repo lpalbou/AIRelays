@@ -915,7 +915,9 @@ pub async fn get_usage(app: AppHandle) -> Result<Value, String> {
         }
         request
     };
-    // all_accounts folds to the single-account shape when only one exists.
+    // all_accounts always answers the list shape (one entry per account,
+    // with a per-account error when a probe fails); older relays folded a
+    // single account to the bare status shape, which the UI still accepts.
     let response = authed(client.get(format!("{base_url}/subscription/status?all_accounts=true")))
         .send()
         .await

@@ -595,15 +595,30 @@ async function startClaudeSignIn() {
   }
 }
 
-async function startOpenAiSignIn() {
-  toast("OpenAI sign-in started", "Follow the prompt below or in your browser; progress appears in the Console tab.");
+// With `reloginEmail`, this is a repair of an existing account (expired
+// sign-in): same OAuth flow — the relay matches the account_id and
+// refreshes the slot in place — but the messaging says what to pick and
+// what happened instead of implying a new account was added.
+async function startOpenAiSignIn(reloginEmail) {
+  toast(
+    reloginEmail ? "OpenAI re-sign-in started" : "OpenAI sign-in started",
+    reloginEmail
+      ? `Pick ${reloginEmail} in the browser — its stored sign-in is replaced in place.`
+      : "Follow the prompt below or in your browser; progress appears in the Console tab."
+  );
   if (await runLoginFlow("openai", "OpenAI sign-in failed")) {
     toast(
-      "OpenAI account ready",
-      "It appears above within a few seconds and joins load balancing automatically.",
+      reloginEmail ? "Account restored" : "OpenAI account ready",
+      reloginEmail
+        ? "Usage bars come back within a few seconds."
+        : "It appears above within a few seconds and joins load balancing automatically.",
       "success"
     );
     loadUsage();
+    // The running relay reloads changed credentials within seconds; an
+    // immediate-only refresh can race that and leave the stale error on
+    // screen until a manual Refresh.
+    setTimeout(() => loadUsage(), 4000);
   }
 }
 
@@ -684,6 +699,58 @@ function formatDuration(seconds) {
   return parts.length > 0 ? parts.join(" ") : "<1m";
 }
 
+// The relay reports per-account usage failures as raw strings, often with
+// the upstream JSON error embedded. Pull out the human sentence, and
+// recognize the failure that means the sign-in itself is dead — an
+// invalidated/rejected token — so the row can say "sign in again" instead
+// of a generic shrug under a badge that still claims Ready.
+function describeUsageError(error) {
+  const text = String(error ?? "");
+  let message = text;
+  const embedded = text.match(/\{[\s\S]*\}/);
+  if (embedded) {
+    try {
+      const parsed = JSON.parse(embedded[0]);
+      // Both upstream error dialects: ChatGPT's nested {error: {message}}
+      // and RFC 6749 token-endpoint bodies where `error` is a bare string
+      // beside `error_description`.
+      const upstream =
+        parsed?.error?.message ??
+        (typeof parsed?.error === "string"
+          ? parsed.error_description ?? parsed.error
+          : null) ??
+        parsed?.detail ??
+        parsed?.message;
+      if (typeof upstream === "string" && upstream) message = upstream;
+    } catch {
+      // Not valid JSON after all — keep the raw text.
+    }
+  }
+  // The note renders inline in the card: collapse and cap what may be a
+  // multi-KB upstream error page (the full text stays in the tooltip).
+  message = message.replace(/\s+/g, " ").trim();
+  if (message.length > 200) message = `${message.slice(0, 199)}…`;
+  // Dead-grant codes and phrasings only; a bare 400 on refresh can also be
+  // a malformed request (proxy mangling), which re-signing-in won't fix.
+  const authExpired =
+    /refresh_token_invalidated|invalid_grant/i.test(text) ||
+    /token refresh failed:\s*401\b/i.test(text) ||
+    /session has ended|log ?in again/i.test(text) ||
+    /stored auth does not include|bound to a different upstream account/i.test(text);
+  return { authExpired, message };
+}
+
+// Absolute companion to the relative countdown: "06:12" for a same-day
+// reset, "Aug 26" beyond — the countdown alone forces mental date math.
+function formatResetStamp(resetAtEpoch) {
+  if (!Number.isFinite(resetAtEpoch)) return null;
+  const date = new Date(resetAtEpoch * 1000);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toDateString() === new Date().toDateString()
+    ? date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 // The normalized relay payload labels each window ("5h", "weekly", "30d").
 function windowLabel(window, fallback) {
   const label = window.window_label ?? formatDuration(window.window_seconds ?? window.limit_window_seconds);
@@ -742,7 +809,12 @@ function usageWindowRow(label, window) {
 
   const resets =
     window.reset_after_seconds > 0 ? formatDuration(window.reset_after_seconds) : null;
-  setUsageDetail(detail, `${used.toFixed(0)}% used`, resets ? ` · resets in ${resets}` : "");
+  const stamp = resets ? formatResetStamp(window.reset_at) : null;
+  setUsageDetail(
+    detail,
+    `${used.toFixed(0)}% used`,
+    resets ? ` · resets in ${resets}${stamp ? ` (${stamp})` : ""}` : ""
+  );
   return row;
 }
 
@@ -760,13 +832,18 @@ function usageWindows(status) {
   };
   push(limits.default?.primary_window, "Requests");
   push(limits.default?.secondary_window, "Requests");
+  // Named limits beyond the default one: the code-review quota (its own
+  // top-level slot in the payload) plus whatever `additional` carries.
+  const named = [];
+  if (limits.code_review) named.push(["Code review", limits.code_review]);
   for (const extra of limits.additional ?? []) {
-    const name = extra.limit_name || extra.metered_feature || "Other";
-    if (extra.rate_limit?.primary_window) {
-      windows.push([`${name} · ${windowLabel(extra.rate_limit.primary_window, "")}`.replace(/ · $/, ""), extra.rate_limit.primary_window]);
-    }
-    if (extra.rate_limit?.secondary_window) {
-      windows.push([`${name} · ${windowLabel(extra.rate_limit.secondary_window, "")}`.replace(/ · $/, ""), extra.rate_limit.secondary_window]);
+    named.push([extra.limit_name || extra.metered_feature || "Other", extra.rate_limit]);
+  }
+  for (const [name, rate] of named) {
+    for (const slot of ["primary_window", "secondary_window"]) {
+      if (rate?.[slot]) {
+        windows.push([`${name} · ${windowLabel(rate[slot], "")}`.replace(/ · $/, ""), rate[slot]]);
+      }
     }
   }
   return windows;
@@ -975,14 +1052,24 @@ function renderEndpoints(state) {
   }
 }
 
-function accountStatusBadge(account, index, total, balance) {
-  // One consolidated badge (precedence): Not ready > Limit > position.
-  // A reached quota that resets on schedule is normal operation → amber, not
-  // red; red is reserved for real failures (relay down, auth broken).
-  // "Active"/"Standby" only describe reality in ordered mode; balanced mode
-  // serves every healthy account, so they are all simply "Ready".
+function accountStatusBadge(account, index, total, balance, usageError) {
+  // One consolidated badge (precedence): expired sign-in > Not ready >
+  // Limit > position. A reached quota that resets on schedule is normal
+  // operation → amber, not red; red is reserved for real failures (relay
+  // down, auth broken). "Active"/"Standby" only describe reality in ordered
+  // mode; balanced mode serves every healthy account, so they are all
+  // simply "Ready".
   const badge = document.createElement("span");
-  if (!account.ready_for_requests && !account.limited) {
+  if (usageError?.authExpired) {
+    // The relay's readiness flags only check that credentials exist on
+    // disk; an upstream-invalidated token still reads "ready" there. The
+    // usage probe is the live check, so its verdict outranks the flags —
+    // "Ready" over a sign-in that upstream already rejected is a lie.
+    badge.className = "badge badge-warn";
+    badge.textContent = "Sign-in expired";
+    badge.title =
+      "The stored sign-in was rejected upstream — use “Sign in again” below to restore this account.";
+  } else if (!account.ready_for_requests && !account.limited) {
     badge.className = "badge badge-warn";
     badge.textContent = "Not ready";
   } else if (account.limited) {
@@ -1021,6 +1108,9 @@ function accountBlock(account, index, total, balance) {
   block.className = "account-block";
   if (pendingLogout.has(email)) block.classList.add("pending");
 
+  const usageEntry = usageByEmail.get(email);
+  const usageError = usageEntry?.error ? describeUsageError(usageEntry.error) : null;
+
   const head = document.createElement("div");
   head.className = "account-head";
   const emailEl = document.createElement("span");
@@ -1030,7 +1120,16 @@ function accountBlock(account, index, total, balance) {
   const plan = document.createElement("span");
   plan.className = "account-plan";
   plan.textContent = account.plan_type ?? "";
-  head.append(emailEl, plan, accountStatusBadge(account, index, total, balance));
+  head.append(emailEl, plan, accountStatusBadge(account, index, total, balance, usageError));
+  // The repair sits in the header, touching the badge that names the
+  // problem: "Sign-in expired → Sign in again" reads as one statement.
+  if (usageError?.authExpired && !pendingLogout.has(email)) {
+    const fix = document.createElement("button");
+    fix.className = "btn btn-small account-fix";
+    fix.innerHTML = `${icon("logIn", 13)} Sign in again`;
+    fix.addEventListener("click", () => startOpenAiSignIn(email));
+    head.append(fix);
+  }
   if (pendingLogout.has(email)) {
     const pending = document.createElement("span");
     pending.className = "account-plan";
@@ -1041,19 +1140,22 @@ function accountBlock(account, index, total, balance) {
   }
   block.appendChild(head);
 
-  const usageEntry = usageByEmail.get(email);
   if (usageEntry?.status) {
     for (const [label, window] of usageWindows(usageEntry.status)) {
       block.appendChild(usageWindowRow(label, window));
     }
-  } else if (usageEntry?.error) {
+  } else if (usageError) {
+    // The reason is the actionable part — a bare "Usage unavailable" made
+    // an expired sign-in look like a cosmetic meter glitch.
     const err = document.createElement("div");
     err.className = "account-note";
-    err.textContent = "Usage unavailable";
+    err.textContent = usageError.authExpired
+      ? "OpenAI ended this session; the account is out of rotation until you sign in again."
+      : `Usage unavailable — ${usageError.message}`;
     err.title = usageEntry.error;
     block.appendChild(err);
   }
-  block.appendChild(windowTokensDetail(account.window_tokens));
+  block.appendChild(windowTokensDetail(account.window_tokens, usageEntry?.status));
   return block;
 }
 
@@ -1065,13 +1167,68 @@ function formatTokens(n) {
   return String(n);
 }
 
-// Ground truth behind the usage bars: what this relay served on the account
-// during its current usage window, per model — revealed on hover of "more".
+// Everything else the normalized usage payload knows about an account,
+// beyond the bars: credits, spend control, absolute reset times, snapshot
+// age. Rows with nothing to say are dropped, so a plain account keeps a
+// short panel instead of a wall of dashes.
+function usageFacts(status) {
+  const facts = [];
+  if (!status) return facts;
+  const windows = usageWindows(status);
+  for (const [label, window] of windows) {
+    const at = window.reset_at_iso
+      ? new Date(window.reset_at_iso).toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : null;
+    if (at) facts.push([`${label} resets`, at]);
+  }
+  if (status.rate_limit_reached_type) {
+    facts.push(["limit reached", status.rate_limit_reached_type]);
+  }
+  const credits = status.credits;
+  if (credits) {
+    let value = null;
+    if (credits.unlimited === true) value = "unlimited";
+    else if (credits.balance != null) value = credits.balance;
+    else if (credits.has_credits === false) value = "none";
+    if (value != null) {
+      if (credits.overage_limit_reached === true) value += " · overage limit reached";
+      facts.push(["credits", value]);
+    }
+  }
+  const spend = status.spend_control;
+  if (spend && (spend.reached != null || spend.individual_limit != null)) {
+    const limit = spend.individual_limit != null ? ` (limit ${spend.individual_limit})` : "";
+    facts.push(["spend control", `${spend.reached === true ? "limit reached" : "ok"}${limit}`]);
+  }
+  const resetCredits = status.rate_limit_reset_credits;
+  if (resetCredits?.available_count > 0) {
+    facts.push(["limit-reset credits", String(resetCredits.available_count)]);
+  }
+  if (status.captured_at) {
+    const captured = new Date(status.captured_at);
+    if (!Number.isNaN(captured.getTime())) {
+      facts.push([
+        "as of",
+        captured.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+      ]);
+    }
+  }
+  return facts;
+}
+
+// Ground truth behind the usage bars, revealed on hover of "more": the
+// account facts the bars can't carry (usageFacts above), then what this
+// relay served on the account during its current usage window, per model.
 // The window's horizon is plan-dependent (weekly on current OpenAI plans),
 // so the title names the window the tally payload reports instead of
 // hardcoding "5h". Every account gets the affordance; without data the
 // panel says so instead of the trigger silently missing.
-function windowTokensDetail(windowTokens) {
+function windowTokensDetail(windowTokens, status) {
   const models = Array.isArray(windowTokens?.models) ? windowTokens.models : [];
   const wrap = document.createElement("div");
   wrap.className = "account-more";
@@ -1080,6 +1237,38 @@ function windowTokensDetail(windowTokens) {
   trigger.textContent = "more";
   const panel = document.createElement("div");
   panel.className = "account-more-panel";
+  // The panel opens upward (bottom anchor); with the facts section it can
+  // now be taller than the space above a high-on-screen row, and a hover
+  // panel cut off at the viewport edge is unreadable — flip it downward
+  // when the room above is short. mouseover (not mouseenter) so a block
+  // rebuilt under a near-stationary cursor re-measures on the next child
+  // boundary crossing; by dispatch time :hover has already laid the panel
+  // out, so offsetHeight is real.
+  wrap.addEventListener("mouseover", () => {
+    panel.classList.toggle(
+      "flip-down",
+      wrap.getBoundingClientRect().top < panel.offsetHeight + 12
+    );
+  });
+  const facts = usageFacts(status);
+  if (facts.length > 0) {
+    const factsTitle = document.createElement("div");
+    factsTitle.className = "account-more-title";
+    factsTitle.textContent = "Account";
+    panel.appendChild(factsTitle);
+    const factsTable = document.createElement("table");
+    factsTable.className = "account-more-table account-more-facts";
+    for (const [label, value] of facts) {
+      const row = document.createElement("tr");
+      const th = document.createElement("th");
+      th.textContent = label;
+      const td = document.createElement("td");
+      td.textContent = value;
+      row.append(th, td);
+      factsTable.appendChild(row);
+    }
+    panel.appendChild(factsTable);
+  }
   const title = document.createElement("div");
   title.className = "account-more-title";
   const label = typeof windowTokens?.window_label === "string" ? windowTokens.window_label : null;

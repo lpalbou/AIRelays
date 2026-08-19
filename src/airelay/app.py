@@ -563,7 +563,12 @@ def create_app(settings: Settings) -> FastAPI:
             )
         try:
             backend.refresh_if_changed()
-            if all_accounts and backend.size > 1:
+            # Always the list shape when the caller asked for all accounts —
+            # folding a single account into the bare status shape turned its
+            # probe failure into a whole-request 503, so a lone account with
+            # an upstream-invalidated token had no way to report *why* it was
+            # broken (the desktop showed "Ready" next to a blank meter).
+            if all_accounts:
                 entries = await backend.subscription_statuses(request_id)
                 payload = {
                     "object": "subscription_status_list",

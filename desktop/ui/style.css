@@ -105,6 +105,12 @@ html, body {
   display: block;
 }
 
+/* Not enough room above the row: open downward instead (set from JS). */
+.account-more-panel.flip-down {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+
 .account-more-title {
   font-size: 11px;
   font-weight: 600;
@@ -132,6 +138,22 @@ html, body {
 .account-more-total td {
   border-top: 1px solid var(--border, #2a2f42);
   font-weight: 600;
+}
+
+/* Repair button in the account header, adjacent to the expired badge. */
+.account-fix {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* Account-facts rows above the token table: label column hugs its text. */
+.account-more-facts {
+  margin-bottom: 10px;
+}
+
+.account-more-facts th {
+  width: 1%;
+  white-space: nowrap;
 }
 
 .account-more-note {
