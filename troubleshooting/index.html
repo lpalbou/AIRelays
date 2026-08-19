@@ -582,6 +582,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#desktop-app-shows-sign-in-expired-on-an-openai-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desktop app shows "Sign-in expired" on an OpenAI account
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#desktop-app-shows-running-not-responding" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -952,6 +963,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#desktop-app-shows-sign-in-expired-on-an-openai-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desktop app shows "Sign-in expired" on an OpenAI account
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#desktop-app-shows-running-not-responding" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1111,6 +1133,18 @@ requests keep failing no matter how often you sign in through the CLI.</p>
   the desktop app, open the Claude token dialog and use "Remove stored
   token" (keeps the CLI sign-in)</li>
 <li>verify with a <code>claude:*</code> test request or <code>airelays doctor</code></li>
+</ul>
+<h2 id="desktop-app-shows-sign-in-expired-on-an-openai-account">Desktop app shows "Sign-in expired" on an OpenAI account<a class="headerlink" href="#desktop-app-shows-sign-in-expired-on-an-openai-account" title="Permanent link">&para;</a></h2>
+<p>OpenAI ended that account's stored session (for example after signing in to
+Codex elsewhere), so the relay can no longer refresh its token. The account
+is out of rotation until you sign in again.</p>
+<ul>
+<li>click <strong>Sign in again</strong> next to the badge and pick the same account in the
+  browser — the stored sign-in is replaced in place, no sign-out needed</li>
+<li>the usage bars return within a few seconds of a successful sign-in</li>
+<li>the raw upstream error is available on hover over the note under the row</li>
+<li>from the CLI, <code>airelays login</code> does the same repair: signing in with an
+  already-enrolled account refreshes that account's stored credentials</li>
 </ul>
 <h2 id="desktop-app-shows-running-not-responding">Desktop app shows "Running — not responding"<a class="headerlink" href="#desktop-app-shows-running-not-responding" title="Permanent link">&para;</a></h2>
 <p>The relay process is alive but did not answer the app's health probe —

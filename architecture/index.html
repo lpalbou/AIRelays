@@ -1146,21 +1146,21 @@
 <li>The Claude runtime uses isolated local <code>claude -p</code> subprocesses.</li>
 </ul>
 <div class="highlight"><pre><span></span><code>flowchart LR
-    Client[&quot;OpenAI-compatible client&quot;] --&gt;|&quot;bearer token&quot;| Edge
+    Client["OpenAI-compatible client"] --&gt;|"bearer token"| Edge
 
-    subgraph Relay[&quot;AIRelays (local)&quot;]
-        Edge[&quot;FastAPI edge\nauth · rate limits · traffic log&quot;] --&gt; Registry[&quot;Provider registry\nmodel id → runtime&quot;]
-        Registry --&gt;|&quot;other model ids&quot;| Retry[&quot;Retry layer\nexponential backoff\npre-first-byte only&quot;]
-        Retry --&gt; Pool[&quot;OpenAI account pool\nbalanced selection · benching · failover&quot;]
-        Registry --&gt;|&quot;claude:* model ids&quot;| ClaudeRT[&quot;Claude runtime\nvalidation · text transcript&quot;]
-        Pool --&gt; B1[&quot;Backend adapter\naccount 1&quot;]
-        Pool --&gt; B2[&quot;Backend adapter\naccount N&quot;]
+    subgraph Relay["AIRelays (local)"]
+        Edge["FastAPI edge\nauth · rate limits · traffic log"] --&gt; Registry["Provider registry\nmodel id → runtime"]
+        Registry --&gt;|"other model ids"| Retry["Retry layer\nexponential backoff\npre-first-byte only"]
+        Retry --&gt; Pool["OpenAI account pool\nbalanced selection · benching · failover"]
+        Registry --&gt;|"claude:* model ids"| ClaudeRT["Claude runtime\nvalidation · text transcript"]
+        Pool --&gt; B1["Backend adapter\naccount 1"]
+        Pool --&gt; B2["Backend adapter\naccount N"]
     end
 
-    B1 --&gt; Upstream[&quot;ChatGPT subscription backend&quot;]
+    B1 --&gt; Upstream["ChatGPT subscription backend"]
     B2 --&gt; Upstream
-    ClaudeRT --&gt; CLI[&quot;local claude CLI\n(claude -p subprocess)&quot;]
-    CLI --&gt; Anthropic[&quot;Claude subscription&quot;]
+    ClaudeRT --&gt; CLI["local claude CLI\n(claude -p subprocess)"]
+    CLI --&gt; Anthropic["Claude subscription"]
 </code></pre></div>
 <h2 id="request-flow">Request Flow<a class="headerlink" href="#request-flow" title="Permanent link">&para;</a></h2>
 <ol>

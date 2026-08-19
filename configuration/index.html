@@ -903,28 +903,28 @@
 <p>Earlier singular AIRelay paths remain compatible for local upgrades.</p>
 <h2 id="sample-config">Sample Config<a class="headerlink" href="#sample-config" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="k">[server]</span>
-<span class="n">host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;127.0.0.1&quot;</span>
+<span class="n">host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"127.0.0.1"</span>
 <span class="n">port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8080</span>
 
 <span class="k">[paths]</span>
-<span class="n">data_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;~/.airelays&quot;</span>
-<span class="n">logs_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;~/.airelays/logs&quot;</span>
+<span class="n">data_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"~/.airelays"</span>
+<span class="n">logs_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"~/.airelays/logs"</span>
 
 <span class="k">[auth]</span>
-<span class="n">storage</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span>
+<span class="n">storage</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"auto"</span>
 <span class="n">browser_open</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
 <span class="n">login_timeout_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">900</span>
 
 <span class="k">[upstream]</span>
-<span class="n">base_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;https://chatgpt.com/backend-api/codex&quot;</span>
-<span class="n">issuer_base_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;https://auth.openai.com&quot;</span>
-<span class="n">client_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;app_EMoamEEZ73f0CkXaXp7hrann&quot;</span>
-<span class="n">client_version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.124.0&quot;</span>
+<span class="n">base_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://chatgpt.com/backend-api/codex"</span>
+<span class="n">issuer_base_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://auth.openai.com"</span>
+<span class="n">client_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"app_EMoamEEZ73f0CkXaXp7hrann"</span>
+<span class="n">client_version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"0.124.0"</span>
 <span class="n">request_timeout_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">120.0</span>
 
 <span class="k">[security]</span>
 <span class="n">require_bearer_auth</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
-<span class="n">bearer_token_file</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;~/.airelays/relay-token&quot;</span>
+<span class="n">bearer_token_file</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"~/.airelays/relay-token"</span>
 <span class="n">auto_generate_bearer_token</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
 <span class="n">rate_limit_per_minute</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">120</span>
 <span class="n">rate_limit_burst</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">40</span>
@@ -947,16 +947,16 @@
 <span class="k">[providers.openai]</span>
 <span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="n">models_cache_ttl_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">300.0</span>
-<span class="c1"># Multi-account routing: &quot;balanced&quot; (default) routes to the account with</span>
+<span class="c1"># Multi-account routing: "balanced" (default) routes to the account with</span>
 <span class="c1"># the most remaining weekly quota so consumption equalizes as a</span>
-<span class="c1"># percentage of each plan&#39;s capacity; &quot;round_robin&quot; sends equal request</span>
-<span class="c1"># counts; &quot;ordered&quot; drains the first account first.</span>
-<span class="n">balance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;balanced&quot;</span>
+<span class="c1"># percentage of each plan's capacity; "round_robin" sends equal request</span>
+<span class="c1"># counts; "ordered" drains the first account first.</span>
+<span class="n">balance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"balanced"</span>
 <span class="c1"># Extra model ids to advertise in /v1/models beyond the upstream catalog,</span>
 <span class="c1"># which lags what the backend actually serves (requests for unlisted ids</span>
 <span class="c1"># pass through regardless; the upstream stays the final authority).</span>
-<span class="n">extra_models</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;gpt-5.6-sol&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;gpt-5.6-terra&quot;</span><span class="p">]</span>
-<span class="c1"># Fallback bench duration (seconds) when a limited account&#39;s reset time is</span>
+<span class="n">extra_models</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"gpt-5.6-sol"</span><span class="p">,</span><span class="w"> </span><span class="s2">"gpt-5.6-terra"</span><span class="p">]</span>
+<span class="c1"># Fallback bench duration (seconds) when a limited account's reset time is</span>
 <span class="c1"># unknown; upstream-reported reset times are used when available.</span>
 <span class="n">account_cooldown_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">300</span>
 <span class="c1"># Automatic retry for failed upstream LLM calls. Each retry re-runs the</span>
@@ -971,11 +971,11 @@
 
 <span class="k">[providers.claude]</span>
 <span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
-<span class="n">bin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;claude&quot;</span>
+<span class="n">bin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"claude"</span>
 <span class="n">timeout_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">600.0</span>
 <span class="n">max_concurrent_requests</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
 <span class="n">strip_api_key_env</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
-<span class="n">models</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;claude:sonnet&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;claude:opus&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;claude:haiku&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;claude:fable&quot;</span><span class="p">]</span>
+<span class="n">models</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"claude:sonnet"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:opus"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:haiku"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:fable"</span><span class="p">]</span>
 </code></pre></div>
 <h2 id="important-environment-variables">Important Environment Variables<a class="headerlink" href="#important-environment-variables" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1017,7 +1017,7 @@
 <li>the configured <code>bearer_token_file</code></li>
 </ol>
 <p>Override examples:</p>
-<div class="highlight"><pre><span></span><code><span class="nv">AIRELAYS_BEARER_TOKEN</span><span class="o">=</span><span class="s1">&#39;YOUR_AIRELAYS_TOKEN&#39;</span><span class="w"> </span>airelays<span class="w"> </span>serve<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+<div class="highlight"><pre><span></span><code><span class="nv">AIRELAYS_BEARER_TOKEN</span><span class="o">=</span><span class="s1">'YOUR_AIRELAYS_TOKEN'</span><span class="w"> </span>airelays<span class="w"> </span>serve<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>serve<span class="w"> </span>--bearer-token-file<span class="w"> </span>/path/to/relay-token<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>

@@ -1143,8 +1143,9 @@ upstream policy; only reported windows are returned.</p>
 <li><code>?provider=claude</code> returns Claude subscription usage in the same
   normalized shape (see <a href="../subscription-status/">Subscription Status</a>)</li>
 <li><code>?account=&lt;email-or-prefix&gt;</code> selects one enrolled OpenAI account</li>
-<li><code>?all_accounts=true</code> returns one entry per enrolled OpenAI account
-  (folds to the single-account shape when only one exists)</li>
+<li><code>?all_accounts=true</code> returns the list shape with one entry per enrolled
+  OpenAI account (an entry carries an <code>error</code> instead of a <code>status</code> when
+  that account's usage probe fails)</li>
 <li><code>?raw=true</code> includes the raw upstream payload (OpenAI only)</li>
 </ul>
 <p><code>GET /v1/account/rate_limits</code> is an alias.</p>

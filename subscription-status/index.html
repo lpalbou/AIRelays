@@ -858,19 +858,22 @@ passes through exactly the windows the upstream reports — nothing is
 synthesized — and identifies each by its duration, not its position in
 the payload. Multi-account balancing and the desktop's per-account token
 breakdown both key on the longest reported window (the weekly budget).</p>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">&#39;http://127.0.0.1:8080/v1/subscription/status&#39;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">'http://127.0.0.1:8080/v1/subscription/status'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span>
 </code></pre></div>
 <p>With multiple enrolled accounts:</p>
 <ul>
 <li><code>?account=&lt;email-or-prefix&gt;</code> selects one account</li>
-<li><code>?all_accounts=true</code> returns one entry per account (folds to the
-  single-account shape when only one exists)</li>
+<li><code>?all_accounts=true</code> returns the list shape with one entry per account,
+  regardless of how many are enrolled; an account whose usage probe fails
+  carries an <code>error</code> string instead of a <code>status</code>, so one broken sign-in
+  never hides the others (releases before 0.12.5 folded a lone account to
+  the bare single-account shape)</li>
 <li><code>?raw=true</code> includes the raw upstream payload</li>
 </ul>
 <h2 id="claude">Claude<a class="headerlink" href="#claude" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">&#39;http://127.0.0.1:8080/v1/subscription/status?provider=claude&#39;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">'http://127.0.0.1:8080/v1/subscription/status?provider=claude'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span>
 </code></pre></div>
 <p>Returns the 5-hour and weekly windows, plus per-model weekly caps
 (Sonnet/Opus) when the subscription reports them. Notes:</p>

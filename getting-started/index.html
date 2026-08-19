@@ -1018,15 +1018,15 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--host<span class="
 </code></pre></div>
 <p>Verify:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/v1/models<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span>
 
 curl<span class="w"> </span>http://127.0.0.1:8080/v1/chat/completions<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;content-type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
-<span class="s1">    &quot;model&quot;: &quot;gpt-5.5&quot;,</span>
-<span class="s1">    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Reply with exactly: OPENAI AIRelays OK&quot;}]</span>
-<span class="s1">  }&#39;</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
+<span class="s1">    "model": "gpt-5.5",</span>
+<span class="s1">    "messages": [{"role": "user", "content": "Reply with exactly: OPENAI AIRelays OK"}]</span>
+<span class="s1">  }'</span>
 </code></pre></div>
 <h2 id="openai-open-local-relay-mode">OpenAI Open Local Relay Mode<a class="headerlink" href="#openai-open-local-relay-mode" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init<span class="w"> </span>--no-auth
@@ -1059,12 +1059,12 @@ this machine):</p>
 </code></pre></div>
 <p>Verify:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/v1/chat/completions<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;content-type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
-<span class="s1">    &quot;model&quot;: &quot;claude:sonnet&quot;,</span>
-<span class="s1">    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Reply with exactly: CLAUDE AIRelays OK&quot;}]</span>
-<span class="s1">  }&#39;</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
+<span class="s1">    "model": "claude:sonnet",</span>
+<span class="s1">    "messages": [{"role": "user", "content": "Reply with exactly: CLAUDE AIRelays OK"}]</span>
+<span class="s1">  }'</span>
 </code></pre></div>
 <p>Current Claude limits:</p>
 <ul>
@@ -1112,17 +1112,17 @@ airelays<span class="w"> </span>models<span class="w"> </span>--json
 </code></pre></div>
 <p>Standard OpenAI SDKs can use the AIRelays relay token through their normal <code>api_key</code> field when the <code>base_url</code> points at AIRelays.</p>
 <p>Example shell setup:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_BASE_URL</span><span class="o">=</span><span class="s1">&#39;http://127.0.0.1:8080/v1&#39;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">AIRELAYS_TOKEN</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>tr<span class="w"> </span>-d<span class="w"> </span><span class="s1">&#39;\n&#39;</span><span class="w"> </span>&lt;<span class="w"> </span>~/.airelays/relay-token<span class="k">)</span><span class="s2">&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_BASE_URL</span><span class="o">=</span><span class="s1">'http://127.0.0.1:8080/v1'</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">AIRELAYS_TOKEN</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>tr<span class="w"> </span>-d<span class="w"> </span><span class="s1">'\n'</span><span class="w"> </span>&lt;<span class="w"> </span>~/.airelays/relay-token<span class="k">)</span><span class="s2">"</span>
 </code></pre></div>
 <h2 id="subscription-status">Subscription Status<a class="headerlink" href="#subscription-status" title="Permanent link">&para;</a></h2>
 <p>OpenAI subscription usage:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/v1/subscription/status<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span>
 </code></pre></div>
 <p>Claude subscription usage (same normalized shape):</p>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">&#39;http://127.0.0.1:8080/v1/subscription/status?provider=claude&#39;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;authorization: Bearer YOUR_AIRELAYS_TOKEN&#39;</span>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">'http://127.0.0.1:8080/v1/subscription/status?provider=claude'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span>
 </code></pre></div>
 <p>See <a href="../subscription-status/">Subscription Status</a> for multi-account
 parameters and the payload shape.</p>
