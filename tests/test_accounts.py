@@ -1041,29 +1041,123 @@ def _model_backend(name: str, models: list[str]) -> FakeBackend:
 
 
 @pytest.mark.asyncio
-async def test_list_models_returns_intersection_across_accounts(tmp_path: Path) -> None:
+async def test_list_models_returns_union_across_accounts(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     a = _model_backend("a", ["gpt-5.5", "gpt-5-pro", "shared"])
     b = _model_backend("b", ["gpt-5.5", "shared"])
     pool = _pool(settings, [a, b], RecordingTraffic())
     payload = await pool.list_models("req")
     slugs = {item["slug"] for item in payload["models"]}
-    assert slugs == {"gpt-5.5", "shared"}  # gpt-5-pro (a-only) excluded
+    assert slugs == {"gpt-5.5", "shared", "gpt-5-pro"}
+    by_slug = {item["slug"]: item for item in payload["models"]}
+    assert by_slug["gpt-5-pro"]["account_availability"] == {"supported": 1, "total": 2}
+    assert by_slug["shared"]["account_availability"] == {"supported": 2, "total": 2}
 
 
 @pytest.mark.asyncio
-async def test_models_refresh_invalidates_all_accounts_and_empty_intersection(tmp_path: Path) -> None:
+async def test_models_refresh_invalidates_all_accounts_and_disjoint_union(tmp_path: Path) -> None:
     a = _model_backend("a", ["gpt-5.5"])
     b = _model_backend("b", ["gpt-5.5"])
     pool = _pool(_settings(tmp_path), [a, b], RecordingTraffic())
-    assert (await pool.list_models("warm"))["models"] == [{"slug": "gpt-5.5"}]
+    assert [m["slug"] for m in (await pool.list_models("warm"))["models"]] == ["gpt-5.5"]
 
     async def newer_catalog(request_id):
         return {"models": [{"slug": "gpt-6-astra"}]}
 
     b.list_models = newer_catalog
     pool.invalidate_models_cache()
-    assert (await pool.list_models("refresh"))["models"] == []
+    assert [m["slug"] for m in (await pool.list_models("refresh"))["models"]] == ["gpt-5.5", "gpt-6-astra"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("cooling", [False, True])
+async def test_subset_never_fails_over_to_unsupported_account(tmp_path, streaming, cooling):
+    import time
+    a = _model_backend("a", ["shared"])
+    b = _model_backend("b", ["shared", "exclusive"])
+    b.fail_with = BackendError(429, '{"error":{"type":"usage_limit_reached"}}')
+    pool = _pool(_settings(tmp_path, openai_balance="ordered"), [a, b], RecordingTraffic())
+    # Cold routing must discover membership before selecting, even with a
+    # session pinned to a healthy account that lacks the requested model.
+    pool._pin("session", pool._accounts[0].slot.slug)
+    if cooling:
+        pool._accounts[1].limited_until = time.monotonic() + 3600
+    with pytest.raises(BackendError) as exc:
+        if streaming:
+            _ = [event async for event in pool.stream_response_events({"model": "exclusive"}, "req", "session")]
+        else:
+            await pool.collect_response({"model": "exclusive"}, "req", "session")
+    assert exc.value.status_code == 429
+    assert a.calls == 0
+    assert b.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_union_survives_primary_catalog_failure_without_broadening_subset(tmp_path):
+    a = _model_backend("a", [])
+    b = _model_backend("b", ["exclusive"])
+    async def failed(request_id):
+        raise BackendError(502, "catalog unavailable")
+    a.list_models = failed
+    pool = _pool(_settings(tmp_path), [a, b], RecordingTraffic())
+    assert [m["slug"] for m in (await pool.list_models("req"))["models"]] == ["exclusive"]
+    assert (await pool.collect_response({"model": "exclusive"}, "req", None))["served_by"] == "b"
+    assert a.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_empty_catalog_is_known_and_cached_and_unlisted_override_is_explicit(tmp_path):
+    a = _model_backend("a", [])
+    calls = 0
+    async def empty(request_id):
+        nonlocal calls
+        calls += 1
+        return {"models": []}
+    a.list_models = empty
+    pool = _pool(_settings(tmp_path, openai_extra_models=("override",)), [a], RecordingTraffic())
+    await pool.list_models("one")
+    await pool.list_models("two")
+    assert calls == 1
+    with pytest.raises(BackendError) as exc:
+        await pool.collect_response({"model": "missing"}, "req", None)
+    assert exc.value.status_code == 422
+    assert a.calls == 0
+    assert (await pool.collect_response({"model": "override"}, "req", None))["served_by"] == "a"
+
+
+@pytest.mark.asyncio
+async def test_catalog_refresh_removes_old_routing_membership(tmp_path):
+    a = _model_backend("a", ["exclusive"])
+    b = _model_backend("b", ["shared"])
+    pool = _pool(_settings(tmp_path), [a, b], RecordingTraffic())
+    await pool.list_models("warm")
+    a.list_models = _model_backend("a", ["shared"]).list_models
+    b.list_models = _model_backend("b", ["exclusive"]).list_models
+    pool.invalidate_models_cache()
+    assert (await pool.collect_response({"model": "exclusive"}, "req", None))["served_by"] == "b"
+    assert a.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_subset_failover_uses_other_supporting_accounts(tmp_path):
+    a = _model_backend("a", ["exclusive"])
+    b = _model_backend("b", ["shared"])
+    c = _model_backend("c", ["exclusive"])
+    a.fail_with = BackendError(502, "temporary failure")
+    pool = _pool(_settings(tmp_path, openai_balance="ordered"), [a, b, c], RecordingTraffic())
+    result = await pool.collect_response({"model": "exclusive"}, "req", None)
+    assert result["served_by"] == "c"
+    assert (a.calls, b.calls, c.calls) == (1, 0, 1)
+
+
+@pytest.mark.asyncio
+async def test_usage_cache_preserves_observation_timestamp(tmp_path):
+    pool = _pool(_settings(tmp_path), [FakeBackend("a")], RecordingTraffic())
+    first, = await pool.subscription_statuses("one")
+    second, = await pool.subscription_statuses("two")
+    assert first["captured_at"]
+    assert first["captured_at"] == second["captured_at"] == pool.subscription_captured_at()
 
 
 @pytest.mark.asyncio

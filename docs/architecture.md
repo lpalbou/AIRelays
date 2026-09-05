@@ -64,6 +64,13 @@ At launch, a multi-account pool probes each account's usage and model
 catalog in the background, so accounts already at their limit are benched
 and model-aware balancing works from the first request.
 
+The public OpenAI model catalog is the union across enrolled accounts.
+Selection, affinity, and every failover attempt are restricted to the
+requested model's supporting subset, never to an unsupported account as a
+last resort. Per-account catalogs are also refreshed before routing when
+their TTL expires. Catalog failures retain last-known routing membership;
+they do not establish support on an unknown account.
+
 ## Main Components
 
 ### `airelays.config`

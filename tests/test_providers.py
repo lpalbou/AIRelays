@@ -889,6 +889,64 @@ def test_claude_usage_tolerates_missing_buckets(tmp_path) -> None:
     assert normalized["rate_limit_reached_type"] is None
 
 
+def test_claude_modern_scoped_limits_and_credit_units(tmp_path):
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    spend = {"enabled": False, "disabled_reason": "out_of_credits",
+             "used": {"amount_minor": 125, "currency": "USD", "exponent": 2}, "balance": None}
+    payload = {
+        "five_hour": {"utilization": 1},
+        "seven_day_fable": {"utilization": 1},
+        "nimbus_quill": {"utilization": 0},
+        "limits": [
+            {"kind": "session", "group": "session", "percent": 8},
+            {"kind": "weekly_all", "group": "weekly", "percent": 55},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 100,
+             "scope": {"model": {"id": None, "display_name": "Fable"}, "surface": None},
+             "resets_at": "2099-01-03T00:00:00+00:00", "is_active": True},
+        ],
+        "spend": spend,
+        "extra_usage": {"is_enabled": False, "used_credits": 125, "currency": "USD", "decimal_places": 2},
+    }
+    status = runtime._normalize_usage(payload)
+    default = status["rate_limits"]["default"]
+    assert default["primary_window"]["used_percent"] == 8
+    assert default["secondary_window"]["used_percent"] == 55
+    assert default["limit_reached"] is False
+    assert status["rate_limit_reached_type"] is None
+    extra, = status["rate_limits"]["additional"]
+    assert extra["limit_name"] == "Fable"
+    assert extra["rate_limit"]["limit_reached"] is True
+    assert extra["rate_limit"]["primary_window"]["window_seconds"] == 604800
+    assert status["spend"] == spend
+    assert status["extra_usage"] == payload["extra_usage"]
+    assert status["captured_at"]
+
+
+@pytest.mark.parametrize("percent", [None, True, "unknown", float("nan"), float("inf")])
+def test_claude_unknown_percent_is_not_zero(tmp_path, percent):
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    window = runtime._normalize_usage({"five_hour": {"utilization": percent}})["rate_limits"]["default"]["primary_window"]
+    assert window["used_percent"] is None
+    assert window["remaining_percent"] is None
+
+
+@pytest.mark.asyncio
+async def test_claude_fresh_cache_rederives_resets_and_keeps_scopes_independent(tmp_path):
+    import time
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    runtime._usage_cache = runtime._normalize_usage({
+        "five_hour": {"utilization": 100, "resets_at": "2000-01-01T00:00:00Z"},
+        "seven_day_fable": {"utilization": 100, "resets_at": "2099-01-01T00:00:00Z"},
+    })
+    runtime._usage_cache_at = time.monotonic()
+    snapshot = await runtime.get_subscription_status("req")
+    assert snapshot["rate_limit_reached_type"] is None
+    assert snapshot["rate_limits"]["default"]["primary_window"]["used_percent"] is None
+    assert snapshot["rate_limits"]["additional"][0]["rate_limit"]["limit_reached"] is True
+    assert runtime._usage_cache["rate_limit_reached_type"] == "five_hour"
+    assert snapshot["captured_at"] == runtime._usage_cache["captured_at"]
+
+
 def test_claude_usage_serves_stale_snapshot_during_rate_limit(tmp_path) -> None:
     """A 429 from the undocumented usage endpoint must not blank the UI:
     the last good snapshot is served, annotated as stale with the retry

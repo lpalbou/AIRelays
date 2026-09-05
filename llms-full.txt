@@ -68,6 +68,14 @@ Claude headless: run `claude setup-token` on any browser-equipped machine, then 
 
 ## Multiple OpenAI Accounts
 
+`/v1/models` returns the union of enrolled accounts' catalogs. Balancing,
+conversation affinity, and failover stay inside each model's supporting
+subset, even if every supporting account is cooling down. Per-model
+`airelays.account_availability` reports supporting and total account counts;
+`catalog_visibility` and `description` preserve upstream metadata, including
+entries hidden in the upstream picker. Unlisted configured overrides remain
+eligible across the pool, unless a discovered subset establishes support.
+
 One person can enroll several of their own OpenAI subscriptions; `airelays login` is additive. By default the relay routes each request to the account with the most remaining quota in its longest usage window — the weekly budget; windows are identified by duration because which windows a plan reports is upstream policy — among those that serve the requested model (`balance = "balanced"`), so consumption equalizes as a percentage of each plan's capacity; `balance = "round_robin"` sends strictly equal request counts and `balance = "ordered"` drains the first account before the next. An account at its usage limit is benched until its window resets and rejoins rotation automatically; at launch the relay probes each account's capacity and model catalog so balancing is correct from the first request. Manage with `airelays accounts` (list, order, refresh), sign out one with `airelays logout <email>`. Conversations stick to the account that served their first turn.
 
 ## Routes
@@ -92,6 +100,20 @@ The verified upstream is the ChatGPT subscription backend, not the public platfo
 - Claude runtime: discovered `claude:*` aliases and concrete `claude-*` ids, plus configured overrides; text chat/completions only, stateless, loopback-only, no tools/files/images. Structured outputs are supported on chat completions: `response_format` `json_schema`/`json_object` map to the claude CLI's `--json-schema` (native enforcement); supported types per model are published in `/v1/models` under `airelays.structured_output`.
 
 ## Subscription Usage
+
+Claude reports explicit scoped limits, including Fable's weekly cap when
+present, separately from all-model windows. The desktop names the exhausted
+scope, exposes credit/spend details with their declared currency scale, and
+does not infer missing balances. OpenAI preserves `model_usage`, credits,
+spend controls, and the distinction between available and currently usable
+limit-reset credits. Quota percentages are not token counts; the token
+breakdown only covers responses observed through this relay.
+
+Snapshots retain their fetch timestamp on cache reads. The Overview reloads
+usage every five minutes and derives countdowns from absolute reset times.
+Unknown or expired percentages display as awaiting fresh data, not zero.
+Claude's five-minute cache and persisted upstream cooldowns protect its
+usage endpoint; stale fallbacks explicitly report their age and reason.
 
 `GET /v1/subscription/status` returns per-window `used_percent`, `window_label` ("5h", "weekly", derived from each window's duration), and reset times in one shape for both providers, plus credits, spend control, and any named extra quotas (for example code review) the plan reports. Which windows appear is plan-dependent upstream policy; only reported windows are returned. OpenAI reads the subscription usage surface; query one account (`?account=`) or all (`?all_accounts=true`, always the list shape — an account whose probe fails carries a per-account `error` instead of a `status`). Claude (`?provider=claude`) returns the 5-hour and weekly windows plus per-model weekly caps when reported; its upstream source is not a publicly documented API, so the relay caches it briefly and degrades gracefully. In the desktop app, an OpenAI account whose stored sign-in was invalidated upstream shows a "Sign-in expired" badge with a one-click "Sign in again" repair that refreshes the account slot in place.
 

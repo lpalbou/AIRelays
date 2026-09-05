@@ -252,7 +252,8 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 - OpenAI model discovery queries the upstream catalog using the installed Codex client version, with a bundled version floor for standalone installations. Optional `[providers.openai] extra_models` entries extend the catalog; other unlisted ids are rejected locally when the catalog is available.
 - Claude model discovery queries the installed CLI and exposes both aliases and concrete model ids. The Models tab and `airelays models` show each reported alias resolution, such as `claude:fable` resolving to `claude-fable-5-1`.
 - The Models tab refreshes automatically every five minutes while reachable. Its Refresh button, or `GET /v1/models?refresh=true`, requests fresh provider catalogs. See [model discovery](docs/api.md#get-v1models) for cache and availability limits.
-- with multiple OpenAI accounts, both `/v1/models` and local OpenAI model admission follow the current enrolled account set rather than a stale cached snapshot
+- With multiple OpenAI accounts, `/v1/models` is the union of their catalogs. Balancing, conversation affinity, and failover stay within each model's supporting account subset. The Models tab shows account coverage and labels entries the upstream hides from its own picker.
+- Subscription bars report upstream allowances, including Claude's separately scoped Fable weekly cap when present. Credit details and snapshot times appear under each account's **more** affordance; percentages are not token counts. See [Subscription Status](docs/subscription-status.md).
 - AIRelays rejects requests when the selected runtime is disabled or the route is outside that runtime's published subset
 
 ## What AIRelays Exposes

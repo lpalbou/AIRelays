@@ -31,6 +31,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -237,8 +238,10 @@ class _PooledAccount:
     # the aggressively personal upstream endpoint from polling storms.
     usage_payload: dict[str, Any] | None = None
     usage_fetched_at: float = 0.0
+    usage_captured_at: str | None = None
     # Cached lowercase model slugs this account exposes, with fetch time.
     models: frozenset[str] = field(default_factory=frozenset)
+    models_payload: dict[str, Any] | None = None
     models_fetched_at: float = 0.0
 
     def is_limited(self, now: float) -> bool:
@@ -284,6 +287,7 @@ class OpenAiAccountPool:
         # Single-flight for usage probing: concurrent status consumers must
         # not multiply upstream hits on the rate-limited usage endpoint.
         self._usage_probe_lock = asyncio.Lock()
+        self._models_probe_lock = asyncio.Lock()
         # Ground-truth token breakdown behind the usage bars: what the relay
         # itself served per account/model in the current window.
         self._tally = WindowTokenTally(settings.data_dir / "openai-window-tokens.json")
@@ -555,12 +559,15 @@ class OpenAiAccountPool:
                     account.last_selected_at = now
                     return account
         healthy = self._healthy(now)
-        # Prefer accounts that support the requested model.
+        # Health and affinity never override model eligibility.
         model_healthy = [a for a in healthy if self._model_supported(a, model)]
-        pick_from = model_healthy or healthy
+        pick_from = model_healthy
         if not pick_from:
-            # Every account is cooling down; least-recently-limited first.
-            return min(self._accounts, key=lambda account: account.limited_until)
+            eligible = [a for a in self._accounts if self._model_supported(a, model)]
+            if not eligible:
+                raise BackendError(422, f"No account advertises model `{model}`. Refresh the model catalog.")
+            # Every eligible account is cooling down; never try an unsupported one.
+            return min(eligible, key=lambda account: account.limited_until)
         strategy = self._settings.openai_balance
         if strategy == "ordered":
             chosen = pick_from[0]  # opt-in spillover: first healthy account
@@ -716,13 +723,18 @@ class OpenAiAccountPool:
         )
 
     def _model_supported(self, account: _PooledAccount, model: str | None) -> bool:
-        """A request may only route to an account that exposes the model.
-        Unknown models (empty cache, or a slug never listed) are allowed
-        through — clients legitimately send unlisted ids, and the upstream
-        is the final authority."""
-        if not model or not account.models:
+        """Discovered models route strictly within their supporting subset.
+        Explicit unlisted overrides retain their operator-defined fallback;
+        an unknown/failed catalog is never evidence of subset membership.
+        """
+        if not model:
             return True
-        return model.lower() in account.models
+        slug = model.lower()
+        if any(slug in a.models for a in self._accounts):
+            return slug in account.models
+        if slug in {m.lower() for m in self._settings.openai_extra_models}:
+            return True
+        return all(a.models_payload is None for a in self._accounts)
 
     def _attempt_order(
         self, session_id: str | None, model: str | None = None
@@ -737,11 +749,7 @@ class OpenAiAccountPool:
             key=lambda account: (account.is_limited(now), account.limited_until),
         )
         ordered = [first, *rest]
-        # Prefer accounts that support the model; keep the rest as last-ditch
-        # fallbacks so a request is never dropped purely on a stale cache.
-        supported = [a for a in ordered if self._model_supported(a, model)]
-        unsupported = [a for a in ordered if not self._model_supported(a, model)]
-        return supported + unsupported if supported else ordered
+        return [a for a in ordered if self._model_supported(a, model)]
 
     def _log_selection(self, request_id: str, account: _PooledAccount, attempt: int) -> None:
         # `attempt` disambiguates served traffic from failover retries: a
@@ -769,6 +777,8 @@ class OpenAiAccountPool:
     ) -> dict[str, Any]:
         self.refresh_if_changed()
         model = payload.get("model") if isinstance(payload, dict) else None
+        if model:
+            await self._refresh_routing_models(request_id)
         attempts = self._attempt_order(session_id, model)
         last_error: Exception | None = None
         for index, account in enumerate(attempts):
@@ -813,6 +823,8 @@ class OpenAiAccountPool:
     ) -> AsyncIterator[SSEEvent]:
         self.refresh_if_changed()
         model = payload.get("model") if isinstance(payload, dict) else None
+        if model:
+            await self._refresh_routing_models(request_id)
         attempts = self._attempt_order(session_id, model)
         for index, account in enumerate(attempts):
             self._log_selection(request_id, account, index)
@@ -900,7 +912,7 @@ class OpenAiAccountPool:
         registry's models cache."""
         ttl = max(0.0, float(self._settings.models_cache_ttl_seconds))
         now = time.monotonic()
-        if account.models and now - account.models_fetched_at < ttl:
+        if account.models_payload is not None and now - account.models_fetched_at < ttl:
             return account.models
         payload = await account.backend.list_models(request_id)
         slugs: set[str] = set()
@@ -910,6 +922,7 @@ class OpenAiAccountPool:
                 if isinstance(item, dict) and isinstance(item.get("slug"), str):
                     slugs.add(item["slug"].lower())
         account.models = frozenset(slugs)
+        account.models_payload = payload
         account.models_fetched_at = now
         return account.models
 
@@ -918,34 +931,46 @@ class OpenAiAccountPool:
             account.models_fetched_at = 0.0
 
     async def list_models(self, request_id: str) -> dict[str, Any]:
-        # Advertise only models every authenticated account can serve, so a
-        # balanced or failed-over request never lands on an account missing
-        # the requested model. Falls back to the primary account's list when
-        # only one account is enrolled.
+        self.refresh_if_changed()
+        async with self._models_probe_lock:
+            return await self._union_models(request_id)
+
+    async def _refresh_routing_models(self, request_id: str) -> None:
+        try:
+            await self.list_models(request_id)
+        except (BackendError, AuthenticationError):
+            # Keep last-known membership during catalog outages. In
+            # particular, failure must not broaden a known model's subset.
+            pass
+
+    async def _union_models(self, request_id: str) -> dict[str, Any]:
         authed = [a for a in self._accounts if a.slot.authenticated]
-        if len(authed) <= 1:
+        if not authed:
             return await self.primary().backend.list_models(request_id)
-        raw = await self.primary().backend.list_models(request_id)
-        common: set[str] | None = None
+        union: dict[str, dict[str, Any]] = {}
+        successes = 0
+        last_error = None
         for account in authed:
             try:
-                slugs = await self._account_models(account, request_id)
-            except (BackendError, AuthenticationError):
+                await self._account_models(account, request_id)
+            except (BackendError, AuthenticationError) as error:
+                last_error = error
                 continue
-            common = slugs if common is None else (common & slugs)
-        if common is None:
-            return raw
-        models = raw.get("models") if isinstance(raw, dict) else None
-        if isinstance(models, list):
-            raw = dict(raw)
-            raw["models"] = [
-                item
-                for item in models
-                if isinstance(item, dict)
-                and isinstance(item.get("slug"), str)
-                and item["slug"].lower() in common
-            ]
-        return raw
+            successes += 1
+            models = (account.models_payload or {}).get("models")
+            for item in models if isinstance(models, list) else []:
+                if not isinstance(item, dict) or not isinstance(item.get("slug"), str):
+                    continue
+                slug = item["slug"].lower()
+                union.setdefault(slug, dict(item))
+        if not successes and last_error is not None:
+            raise last_error
+        for slug, item in union.items():
+            item["account_availability"] = {
+                "supported": sum(slug in a.models for a in authed),
+                "total": len(authed),
+            }
+        return {"models": list(union.values())}
 
     async def get_subscription_status(
         self, request_id: str, slug: str | None = None
@@ -979,8 +1004,15 @@ class OpenAiAccountPool:
         usage = await account.backend.get_subscription_status(request_id)
         account.usage_payload = usage
         account.usage_fetched_at = time.monotonic()
+        account.usage_captured_at = datetime.now(timezone.utc).isoformat()
         self._bench_from_usage(account, usage, probe_started)
         return json.loads(json.dumps(usage))
+
+    def subscription_captured_at(self, slug: str | None = None) -> str | None:
+        if not self._accounts:
+            return None
+        account = next((a for a in self._accounts if a.slot.slug == slug), None) if slug else self.primary()
+        return account.usage_captured_at if account else None
 
     async def subscription_statuses(
         self, request_id: str, *, force: bool = False
@@ -1004,6 +1036,7 @@ class OpenAiAccountPool:
                     entry["payload"] = await self._probe_usage(
                         account, request_id, force=force
                     )
+                    entry["captured_at"] = account.usage_captured_at
                 except (BackendError, AuthenticationError) as error:
                     entry["error"] = str(error)
                 results.append(entry)

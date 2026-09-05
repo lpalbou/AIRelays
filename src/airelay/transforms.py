@@ -928,10 +928,11 @@ def normalize_subscription_status_payload(
     payload: dict[str, Any],
     *,
     include_raw: bool = False,
+    captured_at: str | None = None,
 ) -> dict[str, Any]:
     normalized = {
         "object": "subscription_status",
-        "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "captured_at": captured_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source": {
             "kind": "chatgpt_subscription",
             "upstream_path": "/backend-api/wham/usage",
@@ -948,6 +949,8 @@ def normalize_subscription_status_payload(
             "additional": _normalize_additional_rate_limits(payload.get("additional_rate_limits")),
         },
         "credits": _normalize_credits(payload.get("credits")),
+        "model_usage": copy.deepcopy(payload.get("model_usage"))
+        if isinstance(payload.get("model_usage"), dict) else None,
         "spend_control": payload.get("spend_control")
         if isinstance(payload.get("spend_control"), dict)
         else None,

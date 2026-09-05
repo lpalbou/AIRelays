@@ -164,7 +164,23 @@ function modelRow(model) {
   const id = document.createElement("code");
   id.className = "model-id";
   id.textContent = model.id;
+  if (model.airelays?.description) id.title = model.airelays.description;
   row.appendChild(id);
+  const availability = model.airelays?.account_availability;
+  if (availability && availability.total > 1) {
+    const support = document.createElement("span");
+    support.className = "model-reasoning";
+    support.textContent = `${availability.supported}/${availability.total} accounts`;
+    support.title = "Balancing and failover use only accounts whose catalog includes this model.";
+    row.appendChild(support);
+  }
+  if (model.airelays?.catalog_visibility === "hide") {
+    const hidden = document.createElement("span");
+    hidden.className = "model-reasoning";
+    hidden.textContent = "upstream-hidden";
+    hidden.title = "Returned by the provider catalog, but hidden in its model picker. Its underlying identity is not inferred.";
+    row.appendChild(hidden);
+  }
   const resolved = model.airelays?.resolved_model;
   if (resolved && resolved !== model.id) {
     const target = document.createElement("span");

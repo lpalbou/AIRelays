@@ -5,6 +5,7 @@ import difflib
 import errno
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -77,6 +78,9 @@ class ProviderModel:
     resolved_model: str | None = None
     discovery_source: str = "configured"
     display_name: str | None = None
+    account_availability: dict[str, int] | None = None
+    catalog_visibility: str | None = None
+    description: str | None = None
 
     def as_wire(self) -> dict[str, Any]:
         return {
@@ -90,6 +94,9 @@ class ProviderModel:
                 "resolved_model": self.resolved_model,
                 "discovery_source": self.discovery_source,
                 "display_name": self.display_name,
+                "account_availability": self.account_availability,
+                "catalog_visibility": self.catalog_visibility,
+                "description": self.description,
                 "capabilities": {
                     "routes": self.routes,
                     "stateful_conversations": self.stateful_conversations,
@@ -148,6 +155,9 @@ def _openai_model_record(model_id: str, catalog: dict[str, Any] | None = None) -
         structured_output_types=("json_schema",),
         discovery_source="upstream_catalog" if catalog is not None else "configured",
         display_name=catalog.get("display_name") if catalog else None,
+        account_availability=catalog.get("account_availability") if catalog else None,
+        catalog_visibility=catalog.get("visibility") if catalog else None,
+        description=catalog.get("description") if catalog else None,
     )
 
 
@@ -1295,7 +1305,9 @@ class ClaudeCliRuntime:
         del request_id
         now = time.monotonic()
         if self._usage_cache is not None and now - self._usage_cache_at < CLAUDE_USAGE_CACHE_SECONDS:
-            return json.loads(json.dumps(self._usage_cache))
+            snapshot = json.loads(json.dumps(self._usage_cache))
+            _refresh_stale_windows(snapshot)
+            return snapshot
         # Inside a rate-limit window: never poke the upstream again (that
         # can extend the lockout). Serve honest stale data when we have it.
         if now < self._usage_blocked_until:
@@ -1308,7 +1320,9 @@ class ClaudeCliRuntime:
                 self._usage_cache is not None
                 and now - self._usage_cache_at < CLAUDE_USAGE_CACHE_SECONDS
             ):
-                return json.loads(json.dumps(self._usage_cache))
+                snapshot = json.loads(json.dumps(self._usage_cache))
+                _refresh_stale_windows(snapshot)
+                return snapshot
             if now < self._usage_blocked_until:
                 return self._stale_or_usage_error(now, "rate_limited")
             return await self._fetch_usage()
@@ -1558,7 +1572,7 @@ class ClaudeCliRuntime:
         primary = _claude_usage_window(payload.get("five_hour"), CLAUDE_FIVE_HOUR_SECONDS)
         secondary = _claude_usage_window(payload.get("seven_day"), CLAUDE_SEVEN_DAY_SECONDS)
         additional = []
-        for key, label in (("seven_day_sonnet", "Sonnet"), ("seven_day_opus", "Opus")):
+        for key, label in (("seven_day_sonnet", "Sonnet"), ("seven_day_opus", "Opus"), ("seven_day_fable", "Fable")):
             window = _claude_usage_window(payload.get(key), CLAUDE_SEVEN_DAY_SECONDS)
             if window is not None:
                 additional.append(
@@ -1567,20 +1581,60 @@ class ClaudeCliRuntime:
                         "metered_feature": None,
                         "rate_limit": {
                             "allowed": None,
-                            "limit_reached": window["used_percent"] >= 100,
+                            "limit_reached": _window_at_limit(window),
                             "primary_window": window,
                             "secondary_window": None,
                         },
                     }
                 )
+        # The modern endpoint explicitly names scopes. Opaque legacy keys
+        # must not be guessed: e.g. a Fable cap arrives as weekly_scoped.
+        scoped = []
+        modern_limits = payload.get("limits")
+        for limit in modern_limits if isinstance(modern_limits, list) else []:
+            if not isinstance(limit, dict):
+                continue
+            kind = limit.get("kind")
+            seconds = (CLAUDE_FIVE_HOUR_SECONDS if kind == "session" else
+                       CLAUDE_SEVEN_DAY_SECONDS if limit.get("group") == "weekly" or kind == "weekly_all" else None)
+            window = _claude_usage_window(
+                {"utilization": limit.get("percent"), "resets_at": limit.get("resets_at")}, seconds
+            )
+            if kind == "session":
+                primary = window
+            elif kind == "weekly_all":
+                secondary = window
+            else:
+                scope = limit.get("scope") if isinstance(limit.get("scope"), dict) else {}
+                labels = []
+                for value in scope.values():
+                    label = value.get("display_name") or value.get("id") if isinstance(value, dict) else value
+                    if isinstance(label, str) and label:
+                        labels.append(label)
+                label = " / ".join(labels) or str(kind or "Additional limit")
+                scoped.append({
+                    "limit_name": label,
+                    "metered_feature": kind,
+                    "scope": scope,
+                    "severity": limit.get("severity"),
+                    "is_active": limit.get("is_active"),
+                    "rate_limit": {"allowed": None, "limit_reached": _window_at_limit(window),
+                                   "primary_window": window, "secondary_window": None},
+                })
+        modern_labels = {extra["limit_name"].lower() for extra in scoped}
+        additional = [extra for extra in additional if extra["limit_name"].lower() not in modern_labels] + scoped
         reached_type = None
-        if primary is not None and primary["used_percent"] >= 100:
+        if _window_at_limit(primary):
             reached_type = "five_hour"
-        elif secondary is not None and secondary["used_percent"] >= 100:
+        elif _window_at_limit(secondary):
             reached_type = "seven_day"
         return {
             "object": "subscription_status",
             "provider": "claude",
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "source": {"kind": "claude_subscription", "upstream_path": "/api/oauth/usage"},
+            "spend": payload.get("spend") if isinstance(payload.get("spend"), dict) else None,
+            "extra_usage": payload.get("extra_usage") if isinstance(payload.get("extra_usage"), dict) else None,
             "account": {
                 "email": probe.get("email"),
                 "plan_type": probe.get("subscription_type"),
@@ -1703,37 +1757,25 @@ def _refresh_stale_windows(snapshot: dict[str, Any]) -> None:
     served frozen for up to two hours; a window whose reset has passed also
     no longer justifies an "at limit" state."""
     wall_now = int(datetime.now(timezone.utc).timestamp())
-    windows: list[dict[str, Any]] = []
     limits = snapshot.get("rate_limits") or {}
     default = limits.get("default") or {}
-    for key in ("primary_window", "secondary_window"):
-        if isinstance(default.get(key), dict):
-            windows.append(default[key])
-    for extra in limits.get("additional") or []:
-        rate = (extra or {}).get("rate_limit") or {}
-        for key in ("primary_window", "secondary_window"):
-            if isinstance(rate.get(key), dict):
-                windows.append(rate[key])
-
-    any_still_limited = False
-    for window in windows:
-        reset_at = window.get("reset_at")
-        if isinstance(reset_at, (int, float)) and reset_at > 0:
-            remaining = max(0, int(reset_at) - wall_now)
-            window["reset_after_seconds"] = remaining
-            if remaining == 0:
-                # The window rolled over while we were locked out: its
-                # percentages are unknown but a reached limit is certainly
-                # gone.
-                window["used_percent"] = None
-                window["remaining_percent"] = None
-        used = window.get("used_percent")
-        if isinstance(used, (int, float)) and used >= 100:
-            any_still_limited = True
-    if not any_still_limited:
-        snapshot["rate_limit_reached_type"] = None
-        if isinstance(default, dict) and default:
-            default["limit_reached"] = False
+    groups = [default, *((extra or {}).get("rate_limit") or {} for extra in limits.get("additional") or [])]
+    for rate in groups:
+        windows = [rate[key] for key in ("primary_window", "secondary_window") if isinstance(rate.get(key), dict)]
+        for window in windows:
+            reset_at = window.get("reset_at")
+            if isinstance(reset_at, (int, float)) and reset_at > 0:
+                remaining = max(0, int(reset_at) - wall_now)
+                window["reset_after_seconds"] = remaining
+                if remaining == 0:
+                    window["used_percent"] = None
+                    window["remaining_percent"] = None
+        if rate:
+            rate["limit_reached"] = any(_window_at_limit(window) for window in windows)
+    snapshot["rate_limit_reached_type"] = (
+        "five_hour" if _window_at_limit(default.get("primary_window")) else
+        "seven_day" if _window_at_limit(default.get("secondary_window")) else None
+    )
 
 
 def _token_fingerprint(token: str) -> str:
@@ -1783,14 +1825,18 @@ def _fresh_oauth_access_token(payload: Any) -> str | None:
     return str(token)
 
 
-def _claude_usage_window(bucket: Any, window_seconds: int) -> dict[str, Any] | None:
+def _window_at_limit(window: dict[str, Any] | None) -> bool:
+    used = (window or {}).get("used_percent")
+    return isinstance(used, (int, float)) and used >= 100
+
+
+def _claude_usage_window(bucket: Any, window_seconds: int | None) -> dict[str, Any] | None:
     """One usage bucket → the same window shape transforms.py produces for
     OpenAI, so the UI's single renderer covers both providers."""
     if not isinstance(bucket, dict):
         return None
     used_raw = bucket.get("utilization")
-    used = float(used_raw) if isinstance(used_raw, (int, float)) else 0.0
-    used = max(0.0, min(100.0, used))
+    used = float(used_raw) if isinstance(used_raw, (int, float)) and not isinstance(used_raw, bool) and math.isfinite(used_raw) else None
     resets_at_iso = bucket.get("resets_at")
     reset_at: int | None = None
     reset_after_seconds: int | None = None
@@ -1803,10 +1849,10 @@ def _claude_usage_window(bucket: Any, window_seconds: int) -> dict[str, Any] | N
             pass
     return {
         "used_percent": used,
-        "remaining_percent": round(100.0 - used, 2),
+        "remaining_percent": round(max(0, 100.0 - used), 2) if used is not None else None,
         "window_seconds": window_seconds,
-        "window_minutes": window_seconds // 60,
-        "window_label": "weekly" if window_seconds == CLAUDE_SEVEN_DAY_SECONDS else "5h",
+        "window_minutes": window_seconds // 60 if window_seconds is not None else None,
+        "window_label": "weekly" if window_seconds == CLAUDE_SEVEN_DAY_SECONDS else "5h" if window_seconds == CLAUDE_FIVE_HOUR_SECONDS else None,
         "reset_after_seconds": reset_after_seconds,
         "reset_at": reset_at,
         "reset_at_iso": resets_at_iso if isinstance(resets_at_iso, str) else None,

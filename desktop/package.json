@@ -1,6 +1,6 @@
 {
   "name": "airelays-desktop",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "private": true,
   "description": "AIRelays cross-platform tray app (Tauri): relay supervision and dashboard.",
   "scripts": {

@@ -581,7 +581,8 @@ def create_app(settings: Settings) -> FastAPI:
                             **(
                                 {
                                     "status": normalize_subscription_status_payload(
-                                        entry["payload"], include_raw=raw
+                                        entry["payload"], include_raw=raw,
+                                        captured_at=entry.get("captured_at"),
                                     )
                                 }
                                 if "payload" in entry
@@ -600,6 +601,8 @@ def create_app(settings: Settings) -> FastAPI:
                 payload = normalize_subscription_status_payload(
                     upstream_payload,
                     include_raw=raw,
+                    captured_at=backend.subscription_captured_at(account)
+                    if hasattr(backend, "subscription_captured_at") else None,
                 )
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc

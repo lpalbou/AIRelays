@@ -62,8 +62,11 @@ adaptation records when the request shape itself is repaired:
   with a clear 422 and suggestions from `/v1/models`, instead of failing
   later upstream with an account-scoped unsupported-model error. In
   multi-account mode, the same cache is invalidated when the enrolled
-  OpenAI account set changes, so admission follows the current shared
-  model intersection instead of a stale catalog snapshot.
+  OpenAI account set changes, so admission follows the union of their
+  catalogs. Routing and failover use only the accounts listing the model,
+  even when all supporting accounts are cooling down. Explicit unlisted
+  `extra_models` overrides remain eligible across the pool; if an override
+  appears in an account catalog, its discovered subset takes precedence.
 - **Account affinity:** with multiple OpenAI accounts, a conversation is
   pinned to the account that served its first turn (protects upstream
   prompt caching); failover to another account happens only at turn
@@ -100,7 +103,9 @@ Returns an OpenAI-style models list built from the enabled provider runtimes.
 - `GET /v1/models?refresh=true` bypasses the provider catalog caches, including all OpenAI account catalogs. The desktop Refresh button uses this parameter, and the open Models tab also reloads every five minutes while the relay is reachable.
 - `airelays.discovery_source` identifies `upstream_catalog`, `claude_cli`, or a `configured` override. `airelays.upstream_model` is the selector forwarded upstream. `airelays.resolved_model` reports the concrete Claude model when the CLI supplies it; `airelays.display_name` carries its provider label. Aliases keep following the CLI's selection; use a concrete id to pin a model version.
 - Configured OpenAI `extra_models` and Claude `models` extend discovery. They are retained for compatibility and may not have catalog confirmation. A missing or incompatible Claude CLI retains configured ids and the last successful catalog; `providers.claude.models_discovery_error` in relay status reports discovery failures. Failed Claude probes are cached for the same interval to avoid repeatedly launching a failing CLI.
-- Catalog discovery reports provider availability and capabilities; it does not generate a test response for every model. Account limits and upstream availability still apply when serving a request. With several OpenAI accounts, the catalog uses the shared model intersection, including an empty intersection when no model is common.
+- With several OpenAI accounts, discovery returns the union of successful catalogs and preserves each model's metadata. `airelays.account_availability` reports `supported` and `total` account counts without disclosing account identities. A failed account catalog does not hide models returned by other accounts. Routing retains last-known membership during catalog outages rather than broadening a known subset.
+- `airelays.catalog_visibility` and `airelays.description` preserve upstream metadata. Entries marked `hide` appear as **upstream-hidden** in the desktop; AIRelays does not infer their underlying identity or promote them as recommended models.
+- Catalog discovery reports provider availability and capabilities; it does not generate a test response for every model. Account limits and upstream availability still apply when serving a request.
 
 ## `GET /v1/subscription/status`
 

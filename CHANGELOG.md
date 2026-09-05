@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.1
+
+### Fixed
+
+- OpenAI models are the union of enrolled account catalogs. Requests, conversation affinity, and failover use only the subset listing the requested model, including during cooldowns. A failed primary catalog no longer hides other accounts' models.
+- The Models tab reports account coverage and upstream-hidden catalog entries without guessing their underlying model identity.
+- Claude usage includes modern scoped limits such as Fable's weekly allowance, independently of all-model limits, plus usage-credit status and correctly scaled monetary details.
+- Usage snapshots retain their fetch timestamps; Overview refreshes every five minutes and updates reset countdowns from absolute times. Unknown and expired percentages are not displayed as zero usage.
+- OpenAI usage preserves model availability and distinguishes available limit-reset credits from credits usable right now.
+
 ## 0.13.0
 
 ### Added

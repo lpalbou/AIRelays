@@ -26,6 +26,8 @@ let usageByEmail = new Map();
 // Claude usage (same normalized shape as one OpenAI account's status).
 let claudeUsage = null;
 let usageStamp = 0;
+let usageLoadedAt = 0;
+let usageLoading = false;
 
 export const overviewView = {
   async mount(container, ctx) {
@@ -41,7 +43,7 @@ export const overviewView = {
     lastState = state;
     render(state);
     // Load usage automatically once the relay is reachable.
-    if (state?.reachable && !usageLoadedOnce) {
+    if (state?.reachable && !usageLoading && (!usageLoadedOnce || Date.now() - usageLoadedAt >= 300_000)) {
       usageLoadedOnce = true;
       loadUsage();
     }
@@ -61,6 +63,8 @@ export const overviewView = {
     usageByEmail = new Map();
     claudeUsage = null;
     usageStamp = 0;
+    usageLoadedAt = 0;
+    usageLoading = false;
   },
 };
 
@@ -657,14 +661,18 @@ async function withRefreshSpinner(button, task) {
 }
 
 async function loadUsage() {
-  if (!root) return;
+  if (!root || usageLoading) return;
+  usageLoading = true;
+  const currentRoot = root;
   let usage;
   try {
     usage = await api.getUsage();
   } catch {
     usage = null; // account rows still render, just without bars
   }
-  if (!root) return;
+  if (root !== currentRoot) return;
+  usageLoading = false;
+  usageLoadedAt = Date.now();
   usageByEmail = new Map();
   claudeUsage = usage?.claude ?? null;
   if (Array.isArray(usage?.accounts)) {
@@ -790,7 +798,10 @@ function usageWindowRow(label, window) {
   // A null used_percent means the window rolled over while we couldn't
   // reach the endpoint (stale snapshot): the old numbers are meaningless,
   // so show an empty bar and say so rather than fabricating "0% · <1m".
-  if (window.used_percent == null) {
+  const resetSeconds = Number.isFinite(window.reset_at)
+    ? Math.max(0, window.reset_at - Date.now() / 1000)
+    : window.reset_after_seconds;
+  if (!Number.isFinite(window.used_percent) || (Number.isFinite(window.reset_at) && resetSeconds === 0)) {
     detail.textContent = "awaiting fresh data";
     return row;
   }
@@ -808,14 +819,19 @@ function usageWindowRow(label, window) {
   bar.setAttribute("aria-valuenow", String(Math.round(used)));
 
   const resets =
-    window.reset_after_seconds > 0 ? formatDuration(window.reset_after_seconds) : null;
+    resetSeconds > 0 ? formatDuration(resetSeconds) : null;
   const stamp = resets ? formatResetStamp(window.reset_at) : null;
   setUsageDetail(
     detail,
-    `${used.toFixed(0)}% used`,
+    `${window.used_percent.toFixed(0)}% used`,
     resets ? ` · resets in ${resets}${stamp ? ` (${stamp})` : ""}` : ""
   );
   return row;
+}
+
+function windowAtLimit(window) {
+  return Number.isFinite(window?.used_percent) && window.used_percent >= 100 &&
+    (!Number.isFinite(window.reset_at) || window.reset_at > Date.now() / 1000);
 }
 
 // Flattens a normalized subscription-status payload into labeled windows.
@@ -1207,7 +1223,29 @@ function usageFacts(status) {
   }
   const resetCredits = status.rate_limit_reset_credits;
   if (resetCredits?.available_count > 0) {
-    facts.push(["limit-reset credits", String(resetCredits.available_count)]);
+    const applicable = resetCredits.applicable_available_count;
+    facts.push(["limit-reset credits", `${resetCredits.available_count} available${applicable != null ? `; ${applicable} usable now` : ""}`]);
+  }
+  const claudeSpend = status.spend;
+  if (claudeSpend) {
+    const state = claudeSpend.enabled === true ? "enabled" : claudeSpend.enabled === false ? "disabled" : "unknown";
+    facts.push(["usage credits", `${state}${claudeSpend.disabled_reason ? ` (${claudeSpend.disabled_reason.replaceAll("_", " ")})` : ""}`]);
+    for (const [key, label] of [["used", "credit spend"], ["limit", "spend limit"], ["balance", "credit balance"]]) {
+      const value = formatMinorMoney(claudeSpend[key]);
+      if (value != null) facts.push([label, value]);
+    }
+  } else if (status.extra_usage) {
+    const extra = status.extra_usage;
+    facts.push(["extra usage", extra.is_enabled === true ? "enabled" : extra.is_enabled === false ? "disabled" : "unknown"]);
+    for (const [key, label] of [["used_credits", "credit spend"], ["monthly_limit", "monthly spend limit"]]) {
+      const value = formatMinorMoney({amount_minor: extra[key], currency: extra.currency, exponent: extra.decimal_places});
+      if (value != null) facts.push([label, value]);
+    }
+  }
+  for (const [model, usage] of Object.entries(status.model_usage ?? {})) {
+    if (typeof usage?.available === "boolean") {
+      facts.push([model, usage.available ? "available" : `unavailable${usage.credits_would_enable ? "; credits would enable" : ""}`]);
+    }
   }
   if (status.captured_at) {
     const captured = new Date(status.captured_at);
@@ -1221,6 +1259,11 @@ function usageFacts(status) {
   return facts;
 }
 
+function formatMinorMoney(value) {
+  if (!value || !Number.isFinite(value.amount_minor) || !Number.isInteger(value.exponent) || value.exponent < 0 || value.exponent > 6 || typeof value.currency !== "string") return null;
+  return `${value.currency} ${(value.amount_minor / 10 ** value.exponent).toFixed(value.exponent)}`;
+}
+
 // Ground truth behind the usage bars, revealed on hover of "more": the
 // account facts the bars can't carry (usageFacts above), then what this
 // relay served on the account during its current usage window, per model.
@@ -1228,7 +1271,7 @@ function usageFacts(status) {
 // so the title names the window the tally payload reports instead of
 // hardcoding "5h". Every account gets the affordance; without data the
 // panel says so instead of the trigger silently missing.
-function windowTokensDetail(windowTokens, status) {
+function windowTokensDetail(windowTokens, status, showTokens = true) {
   const models = Array.isArray(windowTokens?.models) ? windowTokens.models : [];
   const wrap = document.createElement("div");
   wrap.className = "account-more";
@@ -1268,6 +1311,10 @@ function windowTokensDetail(windowTokens, status) {
       factsTable.appendChild(row);
     }
     panel.appendChild(factsTable);
+  }
+  if (!showTokens) {
+    wrap.append(trigger, panel);
+    return wrap;
   }
   const title = document.createElement("div");
   title.className = "account-more-title";
@@ -1325,7 +1372,7 @@ function renderAccounts(state) {
   const cacheKey =
     JSON.stringify(providers ?? null) + "|" + usageStamp + "|" + [...pendingLogout].join(",") +
     "|" + (lastState?.claude_effective ?? "") + "|" + (lastState?.claude_token_present ?? "") +
-    "|" + pendingClaudeLogout;
+    "|" + pendingClaudeLogout + "|" + Math.floor(Date.now() / 60_000);
   if (cacheKey === renderCache.accounts) {
     return;
   }
@@ -1399,7 +1446,11 @@ function claudeBlock(claude, paused) {
   plan.textContent = claude.subscription_type ?? claudeUsage?.account?.plan_type ?? "";
 
   const badge = document.createElement("span");
-  const atLimit = Boolean(claudeUsage?.rate_limit_reached_type);
+  const atLimit = usageWindows({rate_limits: {default: claudeUsage?.rate_limits?.default}})
+    .some(([, window]) => windowAtLimit(window));
+  const scopedLimits = (claudeUsage?.rate_limits?.additional ?? [])
+    .filter((extra) => usageWindows({rate_limits: {default: extra.rate_limit}}).some(([, window]) => windowAtLimit(window)))
+    .map((extra) => extra.limit_name);
   // Usage state is part of the row's health: "Ready" with a broken usage
   // meter would be a half-truth.
   const usageBlocked = Boolean(claudeUsage?.error);
@@ -1411,6 +1462,10 @@ function claudeBlock(claude, paused) {
     badge.className = "badge badge-warn";
     badge.textContent = "At limit";
     badge.title = "Usage limit reached; it resets on schedule.";
+  } else if (claude.ready_for_requests && scopedLimits.length) {
+    badge.className = "badge badge-warn";
+    badge.textContent = `${scopedLimits.join(", ")} at limit`;
+    badge.title = "A scoped allowance is exhausted; other models may still be available. See usage bars and credit details.";
   } else if (claude.ready_for_requests && usageBlocked) {
     badge.className = "badge badge-warn";
     badge.textContent = "Usage unavailable";
@@ -1471,6 +1526,7 @@ function claudeBlock(claude, paused) {
     for (const [label, window] of usageWindows(claudeUsage)) {
       block.appendChild(usageWindowRow(label, window));
     }
+    block.appendChild(windowTokensDetail(null, claudeUsage, false));
     // Stale snapshot: show the bars (better than nothing) but say they are
     // cached, and why a fresh read isn't possible yet.
     if (claudeUsage.stale) {
