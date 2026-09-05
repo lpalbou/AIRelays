@@ -912,7 +912,11 @@ class OpenAiAccountPool:
         registry's models cache."""
         ttl = max(0.0, float(self._settings.models_cache_ttl_seconds))
         now = time.monotonic()
-        if account.models_payload is not None and now - account.models_fetched_at < ttl:
+        if (
+            account.models_payload is not None
+            and account.models_fetched_at > 0
+            and now - account.models_fetched_at < ttl
+        ):
             return account.models
         payload = await account.backend.list_models(request_id)
         slugs: set[str] = set()
