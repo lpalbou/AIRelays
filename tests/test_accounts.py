@@ -1052,6 +1052,21 @@ async def test_list_models_returns_intersection_across_accounts(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_models_refresh_invalidates_all_accounts_and_empty_intersection(tmp_path: Path) -> None:
+    a = _model_backend("a", ["gpt-5.5"])
+    b = _model_backend("b", ["gpt-5.5"])
+    pool = _pool(_settings(tmp_path), [a, b], RecordingTraffic())
+    assert (await pool.list_models("warm"))["models"] == [{"slug": "gpt-5.5"}]
+
+    async def newer_catalog(request_id):
+        return {"models": [{"slug": "gpt-6-astra"}]}
+
+    b.list_models = newer_catalog
+    pool.invalidate_models_cache()
+    assert (await pool.list_models("refresh"))["models"] == []
+
+
+@pytest.mark.asyncio
 async def test_request_routes_to_account_supporting_the_model(tmp_path: Path) -> None:
     settings = _settings(tmp_path, openai_balance="ordered")
     # Account a is first but lacks the requested model; b has it.

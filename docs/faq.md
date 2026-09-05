@@ -41,7 +41,7 @@ airelays serve --no-auth --port 8080
 
 Yes, in a constrained text-only form.
 
-- explicit `claude:*` models
+- discovered Claude aliases and concrete model ids, plus configured overrides
 - local `claude` CLI only
 - text `chat.completions`
 - text `completions`
@@ -86,11 +86,20 @@ terms and usage policies); re-check them periodically, they change.
 Set `reasoning_effort` in your request to one of the model's supported
 modes. Every model's modes and default are published in `/v1/models`
 under `airelays.reasoning`, shown in the desktop Models tab, and listed
-by `airelays models`. OpenAI models accept `none`, `low`, `medium`,
-`high`, `xhigh` (omitted means `none`, lower than the official apps'
-`medium`); Claude models accept `low`, `medium`, `high`, `xhigh`, `max`
-(omitted means the model's adaptive default). See
+by `airelays models`. Supported modes vary by model and are read from
+provider catalogs when available, including `max` and `ultra` where
+reported. Omitted effort uses the provider's default; Claude can use an
+adaptive default. See
 [API notes](api.md) for details.
+
+## Which model is behind a Claude alias?
+
+The Models tab and `airelays models` show the concrete model reported by
+the installed Claude CLI. For example, a CLI can resolve `claude:fable`
+to `claude-fable-5-1`. The alias follows CLI updates and account settings;
+the discovered concrete id pins that version. Use Refresh to query the
+CLI again. A `configured` label means the catalog did not confirm that
+selector, so AIRelays does not claim a concrete resolution for it.
 
 ## Does AIRelays support Gemini?
 

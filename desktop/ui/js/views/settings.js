@@ -40,7 +40,7 @@ const FIELDS = [
       { key: "upstreamBaseUrl", label: "Upstream base URL", kind: "text" },
       { key: "issuerBaseUrl", label: "Issuer base URL", kind: "text" },
       { key: "clientId", label: "Client ID", kind: "text" },
-      { key: "clientVersion", label: "Client version", kind: "text" },
+      { key: "clientVersion", label: "Client version (auto follows installed Codex)", kind: "text" },
       { key: "requestTimeoutSeconds", label: "Request timeout (seconds)", kind: "number", min: 1, max: 3600 },
     ],
   },

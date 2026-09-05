@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.13.0
+
+### Added
+
+- Automatic OpenAI catalog client-version discovery follows the installed Codex CLI, with a tested version floor for standalone installations. Existing `0.124.0` settings migrate to automatic behavior, allowing version-gated models such as `gpt-6-astra` and `gpt-5.6-luna` to appear without adding model-name overrides. Other explicit version pins remain supported.
+- Claude model discovery reads the installed CLI's catalog and alias resolutions without generating text. Discovered aliases and concrete ids are available for requests; the desktop Models tab and `airelays models` show the reported model behind each alias, including Fable 5.1 when selected by the CLI.
+- `GET /v1/models?refresh=true` reloads provider catalogs. The desktop Refresh button bypasses the caches, and the Models tab reloads automatically every five minutes while the relay is reachable.
+
+### Changed
+
+- Model records publish provider-reported reasoning modes and defaults where available, plus discovery source, display name, and concrete Claude alias resolution. Configured overrides remain supported and are identified separately from catalog-discovered models. New installations default to an empty OpenAI `extra_models` list.
+
+### Fixed
+
+- Refresh invalidates every OpenAI account's catalog cache. An empty shared model intersection is returned as empty, and a zero catalog TTL also disables per-account model caching.
+- Models rows wrap long ids and alias details to fit the available width.
+
 ## 0.12.5
 
 ### Fixed

@@ -30,10 +30,11 @@ adaptation records when the request shape itself is repaired:
   is treated as absent. Each model's supported modes and default are published
   in `/v1/models` under `airelays.reasoning`. Unsupported Claude values are
   rejected with the supported list (the CLI would silently ignore them);
-  unsupported OpenAI values surface the upstream's own error. Requests
-  that omit the parameter run OpenAI models at upstream effort `none` —
-  lower than the `medium` the official ChatGPT apps use — and Claude
-  models at their adaptive default.
+  unsupported OpenAI values surface the upstream's own error. Modes and
+  defaults come from the provider catalog when available and vary by model.
+  Omitting effort leaves the choice to the provider; Claude can use an
+  adaptive default. An empty Claude modes list means no effort parameter
+  is advertised for that model.
 - **Structured outputs:** `response_format.type=json_schema` is forwarded
   (translated) to OpenAI models; on `claude:*` chat completions both
   `json_schema` and `json_object` are honored via the claude CLI's native
@@ -86,16 +87,20 @@ adaptation records when the request shape itself is repaired:
 
 Returns an OpenAI-style models list built from the enabled provider runtimes.
 
-- OpenAI models come from the verified ChatGPT subscription backend when that runtime is ready.
-- Claude models are explicit `claude:*` ids.
-- models starting with `claude:` route to the Claude runtime when it is enabled
+- OpenAI models come from the authenticated ChatGPT/Codex upstream catalog. The default client version setting, `auto`, follows the installed `codex --version`, with a tested version floor when the CLI is missing or older. Model names are not hard-coded into automatic discovery.
+- Claude models come from the installed CLI's initialization catalog, including its alias resolutions and per-model reasoning modes. Discovery sends no generation prompt. Both `claude:*` aliases and discovered concrete `claude-*` ids are accepted.
+- models starting with `claude:` or `claude-` route to the Claude runtime when it is enabled
 - other model ids route to the OpenAI runtime when it is enabled
 - Each model record includes an `airelays` extension block with provider identity, route capabilities, a `reasoning` block (`parameter`, supported `modes`, `default`), and a `structured_output` block (`parameter`, supported `types` for `response_format` on chat completions).
-- Successful OpenAI upstream model-list responses are cached in memory for
+- Provider catalogs are cached in memory for
   `models_cache_ttl_seconds` seconds. The default is 300 seconds; `0`
   disables the cache.
 - Cached OpenAI model lists are scoped to the current local OpenAI auth account
   and ignored after logout or account changes.
+- `GET /v1/models?refresh=true` bypasses the provider catalog caches, including all OpenAI account catalogs. The desktop Refresh button uses this parameter, and the open Models tab also reloads every five minutes while the relay is reachable.
+- `airelays.discovery_source` identifies `upstream_catalog`, `claude_cli`, or a `configured` override. `airelays.upstream_model` is the selector forwarded upstream. `airelays.resolved_model` reports the concrete Claude model when the CLI supplies it; `airelays.display_name` carries its provider label. Aliases keep following the CLI's selection; use a concrete id to pin a model version.
+- Configured OpenAI `extra_models` and Claude `models` extend discovery. They are retained for compatibility and may not have catalog confirmation. A missing or incompatible Claude CLI retains configured ids and the last successful catalog; `providers.claude.models_discovery_error` in relay status reports discovery failures. Failed Claude probes are cached for the same interval to avoid repeatedly launching a failing CLI.
+- Catalog discovery reports provider availability and capabilities; it does not generate a test response for every model. Account limits and upstream availability still apply when serving a request. With several OpenAI accounts, the catalog uses the shared model intersection, including an empty intersection when no model is common.
 
 ## `GET /v1/subscription/status`
 
@@ -172,7 +177,7 @@ OpenAI runtime:
 
 Claude runtime:
 
-- explicit `claude:*` models only
+- discovered Claude aliases and concrete model ids, plus configured overrides
 - text-only `system`, `developer`, `user`, and `assistant` messages
 - `stream=true|false`
 - no tools
@@ -208,7 +213,7 @@ OpenAI runtime:
 
 Claude runtime:
 
-- explicit `claude:*` models only
+- discovered Claude aliases and concrete model ids, plus configured overrides
 - text-only prompt-in, text-out
 - `stream=true|false`
 - no files, images, audio, or tools

@@ -856,17 +856,20 @@ pub async fn refresh_accounts(app: AppHandle) -> Result<Value, String> {
 
 /// Fetches the relay's model list (all providers), for the Models tab.
 #[tauri::command]
-pub async fn get_models(app: AppHandle) -> Result<Value, String> {
+pub async fn get_models(app: AppHandle, refresh: Option<bool>) -> Result<Value, String> {
     let (base_url, requires_auth) = {
         let state = app.state::<AppState>();
         let settings = robust_lock(&state.settings);
         (settings.base_url(), settings.require_bearer_auth)
     };
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(45))
         .build()
         .map_err(|error| error.to_string())?;
     let mut request = client.get(format!("{base_url}/models"));
+    if refresh.unwrap_or(false) {
+        request = request.query(&[("refresh", "true")]);
+    }
     if requires_auth {
         if let Ok(token) = std::fs::read_to_string(AppSettings::bearer_token_file()) {
             request = request.bearer_auth(token.trim());

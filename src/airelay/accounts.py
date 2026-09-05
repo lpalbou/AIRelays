@@ -898,7 +898,7 @@ class OpenAiAccountPool:
     async def _account_models(self, account: _PooledAccount, request_id: str) -> frozenset[str]:
         """Cached per-account model slugs, refreshed on the same TTL as the
         registry's models cache."""
-        ttl = max(30.0, float(self._settings.models_cache_ttl_seconds))
+        ttl = max(0.0, float(self._settings.models_cache_ttl_seconds))
         now = time.monotonic()
         if account.models and now - account.models_fetched_at < ttl:
             return account.models
@@ -912,6 +912,10 @@ class OpenAiAccountPool:
         account.models = frozenset(slugs)
         account.models_fetched_at = now
         return account.models
+
+    def invalidate_models_cache(self) -> None:
+        for account in self._accounts:
+            account.models_fetched_at = 0.0
 
     async def list_models(self, request_id: str) -> dict[str, Any]:
         # Advertise only models every authenticated account can serve, so a
@@ -929,7 +933,7 @@ class OpenAiAccountPool:
             except (BackendError, AuthenticationError):
                 continue
             common = slugs if common is None else (common & slugs)
-        if not common:
+        if common is None:
             return raw
         models = raw.get("models") if isinstance(raw, dict) else None
         if isinstance(models, list):

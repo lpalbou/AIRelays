@@ -78,7 +78,7 @@ def test_openai_balance_is_normalized_and_validated(tmp_path, monkeypatch) -> No
 def test_openai_extra_models_default_and_override(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("AIRELAYS_OPENAI_EXTRA_MODELS", raising=False)
     loaded = Settings.from_sources(tmp_path / "missing.toml")
-    assert "gpt-5.6-sol" in loaded.openai_extra_models
+    assert loaded.openai_extra_models == ()
     monkeypatch.setenv("AIRELAYS_OPENAI_EXTRA_MODELS", "my-model-a, my-model-b")
     loaded = Settings.from_sources(tmp_path / "missing.toml")
     assert loaded.openai_extra_models == ("my-model-a", "my-model-b")

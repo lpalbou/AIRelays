@@ -377,6 +377,8 @@ def create_app(settings: Settings) -> FastAPI:
     async def resolve_request_model(model: Any, request_id: str):
         if not isinstance(model, str):
             return None
+        if model.startswith(("claude:", "claude-")) and providers.claude_runtime is not None:
+            await providers.claude_runtime.refresh_models()
         resolved = providers.resolve_model(model)
         traffic.write(
             {
@@ -519,11 +521,11 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/v1/models")
     @app.get("/no-tools/v1/models")
-    async def list_models(request: Request) -> JSONResponse:
+    async def list_models(request: Request, refresh: bool = False) -> JSONResponse:
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
         try:
-            payload = await providers.list_models(request_id)
+            payload = await providers.list_models(request_id, refresh=refresh)
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
         return logged_json(request_id, payload)

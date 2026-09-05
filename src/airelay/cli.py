@@ -1397,6 +1397,9 @@ def _run_models(args: argparse.Namespace) -> None:
             types = structured.get("types") or []
             if types:
                 suffix += f"  structured: {', '.join(types)}"
+            resolved = extension.get("resolved_model")
+            if resolved and resolved != model.get("id"):
+                suffix += f"  resolves to: {resolved}"
             print(f"  {str(model.get('id')).ljust(width)}{suffix}")
     print()
     print("  Use these ids as `model` in requests to the endpoint above.")

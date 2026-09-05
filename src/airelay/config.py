@@ -13,7 +13,7 @@ from typing import Any
 CHATGPT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 OPENAI_AUTH_ISSUER = "https://auth.openai.com"
 OPENAI_SUBSCRIPTION_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-MIN_CHATGPT_CLIENT_VERSION = "0.124.0"
+MIN_CHATGPT_CLIENT_VERSION = "auto"
 APP_NAME = "AIRelays"
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "airelays" / "config.toml"
 DEFAULT_DATA_DIR = Path.home() / ".airelays"
@@ -25,14 +25,9 @@ DEFAULT_CLAUDE_MODELS = (
     "claude:haiku",
     "claude:fable",
 )
-# Model ids the upstream serves but does not (yet) list in its catalog
-# endpoint; advertising them in /v1/models makes them discoverable by
-# clients that pick from the list. Requests for any unlisted id still pass
-# through regardless — the upstream stays the final authority.
-DEFAULT_OPENAI_EXTRA_MODELS = (
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-)
+# Optional operator overrides for ids omitted by the upstream catalog.
+# Automatic discovery does not depend on a bundled list of model names.
+DEFAULT_OPENAI_EXTRA_MODELS: tuple[str, ...] = ()
 
 
 def _env(*names: str) -> str | None:

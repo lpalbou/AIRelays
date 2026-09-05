@@ -32,7 +32,7 @@ export const api = {
   clearClaudeToken: () => invoke("clear_claude_token"),
   logoutClaude: () => invoke("logout_claude"),
   cancelLogin: () => invoke("cancel_login"),
-  getModels: () => invoke("get_models"),
+  getModels: (refresh = false) => invoke("get_models", { refresh }),
   submitLoginCode: (code) => invoke("submit_login_code", { code }),
 };
 

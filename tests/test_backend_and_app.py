@@ -3342,3 +3342,40 @@ def test_upload_quota_rejects_when_total_storage_limit_would_be_exceeded(tmp_pat
     assert first.status_code == 200
     assert second.status_code == 413
     assert "upload quota" in second.json()["detail"]
+
+
+def test_models_refresh_query_bypasses_registry_cache(tmp_path, monkeypatch) -> None:
+    app = create_app(make_settings(tmp_path))
+    calls = []
+
+    async def models(request_id, *, refresh=False):
+        calls.append(refresh)
+        return {"object": "list", "data": []}
+
+    with TestClient(app) as client:
+        monkeypatch.setattr(app.state.providers, "list_models", models)
+        assert client.get("/v1/models").status_code == 200
+        assert client.get("/v1/models?refresh=true").status_code == 200
+        assert client.get("/no-tools/v1/models?refresh=true").status_code == 200
+    assert calls == [False, True, True]
+
+
+def test_claude_concrete_id_discovered_before_first_request(tmp_path, monkeypatch) -> None:
+    app = create_app(make_settings(tmp_path, enable_claude=True))
+
+    async def catalog():
+        return [{"value": "fable", "resolvedModel": "claude-fable-5-1"}]
+
+    async def generate(request, request_id):
+        assert request.upstream_model == "claude-fable-5-1"
+        return {"result": "OK", "usage": {"input_tokens": 1, "output_tokens": 1}}
+
+    with TestClient(app) as client:
+        runtime = app.state.providers.claude_runtime
+        monkeypatch.setattr(runtime, "_discover_models", catalog)
+        monkeypatch.setattr(runtime, "_run_json", generate)
+        response = client.post("/v1/chat/completions", json={
+            "model": "claude-fable-5-1", "messages": [{"role": "user", "content": "Hi"}],
+        })
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "OK"

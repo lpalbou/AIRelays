@@ -32,6 +32,13 @@ flowchart LR
 1. FastAPI receives an OpenAI-shaped request.
 2. Middleware enforces relay auth and local abuse controls.
 3. AIRelays resolves the request model id to a provider runtime.
+   OpenAI model admission uses the account-scoped upstream catalog; catalog
+   requests follow the installed Codex version in automatic mode. Claude
+   refreshes the installed CLI's initialization catalog on demand and
+   registers its aliases and concrete model ids before resolving requests.
+   Catalogs use a bounded cache, with an explicit refresh path shared by
+   the API and desktop Models page. Discovery does not submit inference
+   prompts.
 4. Claude-specific validation and invocation stay inside the Claude runtime, while the OpenAI runtime currently uses shared request/response transforms plus the OpenAI backend adapter.
 5. On the OpenAI runtime, the account pool picks the account: conversation affinity first, then — among accounts with capacity that serve the requested model — the one with the most remaining quota in its longest usage window (`balance = "balanced"`, the default), strict rotation (`"round_robin"`), or the first such account (`"ordered"`). Which usage windows an account reports is plan-dependent, so the pool ranks windows by duration and balances on the longest (weekly) budget — the scarce one — while short-window exhaustion is handled by benching and failover. Accounts already benched (a usage probe or an earlier request showed their window is spent) are skipped outright, so requests route straight to accounts with capacity. Account-scoped failures (usage limits, in-stream failure events, dead credentials, transport errors) bench the account until it recovers and fail over to the next one — only before any content byte reaches the client; on streams, events that precede content are buffered so this guarantee holds.
 6. If every account fails, the retry layer waits an exponential backoff (`retry_attempts`, default 3 retries at 5s/20s/60s) and re-runs the whole pool pass — again only while no response byte has reached the client. Quota errors whose reset lies beyond the backoff budget return immediately.

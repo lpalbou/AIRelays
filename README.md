@@ -247,9 +247,11 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 
 ## Provider Routing
 
-- models starting with `claude:` use the Claude runtime when it is enabled
+- models starting with `claude:` or `claude-` use the Claude runtime when it is enabled
 - other model ids use the OpenAI runtime when it is enabled
-- ids the upstream serves but does not list in its catalog (e.g. `gpt-5.6-sol`) can be advertised via `[providers.openai] extra_models`; when AIRelays can fetch the live OpenAI catalog, other unlisted ids are rejected locally with a clear 422 instead of being forwarded blindly upstream
+- OpenAI model discovery queries the upstream catalog using the installed Codex client version, with a bundled version floor for standalone installations. Optional `[providers.openai] extra_models` entries extend the catalog; other unlisted ids are rejected locally when the catalog is available.
+- Claude model discovery queries the installed CLI and exposes both aliases and concrete model ids. The Models tab and `airelays models` show each reported alias resolution, such as `claude:fable` resolving to `claude-fable-5-1`.
+- The Models tab refreshes automatically every five minutes while reachable. Its Refresh button, or `GET /v1/models?refresh=true`, requests fresh provider catalogs. See [model discovery](docs/api.md#get-v1models) for cache and availability limits.
 - with multiple OpenAI accounts, both `/v1/models` and local OpenAI model admission follow the current enrolled account set rather than a stale cached snapshot
 - AIRelays rejects requests when the selected runtime is disabled or the route is outside that runtime's published subset
 
@@ -314,14 +316,12 @@ preceding assistant tool call in the same request, are rejected loudly.
 **Reasoning effort is forwarded, not invented.** `reasoning_effort` (chat
 completions) and `reasoning: {"effort": ...}` (responses) pass through to
 the upstream unchanged. Every model's supported modes are published in
-`/v1/models` under `airelays.reasoning` (OpenAI models accept `none`,
-`low`, `medium`, `high`, `xhigh`; Claude models accept `low`, `medium`,
-`high`, `xhigh`, `max`, mapped to the local CLI's `--effort` flag —
-unsupported values are rejected with the supported list rather than
-silently ignored). When a request does not set one, OpenAI models run at
-effort `none` — noticeably below what the official apps use (`medium`) —
-and Claude models use their own adaptive default. For quality comparable
-to the ChatGPT apps, set it explicitly:
+`/v1/models` under `airelays.reasoning`, using provider catalog metadata
+when available. Modes vary by model and may include `max` or `ultra`.
+Claude modes map to the local CLI's `--effort` flag; unsupported values
+are rejected with the model's supported list. When omitted, the provider
+chooses its default; Claude can use an adaptive default. To choose
+reasoning depth explicitly:
 
 ```bash
 curl http://127.0.0.1:8317/v1/chat/completions \
@@ -361,7 +361,7 @@ OpenAI runtime:
 
 Claude runtime:
 
-- explicit `claude:*` model ids only
+- discovered Claude aliases and concrete model ids, plus configured overrides
 - supported routes: text `/v1/chat/completions` and text `/v1/completions`
 - stateless only
 - no `/v1/responses`

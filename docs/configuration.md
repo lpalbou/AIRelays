@@ -38,7 +38,7 @@ login_timeout_seconds = 900
 base_url = "https://chatgpt.com/backend-api/codex"
 issuer_base_url = "https://auth.openai.com"
 client_id = "app_EMoamEEZ73f0CkXaXp7hrann"
-client_version = "0.124.0"
+client_version = "auto"
 request_timeout_seconds = 120.0
 
 [security]
@@ -72,9 +72,8 @@ models_cache_ttl_seconds = 300.0
 # counts; "ordered" drains the first account first.
 balance = "balanced"
 # Extra model ids to advertise in /v1/models beyond the upstream catalog,
-# which lags what the backend actually serves (requests for unlisted ids
-# pass through regardless; the upstream stays the final authority).
-extra_models = ["gpt-5.6-sol", "gpt-5.6-terra"]
+# for operator-confirmed models omitted from automatic discovery.
+extra_models = []
 # Fallback bench duration (seconds) when a limited account's reset time is
 # unknown; upstream-reported reset times are used when available.
 account_cooldown_seconds = 300
@@ -149,6 +148,15 @@ airelays serve --bearer-token-file /path/to/relay-token --port 8080
 
 ## Provider Notes
 
+`[upstream] client_version = "auto"` discovers the installed Codex CLI's
+version for model-catalog requests, with a tested minimum of `0.153.4` for
+standalone installations. The local version probe is bounded to three
+seconds and cached for five minutes. Updating Codex allows discovery to
+follow newer version-gated catalogs without adding model names to AIRelays.
+The former shipped value `0.124.0` is treated as `auto`, including existing
+desktop configuration files. Other explicit version pins are honored and
+can select an older catalog.
+
 OpenAI runtime:
 
 - enabled by default
@@ -160,11 +168,20 @@ OpenAI runtime:
   `models_cache_ttl_seconds = 0`
 - cache state is visible under `providers.openai.models_cache` in
   `GET /v1/relay/status`
+- `extra_models` defaults to an empty list. Existing configured entries
+  continue to extend a successful catalog and are deduplicated against it.
 
 `AIRELAYS_MODELS_CACHE_TTL_SECONDS` remains accepted as a shorter alias for
 `AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`.
 
 Claude runtime:
+
+- discovers models and alias resolutions from the installed CLI, without
+  generating text; its model catalog uses `models_cache_ttl_seconds` too
+- configured `models` extend discovery and remain available as fallback
+  when CLI discovery is unavailable
+- use `GET /v1/models?refresh=true` or the desktop Models Refresh button
+  to reload provider catalogs immediately
 
 - enabled by default; set `[providers.claude].enabled = false` or `AIRELAYS_ENABLE_CLAUDE=false` to opt out (requests still require the local `claude` CLI to be installed and signed in)
 - uses the local `claude` CLI

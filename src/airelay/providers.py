@@ -12,7 +12,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -74,6 +74,9 @@ class ProviderModel:
     # json_schema and json_object (mapped to the CLI's --json-schema flag,
     # which enforces the schema natively).
     structured_output_types: tuple[str, ...] = ()
+    resolved_model: str | None = None
+    discovery_source: str = "configured"
+    display_name: str | None = None
 
     def as_wire(self) -> dict[str, Any]:
         return {
@@ -84,6 +87,9 @@ class ProviderModel:
             "airelays": {
                 "provider": self.provider,
                 "upstream_model": self.upstream_id,
+                "resolved_model": self.resolved_model,
+                "discovery_source": self.discovery_source,
+                "display_name": self.display_name,
                 "capabilities": {
                     "routes": self.routes,
                     "stateful_conversations": self.stateful_conversations,
@@ -116,7 +122,13 @@ class ClaudeTextRequest:
     output_schema: str | None = None
 
 
-def _openai_model_record(model_id: str) -> ProviderModel:
+def _openai_model_record(model_id: str, catalog: dict[str, Any] | None = None) -> ProviderModel:
+    levels = catalog.get("supported_reasoning_levels") if catalog else None
+    modes = tuple(dict.fromkeys(
+        item["effort"] for item in levels
+        if isinstance(item, dict) and isinstance(item.get("effort"), str) and item["effort"]
+    )) if isinstance(levels, list) else OPENAI_REASONING_MODES
+    default = catalog.get("default_reasoning_level", "none") if catalog else "none"
     return ProviderModel(
         id=model_id,
         provider="openai",
@@ -131,9 +143,11 @@ def _openai_model_record(model_id: str) -> ProviderModel:
             "subscription_status": True,
         },
         stateful_conversations=True,
-        reasoning_modes=OPENAI_REASONING_MODES,
-        reasoning_default="none",
+        reasoning_modes=modes,
+        reasoning_default=default if isinstance(default, str) else None,
         structured_output_types=("json_schema",),
+        discovery_source="upstream_catalog" if catalog is not None else "configured",
+        display_name=catalog.get("display_name") if catalog else None,
     )
 
 
@@ -305,7 +319,9 @@ def _provided(value: Any) -> bool:
     return value is not None and value is not False and value != [] and value != {}
 
 
-def _claude_effort(body: dict[str, Any], route: str) -> str | None:
+def _claude_effort(
+    body: dict[str, Any], route: str, modes: tuple[str, ...] = CLAUDE_REASONING_MODES,
+) -> str | None:
     """Validated reasoning effort for the claude CLI. The CLI silently
     ignores unknown --effort values and falls back to its default, which
     would be silent degradation — so unsupported values are rejected here
@@ -313,9 +329,9 @@ def _claude_effort(body: dict[str, Any], route: str) -> str | None:
     effort = body.get("reasoning_effort")
     if effort is None:
         return None
-    if isinstance(effort, str) and effort.lower() in CLAUDE_REASONING_MODES:
+    if isinstance(effort, str) and effort.lower() in modes:
         return effort.lower()
-    supported = ", ".join(CLAUDE_REASONING_MODES)
+    supported = ", ".join(modes) or "none (omit reasoning_effort)"
     raise ProviderError(
         422,
         f"Unsupported `reasoning_effort` {effort!r} for Claude models on `{route}`. "
@@ -462,6 +478,9 @@ class ClaudeCliRuntime:
         self._traffic = traffic
         self._semaphore = asyncio.Semaphore(settings.claude_max_concurrent_requests)
         self._models = self._build_models(settings.claude_models)
+        self._models_fetched_at: float | None = None
+        self._models_lock = asyncio.Lock()
+        self._models_error: str | None = None
         # Last CLI status probe, reused for identity in the usage payload
         # (probing spawns the Node CLI — too slow to repeat per usage call).
         self._last_probe: dict[str, Any] | None = None
@@ -524,6 +543,103 @@ class ClaudeCliRuntime:
     def list_models(self) -> list[dict[str, Any]]:
         return [record.as_wire() for record in self._models.values()]
 
+    async def refresh_models(self, *, force: bool = False) -> None:
+        ttl = max(0.0, self._settings.models_cache_ttl_seconds)
+        async with self._models_lock:
+            if not force and self._models_fetched_at is not None:
+                if time.monotonic() - self._models_fetched_at < ttl:
+                    return
+            try:
+                catalog = await self._discover_models()
+                records = self._build_models(self._settings.claude_models)
+                for item in catalog:
+                    if not isinstance(item, dict):
+                        continue
+                    selector = item.get("value")
+                    if not isinstance(selector, str) or not selector:
+                        continue
+                    public_id = selector if selector.startswith(("claude-", "claude:")) else f"claude:{selector}"
+                    record = self._build_models((public_id,))[public_id]
+                    resolved = item.get("resolvedModel")
+                    resolved = resolved if isinstance(resolved, str) and resolved.startswith("claude-") else None
+                    efforts = item.get("supportedEffortLevels")
+                    modes = tuple(x for x in efforts if isinstance(x, str) and x) if isinstance(efforts, list) else ()
+                    record = replace(
+                        record, resolved_model=resolved, discovery_source="claude_cli",
+                        display_name=item.get("displayName"), reasoning_modes=modes,
+                    )
+                    records[public_id] = record
+                    if resolved:
+                        records[resolved] = replace(record, id=resolved, upstream_id=resolved)
+                self._models = records
+                self._models_error = None
+            except (OSError, ValueError, TimeoutError, ProviderError) as exc:
+                # Older/missing CLIs retain configured ids and the last good
+                # catalog. A failed probe is cached too to avoid spawn storms.
+                self._models_error = str(exc)
+            self._models_fetched_at = time.monotonic()
+
+    async def _discover_models(self) -> list[dict[str, Any]]:
+        catalog: dict[str, dict[str, Any]] = {}
+        try:
+            async with asyncio.timeout(min(10.0, self._settings.claude_timeout_seconds)):
+                # The picker may omit an alias until selected (e.g. it lists
+                # opus[1m] but only returns opus's resolution with --model opus).
+                selectors = ["default", *(m.upstream_id for m in self._build_models(self._settings.claude_models).values())]
+                for selector in selectors:
+                    if selector in catalog:
+                        continue
+                    try:
+                        models = await self._initialize_models(selector)
+                    except (OSError, ValueError, ProviderError):
+                        if not catalog:
+                            raise
+                        continue
+                    for item in models:
+                        if isinstance(item, dict) and isinstance(item.get("value"), str):
+                            catalog[item["value"]] = item
+        except TimeoutError:
+            if not catalog:
+                raise
+        return list(catalog.values())
+
+    async def _initialize_models(self, selector: str) -> list[dict[str, Any]]:
+        request = ClaudeTextRequest(f"claude:{selector}", selector, None, "", False)
+        command = self._build_command(request, stream=True) + ["--input-format", "stream-json"]
+        # The SDK initialize control request returns the CLI's own picker
+        # catalog and alias resolutions without submitting a user prompt.
+        with tempfile.TemporaryDirectory(prefix="airelays-models-") as workdir:
+            process = await asyncio.create_subprocess_exec(
+                *command, cwd=workdir, env=self._subprocess_env(),
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL, limit=1024 * 1024,
+            )
+            try:
+                async with asyncio.timeout(min(10.0, self._settings.claude_timeout_seconds)):
+                    assert process.stdin is not None and process.stdout is not None
+                    message = {"type": "control_request", "request_id": "models", "request": {"subtype": "initialize"}}
+                    process.stdin.write((json.dumps(message) + "\n").encode())
+                    await process.stdin.drain()
+                    while line := await process.stdout.readline():
+                        item = json.loads(line)
+                        if not isinstance(item, dict) or item.get("type") != "control_response":
+                            continue
+                        response = item.get("response")
+                        if not isinstance(response, dict) or response.get("request_id") != "models":
+                            continue
+                        payload = response.get("response")
+                        if isinstance(payload, dict) and isinstance(payload.get("models"), list):
+                            return payload["models"]
+                        break
+                    raise ProviderError(503, "Claude CLI did not return a model catalog.")
+            finally:
+                if process.returncode is None:
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
+                await process.wait()
+
     def resolve_model(self, model_id: str) -> ResolvedModel | None:
         record = self._models.get(model_id)
         if record is None:
@@ -551,6 +667,7 @@ class ClaudeCliRuntime:
             "email": probe.get("email"),
             "subscription_type": probe.get("subscription_type"),
             "models": [record.id for record in self._models.values()],
+            "models_discovery_error": self._models_error,
             "oauth_token_source": self._settings.claude_oauth_token_source(),
             "notes": [
                 "Use `claude auth login --claudeai` for browser-based local login.",
@@ -864,7 +981,7 @@ class ClaudeCliRuntime:
             system_prompt=system_prompt,
             prompt=_chat_transcript(turns),
             include_usage=include_usage,
-            effort=_claude_effort(body, "/v1/chat/completions"),
+            effort=_claude_effort(body, "/v1/chat/completions", self._models[resolved.public_id].reasoning_modes),
             output_schema=_claude_output_schema(body, "/v1/chat/completions"),
         )
 
@@ -911,7 +1028,7 @@ class ClaudeCliRuntime:
             system_prompt=None,
             prompt=prompt,
             include_usage=False,
-            effort=_claude_effort(body, "/v1/completions"),
+            effort=_claude_effort(body, "/v1/completions", self._models[resolved.public_id].reasoning_modes),
         )
 
     def _resolved_model_from_body(self, body: dict[str, Any]) -> ResolvedModel:
@@ -1784,14 +1901,18 @@ class ProviderRegistry:
         )
         raise ProviderError(422, detail, code="unsupported_for_provider")
 
-    async def list_models(self, request_id: str) -> dict[str, Any]:
+    async def list_models(self, request_id: str, *, refresh: bool = False) -> dict[str, Any]:
         data: list[dict[str, Any]] = []
         openai_error: Exception | None = None
         if self._settings.enable_openai_provider and self._openai_backend is not None:
             try:
-                payload = await self._openai_models_payload(request_id)
+                payload = await self._openai_models_payload(request_id, force=refresh)
+                catalog = {
+                    item["slug"]: item for item in payload.get("models", [])
+                    if isinstance(item, dict) and isinstance(item.get("slug"), str)
+                } if isinstance(payload.get("models"), list) else {}
                 for slug in _openai_catalog_model_ids(payload):
-                    data.append(_openai_model_record(slug).as_wire())
+                    data.append(_openai_model_record(slug, catalog[slug]).as_wire())
             except Exception as exc:  # noqa: BLE001
                 openai_error = exc
             # The upstream catalog lags what the backend actually serves
@@ -1807,6 +1928,7 @@ class ProviderRegistry:
                     if model_id and model_id not in listed:
                         data.append(_openai_model_record(model_id).as_wire())
         if self._claude is not None:
+            await self._claude.refresh_models(force=refresh)
             data.extend(self._claude.list_models())
         if data:
             return {"object": "list", "data": data}
@@ -1879,13 +2001,13 @@ class ProviderRegistry:
             return None
         return self._openai_models_cache_payload
 
-    async def _openai_models_payload(self, request_id: str) -> dict[str, Any]:
+    async def _openai_models_payload(self, request_id: str, *, force: bool = False) -> dict[str, Any]:
         if self._openai_backend is None:
             return {"models": []}
         now = time.monotonic()
         cache_key = self._current_openai_models_cache_key()
         cached = self._cached_openai_models_payload(now, cache_key)
-        if cached is not None:
+        if cached is not None and not force:
             self._log_openai_models_cache(request_id, "hit", now)
             return cached
 
@@ -1899,9 +2021,13 @@ class ProviderRegistry:
             now = time.monotonic()
             cache_key = self._current_openai_models_cache_key()
             cached = self._cached_openai_models_payload(now, cache_key)
-            if cached is not None:
+            if cached is not None and not force:
                 self._log_openai_models_cache(request_id, "hit", now)
                 return cached
+            if force:
+                invalidate = getattr(self._openai_backend, "invalidate_models_cache", None)
+                if callable(invalidate):
+                    invalidate()
             payload = await self._openai_backend.list_models(request_id)
             models = payload.get("models")
             cache_key = self._current_openai_models_cache_key()

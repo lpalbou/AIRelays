@@ -1,5 +1,19 @@
 # Troubleshooting
 
+## A model is missing or a Claude alias is unclear
+
+Use the Models tab's Refresh button or `GET /v1/models?refresh=true` to
+reload both provider catalogs. OpenAI discovery uses `client_version =
+"auto"` by default; an explicit older version pin can select an older
+catalog. Update the installed Codex CLI to follow newer catalogs.
+
+For Claude, update the configured `claude` CLI and inspect the alias's
+`airelays.resolved_model` in `/v1/models`. Concrete ids are also listed.
+If discovery fails, inspect `providers.claude.models_discovery_error` in
+`GET /v1/relay/status`; configured ids and the last successful catalog
+remain available. See [model discovery](api.md#get-v1models) and
+[configuration](configuration.md#provider-notes).
+
 ## `401 Missing or invalid AIRelays bearer token`
 
 - run `airelays status`
@@ -86,11 +100,12 @@ usually heavy system load or a long request burst.
 
 ## `422` on Claude routes
 
-The current Claude runtime supports only explicit `claude:*` models on text `chat.completions` and text `completions`.
+The Claude runtime supports discovered aliases and concrete model ids, plus configured overrides, on text `chat.completions` and text `completions`.
 
 Checks:
 
-- confirm the model id is one of the configured `claude:*` ids
+- confirm the model id appears in `/v1/models`, as a discovered alias,
+  concrete `claude-*` id, or configured Claude override
 - remove tools, files, images, audio, and `conversation`
   (`response_format` json_schema/json_object is supported on chat completions)
 - remove unsupported generation controls

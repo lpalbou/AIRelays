@@ -9,6 +9,7 @@ let models = [];
 let filterText = "";
 let lastReachable = null;
 let loading = false;
+let lastLoadedAt = 0;
 
 const PROVIDER_NAMES = { openai: "OpenAI", claude: "Claude" };
 
@@ -38,7 +39,7 @@ export const modelsView = {
       filterText = event.target.value.toLowerCase();
       renderList();
     });
-    root.querySelector("#mo-refresh").addEventListener("click", load);
+    root.querySelector("#mo-refresh").addEventListener("click", () => load(true));
     lastReachable = Boolean(state?.reachable);
     await load();
   },
@@ -50,7 +51,7 @@ export const modelsView = {
     const reachable = Boolean(state?.reachable);
     const cameUp = reachable && lastReachable === false;
     lastReachable = reachable;
-    if (cameUp && !loading) {
+    if ((cameUp || (reachable && Date.now() - lastLoadedAt >= 300_000)) && !loading) {
       await load();
     }
   },
@@ -60,26 +61,34 @@ export const modelsView = {
     filterText = "";
     lastReachable = null;
     loading = false;
+    lastLoadedAt = 0;
   },
 };
 
-async function load() {
+async function load(refresh = false) {
   if (!root || loading) return;
   loading = true;
+  const currentRoot = root;
+  const button = root.querySelector("#mo-refresh");
+  button.disabled = true;
   try {
-    await loadInner();
+    await loadInner(refresh, currentRoot);
   } finally {
-    loading = false;
+    if (root === currentRoot) {
+      loading = false;
+      lastLoadedAt = Date.now();
+    }
+    button.disabled = false;
   }
 }
 
-async function loadInner() {
+async function loadInner(refresh, currentRoot) {
   const list = root.querySelector("#mo-list");
   let payload;
   try {
-    payload = await api.getModels();
+    payload = await api.getModels(refresh);
   } catch (error) {
-    if (!root) return;
+    if (root !== currentRoot) return;
     models = [];
     list.innerHTML = "";
     const empty = document.createElement("div");
@@ -93,7 +102,7 @@ async function loadInner() {
     list.appendChild(empty);
     return;
   }
-  if (!root) return;
+  if (root !== currentRoot) return;
   models = Array.isArray(payload?.data) ? payload.data : [];
   renderList();
 }
@@ -101,7 +110,8 @@ async function loadInner() {
 function visibleModels() {
   if (!filterText) return models;
   return models.filter((model) =>
-    [model.id, model.airelays?.provider ?? ""].join(" ").toLowerCase().includes(filterText)
+    [model.id, model.airelays?.provider, model.airelays?.resolved_model, model.airelays?.display_name]
+      .join(" ").toLowerCase().includes(filterText)
   );
 }
 
@@ -155,6 +165,20 @@ function modelRow(model) {
   id.className = "model-id";
   id.textContent = model.id;
   row.appendChild(id);
+  const resolved = model.airelays?.resolved_model;
+  if (resolved && resolved !== model.id) {
+    const target = document.createElement("span");
+    target.className = "model-reasoning";
+    target.textContent = `resolves to: ${resolved}`;
+    target.title = "Concrete model reported by the installed Claude CLI. Aliases follow CLI updates.";
+    row.appendChild(target);
+  } else if (model.airelays?.discovery_source === "configured") {
+    const source = document.createElement("span");
+    source.className = "model-reasoning";
+    source.textContent = "configured";
+    source.title = "Configured override; availability has not been confirmed by the provider catalog.";
+    row.appendChild(source);
+  }
   // Advertise the reasoning modes the model accepts (from the relay's
   // live-verified metadata), so users know what `reasoning_effort` takes.
   const reasoning = model.airelays?.reasoning;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
@@ -166,10 +167,13 @@ class ChatGptCodexBackend:
         await self._client.aclose()
 
     async def list_models(self, request_id: str) -> dict[str, Any]:
+        from airelay.model_discovery import codex_catalog_version
+
+        version = await asyncio.to_thread(codex_catalog_version, self._settings.client_version)
         response = await self._request_json(
             request_id=request_id,
             method="GET",
-            path=f"/models?client_version={self._settings.client_version}",
+            path=f"/models?client_version={version}",
             body=None,
             session_id=None,
         )
