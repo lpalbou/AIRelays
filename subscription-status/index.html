@@ -495,6 +495,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#freshness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Freshness
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#auth" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -809,6 +820,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#freshness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Freshness
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#auth" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -858,6 +880,12 @@ passes through exactly the windows the upstream reports — nothing is
 synthesized — and identifies each by its duration, not its position in
 the payload. Multi-account balancing and the desktop's per-account token
 breakdown both key on the longest reported window (the weekly budget).</p>
+<p><code>credits</code>, <code>spend_control</code>, <code>rate_limit_reset_credits</code>, and <code>model_usage</code>
+preserve the upstream's credit and model-availability facts. Available
+limit-reset credits and credits applicable right now are distinct counts.
+Quota percentages are not token counts or monetary balances. The desktop's
+token breakdown counts only responses observed through this relay in the
+account's reported window, not activity in other apps or before recording.</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">'http://127.0.0.1:8080/v1/subscription/status'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span>
 </code></pre></div>
@@ -875,8 +903,17 @@ breakdown both key on the longest reported window (the weekly budget).</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">'http://127.0.0.1:8080/v1/subscription/status?provider=claude'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span>
 </code></pre></div>
-<p>Returns the 5-hour and weekly windows, plus per-model weekly caps
-(Sonnet/Opus) when the subscription reports them. Notes:</p>
+<p>Returns the 5-hour and weekly windows, plus named scoped caps such as
+Fable, Sonnet, or Opus when the subscription reports them. The modern
+<code>limits</code> array supplies explicit scope names and percentages; legacy
+buckets remain supported. A Fable cap at 100% does not mean the whole
+Claude allowance is exhausted. The desktop names the exhausted scope
+instead of presenting all Claude models as unavailable.</p>
+<p><code>spend</code> and <code>extra_usage</code> preserve usage-credit status, disabled reasons,
+and reported amounts. The desktop <strong>more</strong> details format money only with
+its declared currency and decimal scale (<code>amount_minor</code> / <code>exponent</code> in
+<code>spend</code>, or <code>decimal_places</code> in <code>extra_usage</code>). A missing balance or limit
+is not inferred from zero spend. Notes:</p>
 <ul>
 <li>requires the Claude runtime to be enabled</li>
 <li>credentials resolve from the stored token file
@@ -884,8 +921,18 @@ breakdown both key on the longest reported window (the weekly budget).</p>
   credential store</li>
 <li>the upstream source is the same usage surface Claude Code's <code>/usage</code>
   command reads; it is not a publicly documented API, so AIRelays caches it
-  briefly (30s) and degrades gracefully if it becomes unavailable</li>
+  for five minutes and degrades gracefully if it becomes unavailable</li>
+<li>upstream rate-limit cooldowns and minimum probe spacing survive restarts;
+  refreshing the desktop does not bypass these protections</li>
 </ul>
+<h2 id="freshness">Freshness<a class="headerlink" href="#freshness" title="Permanent link">&para;</a></h2>
+<p><code>captured_at</code> records the successful fetch time, not each cache read.
+The Overview refreshes usage every five minutes while open; its reset
+countdowns use absolute reset timestamps. Missing percentages, or windows
+whose reset has passed without fresh evidence, display <strong>awaiting fresh
+data</strong>, not zero usage. Claude snapshots served after a failed refresh
+carry <code>stale</code>, <code>stale_reason</code>, and their last-good time. Neither catalog
+membership nor a quota snapshot guarantees the next request will succeed.</p>
 <h2 id="auth">Auth<a class="headerlink" href="#auth" title="Permanent link">&para;</a></h2>
 <p>Default protected mode requires the relay bearer token, as shown above.
 Open local relay mode (<code>--no-auth</code>) accepts the same requests without the

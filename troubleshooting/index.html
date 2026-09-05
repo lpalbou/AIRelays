@@ -527,6 +527,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#a-model-is-missing-or-a-claude-alias-is-unclear" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A model is missing or a Claude alias is unclear
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#401-missing-or-invalid-airelays-bearer-token" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -908,6 +919,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#a-model-is-missing-or-a-claude-alias-is-unclear" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A model is missing or a Claude alias is unclear
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#401-missing-or-invalid-airelays-bearer-token" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1082,6 +1104,17 @@
 
 
 <h1 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h1>
+<h2 id="a-model-is-missing-or-a-claude-alias-is-unclear">A model is missing or a Claude alias is unclear<a class="headerlink" href="#a-model-is-missing-or-a-claude-alias-is-unclear" title="Permanent link">&para;</a></h2>
+<p>Use the Models tab's Refresh button or <code>GET /v1/models?refresh=true</code> to
+reload both provider catalogs. OpenAI discovery uses <code>client_version =
+"auto"</code> by default; an explicit older version pin can select an older
+catalog. Update the installed Codex CLI to follow newer catalogs.</p>
+<p>For Claude, update the configured <code>claude</code> CLI and inspect the alias's
+<code>airelays.resolved_model</code> in <code>/v1/models</code>. Concrete ids are also listed.
+If discovery fails, inspect <code>providers.claude.models_discovery_error</code> in
+<code>GET /v1/relay/status</code>; configured ids and the last successful catalog
+remain available. See <a href="../api/#get-v1models">model discovery</a> and
+<a href="../configuration/#provider-notes">configuration</a>.</p>
 <h2 id="401-missing-or-invalid-airelays-bearer-token"><code>401 Missing or invalid AIRelays bearer token</code><a class="headerlink" href="#401-missing-or-invalid-airelays-bearer-token" title="Permanent link">&para;</a></h2>
 <ul>
 <li>run <code>airelays status</code></li>
@@ -1156,10 +1189,11 @@ usually heavy system load or a long request burst.</p>
 <li>Stop/Restart keep working: the app still manages the process</li>
 </ul>
 <h2 id="422-on-claude-routes"><code>422</code> on Claude routes<a class="headerlink" href="#422-on-claude-routes" title="Permanent link">&para;</a></h2>
-<p>The current Claude runtime supports only explicit <code>claude:*</code> models on text <code>chat.completions</code> and text <code>completions</code>.</p>
+<p>The Claude runtime supports discovered aliases and concrete model ids, plus configured overrides, on text <code>chat.completions</code> and text <code>completions</code>.</p>
 <p>Checks:</p>
 <ul>
-<li>confirm the model id is one of the configured <code>claude:*</code> ids</li>
+<li>confirm the model id appears in <code>/v1/models</code>, as a discovered alias,
+  concrete <code>claude-*</code> id, or configured Claude override</li>
 <li>remove tools, files, images, audio, and <code>conversation</code>
   (<code>response_format</code> json_schema/json_object is supported on chat completions)</li>
 <li>remove unsupported generation controls</li>

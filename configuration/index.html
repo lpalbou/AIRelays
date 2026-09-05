@@ -919,7 +919,7 @@
 <span class="n">base_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://chatgpt.com/backend-api/codex"</span>
 <span class="n">issuer_base_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://auth.openai.com"</span>
 <span class="n">client_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"app_EMoamEEZ73f0CkXaXp7hrann"</span>
-<span class="n">client_version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"0.124.0"</span>
+<span class="n">client_version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"auto"</span>
 <span class="n">request_timeout_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">120.0</span>
 
 <span class="k">[security]</span>
@@ -953,9 +953,8 @@
 <span class="c1"># counts; "ordered" drains the first account first.</span>
 <span class="n">balance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"balanced"</span>
 <span class="c1"># Extra model ids to advertise in /v1/models beyond the upstream catalog,</span>
-<span class="c1"># which lags what the backend actually serves (requests for unlisted ids</span>
-<span class="c1"># pass through regardless; the upstream stays the final authority).</span>
-<span class="n">extra_models</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"gpt-5.6-sol"</span><span class="p">,</span><span class="w"> </span><span class="s2">"gpt-5.6-terra"</span><span class="p">]</span>
+<span class="c1"># for operator-confirmed models omitted from automatic discovery.</span>
+<span class="n">extra_models</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span>
 <span class="c1"># Fallback bench duration (seconds) when a limited account's reset time is</span>
 <span class="c1"># unknown; upstream-reported reset times are used when available.</span>
 <span class="n">account_cooldown_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">300</span>
@@ -1022,6 +1021,14 @@
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>serve<span class="w"> </span>--bearer-token-file<span class="w"> </span>/path/to/relay-token<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
 <h2 id="provider-notes">Provider Notes<a class="headerlink" href="#provider-notes" title="Permanent link">&para;</a></h2>
+<p><code>[upstream] client_version = "auto"</code> discovers the installed Codex CLI's
+version for model-catalog requests, with a tested minimum of <code>0.153.4</code> for
+standalone installations. The local version probe is bounded to three
+seconds and cached for five minutes. Updating Codex allows discovery to
+follow newer version-gated catalogs without adding model names to AIRelays.
+The former shipped value <code>0.124.0</code> is treated as <code>auto</code>, including existing
+desktop configuration files. Other explicit version pins are honored and
+can select an older catalog.</p>
 <p>OpenAI runtime:</p>
 <ul>
 <li>enabled by default</li>
@@ -1033,12 +1040,24 @@
   <code>models_cache_ttl_seconds = 0</code></li>
 <li>cache state is visible under <code>providers.openai.models_cache</code> in
   <code>GET /v1/relay/status</code></li>
+<li><code>extra_models</code> defaults to an empty list. Existing configured entries
+  continue to extend a successful catalog and are deduplicated against it.</li>
 </ul>
 <p><code>AIRELAYS_MODELS_CACHE_TTL_SECONDS</code> remains accepted as a shorter alias for
 <code>AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS</code>.</p>
 <p>Claude runtime:</p>
 <ul>
-<li>enabled by default; set <code>[providers.claude].enabled = false</code> or <code>AIRELAYS_ENABLE_CLAUDE=false</code> to opt out (requests still require the local <code>claude</code> CLI to be installed and signed in)</li>
+<li>discovers models and alias resolutions from the installed CLI, without
+  generating text; its model catalog uses <code>models_cache_ttl_seconds</code> too</li>
+<li>configured <code>models</code> extend discovery and remain available as fallback
+  when CLI discovery is unavailable</li>
+<li>
+<p>use <code>GET /v1/models?refresh=true</code> or the desktop Models Refresh button
+  to reload provider catalogs immediately</p>
+</li>
+<li>
+<p>enabled by default; set <code>[providers.claude].enabled = false</code> or <code>AIRELAYS_ENABLE_CLAUDE=false</code> to opt out (requests still require the local <code>claude</code> CLI to be installed and signed in)</p>
+</li>
 <li>uses the local <code>claude</code> CLI</li>
 <li>browser login is handled by <code>claude auth login --claudeai</code></li>
 <li>headless login is handled by <code>claude setup-token</code> plus <code>CLAUDE_CODE_OAUTH_TOKEN</code></li>

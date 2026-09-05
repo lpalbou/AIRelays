@@ -1166,7 +1166,14 @@
 <ol>
 <li>FastAPI receives an OpenAI-shaped request.</li>
 <li>Middleware enforces relay auth and local abuse controls.</li>
-<li>AIRelays resolves the request model id to a provider runtime.</li>
+<li>AIRelays resolves the request model id to a provider runtime.
+   OpenAI model admission uses the account-scoped upstream catalog; catalog
+   requests follow the installed Codex version in automatic mode. Claude
+   refreshes the installed CLI's initialization catalog on demand and
+   registers its aliases and concrete model ids before resolving requests.
+   Catalogs use a bounded cache, with an explicit refresh path shared by
+   the API and desktop Models page. Discovery does not submit inference
+   prompts.</li>
 <li>Claude-specific validation and invocation stay inside the Claude runtime, while the OpenAI runtime currently uses shared request/response transforms plus the OpenAI backend adapter.</li>
 <li>On the OpenAI runtime, the account pool picks the account: conversation affinity first, then — among accounts with capacity that serve the requested model — the one with the most remaining quota in its longest usage window (<code>balance = "balanced"</code>, the default), strict rotation (<code>"round_robin"</code>), or the first such account (<code>"ordered"</code>). Which usage windows an account reports is plan-dependent, so the pool ranks windows by duration and balances on the longest (weekly) budget — the scarce one — while short-window exhaustion is handled by benching and failover. Accounts already benched (a usage probe or an earlier request showed their window is spent) are skipped outright, so requests route straight to accounts with capacity. Account-scoped failures (usage limits, in-stream failure events, dead credentials, transport errors) bench the account until it recovers and fail over to the next one — only before any content byte reaches the client; on streams, events that precede content are buffered so this guarantee holds.</li>
 <li>If every account fails, the retry layer waits an exponential backoff (<code>retry_attempts</code>, default 3 retries at 5s/20s/60s) and re-runs the whole pool pass — again only while no response byte has reached the client. Quota errors whose reset lies beyond the backoff budget return immediately.</li>
@@ -1188,6 +1195,12 @@
 <p>At launch, a multi-account pool probes each account's usage and model
 catalog in the background, so accounts already at their limit are benched
 and model-aware balancing works from the first request.</p>
+<p>The public OpenAI model catalog is the union across enrolled accounts.
+Selection, affinity, and every failover attempt are restricted to the
+requested model's supporting subset, never to an unsupported account as a
+last resort. Per-account catalogs are also refreshed before routing when
+their TTL expires. Catalog failures retain last-known routing membership;
+they do not establish support on an unknown account.</p>
 <h2 id="main-components">Main Components<a class="headerlink" href="#main-components" title="Permanent link">&para;</a></h2>
 <h3 id="airelaysconfig"><code>airelays.config</code><a class="headerlink" href="#airelaysconfig" title="Permanent link">&para;</a></h3>
 <ul>

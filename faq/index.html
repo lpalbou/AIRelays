@@ -610,6 +610,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#which-model-is-behind-a-claude-alias" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which model is behind a Claude alias?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#does-airelays-support-gemini" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1007,6 +1018,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#which-model-is-behind-a-claude-alias" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which model is behind a Claude alias?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#does-airelays-support-gemini" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1088,7 +1110,7 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <h2 id="does-airelays-support-claude">Does AIRelays support Claude?<a class="headerlink" href="#does-airelays-support-claude" title="Permanent link">&para;</a></h2>
 <p>Yes, in a constrained text-only form.</p>
 <ul>
-<li>explicit <code>claude:*</code> models</li>
+<li>discovered Claude aliases and concrete model ids, plus configured overrides</li>
 <li>local <code>claude</code> CLI only</li>
 <li>text <code>chat.completions</code></li>
 <li>text <code>completions</code></li>
@@ -1126,11 +1148,18 @@ terms and usage policies); re-check them periodically, they change.</p>
 <p>Set <code>reasoning_effort</code> in your request to one of the model's supported
 modes. Every model's modes and default are published in <code>/v1/models</code>
 under <code>airelays.reasoning</code>, shown in the desktop Models tab, and listed
-by <code>airelays models</code>. OpenAI models accept <code>none</code>, <code>low</code>, <code>medium</code>,
-<code>high</code>, <code>xhigh</code> (omitted means <code>none</code>, lower than the official apps'
-<code>medium</code>); Claude models accept <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>
-(omitted means the model's adaptive default). See
+by <code>airelays models</code>. Supported modes vary by model and are read from
+provider catalogs when available, including <code>max</code> and <code>ultra</code> where
+reported. Omitted effort uses the provider's default; Claude can use an
+adaptive default. See
 <a href="../api/">API notes</a> for details.</p>
+<h2 id="which-model-is-behind-a-claude-alias">Which model is behind a Claude alias?<a class="headerlink" href="#which-model-is-behind-a-claude-alias" title="Permanent link">&para;</a></h2>
+<p>The Models tab and <code>airelays models</code> show the concrete model reported by
+the installed Claude CLI. For example, a CLI can resolve <code>claude:fable</code>
+to <code>claude-fable-5-1</code>. The alias follows CLI updates and account settings;
+the discovered concrete id pins that version. Use Refresh to query the
+CLI again. A <code>configured</code> label means the catalog did not confirm that
+selector, so AIRelays does not claim a concrete resolution for it.</p>
 <h2 id="does-airelays-support-gemini">Does AIRelays support Gemini?<a class="headerlink" href="#does-airelays-support-gemini" title="Permanent link">&para;</a></h2>
 <p>No.</p>
 <h2 id="why-do-token-limit-parameters-return-422-on-the-openai-runtime">Why do token-limit parameters return <code>422</code> on the OpenAI runtime?<a class="headerlink" href="#why-do-token-limit-parameters-return-422-on-the-openai-runtime" title="Permanent link">&para;</a></h2>

@@ -1067,10 +1067,11 @@ adaptation records when the request shape itself is repaired:</p>
   is treated as absent. Each model's supported modes and default are published
   in <code>/v1/models</code> under <code>airelays.reasoning</code>. Unsupported Claude values are
   rejected with the supported list (the CLI would silently ignore them);
-  unsupported OpenAI values surface the upstream's own error. Requests
-  that omit the parameter run OpenAI models at upstream effort <code>none</code> —
-  lower than the <code>medium</code> the official ChatGPT apps use — and Claude
-  models at their adaptive default.</li>
+  unsupported OpenAI values surface the upstream's own error. Modes and
+  defaults come from the provider catalog when available and vary by model.
+  Omitting effort leaves the choice to the provider; Claude can use an
+  adaptive default. An empty Claude modes list means no effort parameter
+  is advertised for that model.</li>
 <li><strong>Structured outputs:</strong> <code>response_format.type=json_schema</code> is forwarded
   (translated) to OpenAI models; on <code>claude:*</code> chat completions both
   <code>json_schema</code> and <code>json_object</code> are honored via the claude CLI's native
@@ -1098,8 +1099,11 @@ adaptation records when the request shape itself is repaired:</p>
   with a clear 422 and suggestions from <code>/v1/models</code>, instead of failing
   later upstream with an account-scoped unsupported-model error. In
   multi-account mode, the same cache is invalidated when the enrolled
-  OpenAI account set changes, so admission follows the current shared
-  model intersection instead of a stale catalog snapshot.</li>
+  OpenAI account set changes, so admission follows the union of their
+  catalogs. Routing and failover use only the accounts listing the model,
+  even when all supporting accounts are cooling down. Explicit unlisted
+  <code>extra_models</code> overrides remain eligible across the pool; if an override
+  appears in an account catalog, its discovered subset takes precedence.</li>
 <li><strong>Account affinity:</strong> with multiple OpenAI accounts, a conversation is
   pinned to the account that served its first turn (protects upstream
   prompt caching); failover to another account happens only at turn
@@ -1122,16 +1126,22 @@ adaptation records when the request shape itself is repaired:</p>
 <h2 id="get-v1models"><code>GET /v1/models</code><a class="headerlink" href="#get-v1models" title="Permanent link">&para;</a></h2>
 <p>Returns an OpenAI-style models list built from the enabled provider runtimes.</p>
 <ul>
-<li>OpenAI models come from the verified ChatGPT subscription backend when that runtime is ready.</li>
-<li>Claude models are explicit <code>claude:*</code> ids.</li>
-<li>models starting with <code>claude:</code> route to the Claude runtime when it is enabled</li>
+<li>OpenAI models come from the authenticated ChatGPT/Codex upstream catalog. The default client version setting, <code>auto</code>, follows the installed <code>codex --version</code>, with a tested version floor when the CLI is missing or older. Model names are not hard-coded into automatic discovery.</li>
+<li>Claude models come from the installed CLI's initialization catalog, including its alias resolutions and per-model reasoning modes. Discovery sends no generation prompt. Both <code>claude:*</code> aliases and discovered concrete <code>claude-*</code> ids are accepted.</li>
+<li>models starting with <code>claude:</code> or <code>claude-</code> route to the Claude runtime when it is enabled</li>
 <li>other model ids route to the OpenAI runtime when it is enabled</li>
 <li>Each model record includes an <code>airelays</code> extension block with provider identity, route capabilities, a <code>reasoning</code> block (<code>parameter</code>, supported <code>modes</code>, <code>default</code>), and a <code>structured_output</code> block (<code>parameter</code>, supported <code>types</code> for <code>response_format</code> on chat completions).</li>
-<li>Successful OpenAI upstream model-list responses are cached in memory for
+<li>Provider catalogs are cached in memory for
   <code>models_cache_ttl_seconds</code> seconds. The default is 300 seconds; <code>0</code>
   disables the cache.</li>
 <li>Cached OpenAI model lists are scoped to the current local OpenAI auth account
   and ignored after logout or account changes.</li>
+<li><code>GET /v1/models?refresh=true</code> bypasses the provider catalog caches, including all OpenAI account catalogs. The desktop Refresh button uses this parameter, and the open Models tab also reloads every five minutes while the relay is reachable.</li>
+<li><code>airelays.discovery_source</code> identifies <code>upstream_catalog</code>, <code>claude_cli</code>, or a <code>configured</code> override. <code>airelays.upstream_model</code> is the selector forwarded upstream. <code>airelays.resolved_model</code> reports the concrete Claude model when the CLI supplies it; <code>airelays.display_name</code> carries its provider label. Aliases keep following the CLI's selection; use a concrete id to pin a model version.</li>
+<li>Configured OpenAI <code>extra_models</code> and Claude <code>models</code> extend discovery. They are retained for compatibility and may not have catalog confirmation. A missing or incompatible Claude CLI retains configured ids and the last successful catalog; <code>providers.claude.models_discovery_error</code> in relay status reports discovery failures. Failed Claude probes are cached for the same interval to avoid repeatedly launching a failing CLI.</li>
+<li>With several OpenAI accounts, discovery returns the union of successful catalogs and preserves each model's metadata. <code>airelays.account_availability</code> reports <code>supported</code> and <code>total</code> account counts without disclosing account identities. A failed account catalog does not hide models returned by other accounts. Routing retains last-known membership during catalog outages rather than broadening a known subset.</li>
+<li><code>airelays.catalog_visibility</code> and <code>airelays.description</code> preserve upstream metadata. Entries marked <code>hide</code> appear as <strong>upstream-hidden</strong> in the desktop; AIRelays does not infer their underlying identity or promote them as recommended models.</li>
+<li>Catalog discovery reports provider availability and capabilities; it does not generate a test response for every model. Account limits and upstream availability still apply when serving a request.</li>
 </ul>
 <h2 id="get-v1subscriptionstatus"><code>GET /v1/subscription/status</code><a class="headerlink" href="#get-v1subscriptionstatus" title="Permanent link">&para;</a></h2>
 <p>Returns a normalized subscription-usage snapshot with per-window usage
@@ -1198,7 +1208,7 @@ relay accepts, grouped by provider (<code>--json</code> supported).</p>
 </ul>
 <p>Claude runtime:</p>
 <ul>
-<li>explicit <code>claude:*</code> models only</li>
+<li>discovered Claude aliases and concrete model ids, plus configured overrides</li>
 <li>text-only <code>system</code>, <code>developer</code>, <code>user</code>, and <code>assistant</code> messages</li>
 <li><code>stream=true|false</code></li>
 <li>no tools</li>
@@ -1233,7 +1243,7 @@ relay accepts, grouped by provider (<code>--json</code> supported).</p>
 </ul>
 <p>Claude runtime:</p>
 <ul>
-<li>explicit <code>claude:*</code> models only</li>
+<li>discovered Claude aliases and concrete model ids, plus configured overrides</li>
 <li>text-only prompt-in, text-out</li>
 <li><code>stream=true|false</code></li>
 <li>no files, images, audio, or tools</li>
