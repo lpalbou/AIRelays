@@ -365,6 +365,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#traffic-log-retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Traffic log retention
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#default-paths" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -775,6 +786,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0004-provider-runtime-boundary-and-experimental-local-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provider Runtime Boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0005-bounded-traffic-log-retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bounded Traffic-Log Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -807,6 +874,17 @@
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#traffic-log-retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Traffic log retention
+      
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#default-paths" class="md-nav__link">
@@ -892,6 +970,80 @@
 <li><code>~/.config/airelays/config.toml</code></li>
 <li>built-in defaults</li>
 </ol>
+<p>Traffic-log retention is live configuration: a saved policy in the selected
+log directory takes precedence over its <code>[logging]</code> defaults. See
+<a href="#traffic-log-retention">Traffic log retention</a> below.</p>
+<h2 id="traffic-log-retention">Traffic log retention<a class="headerlink" href="#traffic-log-retention" title="Permanent link">&para;</a></h2>
+<p>Traffic logs rotate hourly and at a size limit. Cleanup runs on startup,
+every 60 seconds while the relay is running (including when idle), on rotation,
+and when applying a policy. Both age and size limits apply; whichever requires
+removing a file first wins. Defaults are deliberately bounded on upgrades too.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>retention_days</code></td>
+<td><code>7</code></td>
+<td>Maximum age since a file's last write; <code>30</code> means 30 days, <code>0</code> disables only the age limit. Range: 0–36500.</td>
+</tr>
+<tr>
+<td><code>max_total_mb</code></td>
+<td><code>1024</code></td>
+<td>Total managed traffic-log budget in MiB (1 GiB by default). Range: 1–1048576.</td>
+</tr>
+<tr>
+<td><code>max_file_mb</code></td>
+<td><code>50</code></td>
+<td>Rotate before the next record would exceed this size in MiB. Range: 1–10240; must not exceed the total budget.</td>
+</tr>
+</tbody>
+</table>
+<p>Retention is an upper limit, not a promise of seven days of history: under load,
+the disk budget removes older files sooner. Cleanup reserves room for the active
+file, so usage can be below the configured budget by up to a chunk plus the last
+whole file removed. Files are deleted whole, oldest modification time first.
+The budget counts file contents; filesystem allocation and metadata overhead
+are not included in <code>usage_bytes</code>.</p>
+<p>From the CLI (also works with the relay stopped):</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>logs<span class="w">                         </span><span class="c1"># policy and current usage; no cleanup</span>
+airelays<span class="w"> </span>logs<span class="w"> </span>--retention-days<span class="w"> </span><span class="m">30</span><span class="w">      </span><span class="c1"># keep up to a month, save and apply</span>
+airelays<span class="w"> </span>logs<span class="w"> </span>--retention-days<span class="w"> </span><span class="m">7</span><span class="w"> </span>--max-total-mb<span class="w"> </span><span class="m">1024</span><span class="w"> </span>--max-file-mb<span class="w"> </span><span class="m">50</span>
+airelays<span class="w"> </span>logs<span class="w"> </span>--json<span class="w">                  </span><span class="c1"># machine-readable policy, usage, errors</span>
+airelays<span class="w"> </span>logs<span class="w"> </span>--config<span class="w"> </span>/path/to/config.toml<span class="w"> </span>--retention-days<span class="w"> </span><span class="m">14</span>
+</code></pre></div>
+<p>The selected <code>--config</code>, <code>--data-dir</code>, and <code>--logs-dir</code> determine which log
+directory is managed. Use the same directory as the running relay.</p>
+<p>In the cross-platform tray app, open <strong>Settings → Traffic log retention</strong>.
+Choose <strong>1 week</strong>, <strong>1 month (30 days)</strong>, or a custom duration and disk limit,
+then <strong>Apply log retention</strong>. The relay must be running for the tray controls;
+the CLI can configure it offline. This section applies independently of the
+other settings' Save &amp; Restart workflow. It shows disk usage and cleanup errors.</p>
+<p>The <a href="../api/#traffic-log-retention-api">HTTP API</a> exposes the same policy.
+API/tray updates apply immediately. Other relay processes sharing the directory
+pick up the saved policy on their next write or within 60 seconds while idle.</p>
+<p>Policy changes are saved atomically to <code>&lt;logs_dir&gt;/.retention.json</code>. That file
+overrides the three TOML retention defaults and survives restarts, CLI sessions,
+and the tray's regeneration of <code>config.toml</code>. Change it through the API or CLI;
+editing the TOML defaults after saving a policy does not override that policy.
+The <code>stream_lines</code> option remains a separate startup setting.</p>
+<p>Cleanup includes existing <code>YYYY/MM/DD-HH.log</code> files and new size-rotated
+<code>YYYY/MM/DD-HH.&lt;uuid&gt;.log</code> files. It does not manage console/stdout logs, uploads,
+conversations, unrelated files, symlinks, or hard links. Use an app-owned local
+log directory; every writer sharing it must run a retention-aware AIRelays
+version. External writers or an older relay can defeat the disk limit.</p>
+<p>A record larger than <code>max_file_mb</code> becomes an explicit <code>log_record_omitted</code>
+JSON record with its request ID, phase, byte count and SHA-256; the payload is
+omitted from the log without altering the actual request or response. Cleanup
+and I/O failures are reported on stderr and through <code>last_error</code>; traffic
+logging pauses on cleanup failure and retries, rather than growing past the
+budget or failing client requests. Deletion is permanent: archive any logs you
+need before first starting the upgraded relay or reducing a policy.</p>
 <h2 id="default-paths">Default Paths<a class="headerlink" href="#default-paths" title="Permanent link">&para;</a></h2>
 <ul>
 <li>config: <code>~/.config/airelays/config.toml</code></li>
@@ -943,6 +1095,9 @@
 <span class="c1"># streamed response (~50x log growth under load); summary records</span>
 <span class="c1"># (request, usage, response, errors) are always logged regardless.</span>
 <span class="n">stream_lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<span class="n">retention_days</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">7</span>
+<span class="n">max_total_mb</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1024</span>
+<span class="n">max_file_mb</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">50</span>
 
 <span class="k">[providers.openai]</span>
 <span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>

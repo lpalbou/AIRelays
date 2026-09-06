@@ -527,6 +527,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#traffic-logs-report-a-cleanup-error" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Traffic logs report a cleanup error
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-model-is-missing-or-a-claude-alias-is-unclear" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -885,6 +896,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0004-provider-runtime-boundary-and-experimental-local-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provider Runtime Boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0005-bounded-traffic-log-retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bounded Traffic-Log Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -917,6 +984,17 @@
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#traffic-logs-report-a-cleanup-error" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Traffic logs report a cleanup error
+      
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#a-model-is-missing-or-a-claude-alias-is-unclear" class="md-nav__link">
@@ -1104,6 +1182,22 @@
 
 
 <h1 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h1>
+<h2 id="traffic-logs-report-a-cleanup-error">Traffic logs report a cleanup error<a class="headerlink" href="#traffic-logs-report-a-cleanup-error" title="Permanent link">&para;</a></h2>
+<p>The tray Settings page or <code>GET /v1/relay/logging</code> can report <code>last_error</code>, or
+<code>airelays logs</code> can print a cleanup error. AIRelays pauses traffic-log writes
+until it can enforce the configured limit; relay requests continue normally.</p>
+<p>Check that the configured log directory is writable and has space available:</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>logs
+airelays<span class="w"> </span>status<span class="w"> </span>--json
+</code></pre></div>
+<p>If the limit is smaller than the history you need, archive the relevant log
+files first, then raise the total limit or shorten retention:</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>logs<span class="w"> </span>--retention-days<span class="w"> </span><span class="m">30</span><span class="w"> </span>--max-total-mb<span class="w"> </span><span class="m">2048</span><span class="w"> </span>--max-file-mb<span class="w"> </span><span class="m">50</span>
+</code></pre></div>
+<p>Use the same <code>--config</code>, <code>--data-dir</code>, or <code>--logs-dir</code> arguments as the
+running relay. Apply the policy again, then confirm that <code>last_error</code> is empty
+and <code>over_budget</code> is false. See <a href="../configuration/#traffic-log-retention">traffic-log retention</a>
+for the policy, ownership boundaries, and permanent-deletion behavior.</p>
 <h2 id="a-model-is-missing-or-a-claude-alias-is-unclear">A model is missing or a Claude alias is unclear<a class="headerlink" href="#a-model-is-missing-or-a-claude-alias-is-unclear" title="Permanent link">&para;</a></h2>
 <p>Use the Models tab's Refresh button or <code>GET /v1/models?refresh=true</code> to
 reload both provider catalogs. OpenAI discovery uses <code>client_version =

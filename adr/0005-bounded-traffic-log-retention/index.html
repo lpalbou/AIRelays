@@ -10,13 +10,11 @@
       
       
       
-        <link rel="canonical" href="https://www.lpalbou.info/AIRelays/adr/0003-local-config-and-default-deny-relay-security/">
+        <link rel="canonical" href="https://www.lpalbou.info/AIRelays/adr/0005-bounded-traffic-log-retention/">
       
       
-        <link rel="prev" href="../0002-chatgpt-subscription-backend-compatibility-boundary/">
+        <link rel="prev" href="../0004-provider-runtime-boundary-and-experimental-local-adapters/">
       
-      
-        <link rel="next" href="../0004-provider-runtime-boundary-and-experimental-local-adapters/">
       
       
         
@@ -27,7 +25,7 @@
     
     
       
-        <title>Local Config And Relay Security - AIRelays</title>
+        <title>Bounded Traffic-Log Retention - AIRelays</title>
       
     
     
@@ -68,7 +66,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#0003-local-config-and-default-deny-relay-security" class="md-skip">
+        <a href="#bounded-traffic-log-retention" class="md-skip">
           Skip to content
         </a>
       
@@ -104,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Local Config And Relay Security
+              Bounded Traffic-Log Retention
             
           </span>
         </div>
@@ -651,37 +649,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Config And Relay Security
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../0003-local-config-and-default-deny-relay-security/" class="md-nav__link">
         
   
   
@@ -697,109 +668,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#status" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Status
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#context" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Context
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#decision" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Decision
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#consequences" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Consequences
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Consequences">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#positive" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Positive
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#negative" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Negative
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Non-Goals
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -837,10 +705,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../0005-bounded-traffic-log-retention/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bounded Traffic-Log Retention
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -856,6 +751,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -895,17 +843,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#status" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Status
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#context" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -936,45 +873,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Consequences">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#positive" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Positive
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#negative" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Negative
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Non-Goals
-      
-    </span>
-  </a>
-  
 </li>
       
     </ul>
@@ -997,48 +895,49 @@
   
 
 
-<h1 id="0003-local-config-and-default-deny-relay-security">0003: Local Config And Default-Deny Relay Security<a class="headerlink" href="#0003-local-config-and-default-deny-relay-security" title="Permanent link">&para;</a></h1>
-<h2 id="status">Status<a class="headerlink" href="#status" title="Permanent link">&para;</a></h2>
-<p>Accepted</p>
+<h1 id="bounded-traffic-log-retention">Bounded Traffic-Log Retention<a class="headerlink" href="#bounded-traffic-log-retention" title="Permanent link">&para;</a></h1>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
-<p>AIRelays is a local OpenAI-compatible relay backed by a reused ChatGPT subscription login. That upstream login is necessary for provider access, but it is not a safe or coherent credential for client-to-relay access.</p>
-<p>The project also needed a cleaner end-user setup story than raw environment variables alone.</p>
+<p>AIRelays writes redacted traffic records as JSONL files. Files rotate hourly,
+but a busy relay can create substantial disk usage unless logs also have a
+retention policy. The relay can run from the CLI or through the desktop tray,
+and the tray regenerates its relay configuration before launch.</p>
 <h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
-<p>AIRelays adopts these rules:</p>
-<ol>
-<li>Relay-client authorization is separate from upstream provider authorization.</li>
-<li>Protected API routes default to bearer-token enforcement.</li>
-<li>The relay bearer token is local state owned by AIRelays, not by the upstream provider auth store.</li>
-<li>AIRelays exposes a small local control plane through:</li>
-<li><code>~/.config/airelays/config.toml</code></li>
-<li>CLI overrides</li>
-<li><code>AIRELAYS_*</code> environment variables</li>
-<li>AIRelays applies single-process in-memory abuse controls at the edge:</li>
-<li>per-IP request rate limits</li>
-<li>per-IP concurrent-request caps</li>
-<li>temporary IP blocks after repeated bad tokens</li>
-<li>Listener default remains loopback-only.</li>
-</ol>
+<p>The relay owns traffic-log retention. The CLI, authenticated relay API, and
+desktop Settings page use the same saved policy in the log directory.</p>
+<p>The policy has three limits:</p>
+<ul>
+<li><code>retention_days</code> limits file age;</li>
+<li><code>max_total_mb</code> limits total managed traffic-log contents;</li>
+<li><code>max_file_mb</code> rotates an active log file before it exceeds the configured
+  size.</li>
+</ul>
+<p>The defaults are 7 days, 1024 MiB total, and 50 MiB per file. Both age and
+size limits apply, and the oldest managed files are deleted first. Cleanup runs
+at startup, periodically while the relay is running, when a file rotates, and
+when the policy changes.</p>
+<p>Policy updates are atomically saved as <code>&lt;logs_dir&gt;/.retention.json</code>. That
+policy overrides the corresponding TOML defaults so tray configuration
+generation cannot replace a live API or CLI update. A process lock coordinates
+policy updates, rotation, writes, and cleanup among relay processes that share
+the log directory.</p>
+<p>Cleanup manages only AIRelays traffic files in the documented date-based
+layout. It does not follow symlinks or manage hard links, console output,
+uploads, conversations, or unrelated files. A record too large for one log
+file is represented by an explicit omission record containing its request ID,
+phase, original size, and digest. If cleanup cannot enforce the policy, traffic
+logging pauses and reports the error; serving requests continues.</p>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
-<h3 id="positive">Positive<a class="headerlink" href="#positive" title="Permanent link">&para;</a></h3>
-<ul>
-<li>End users get a repeatable first-run setup with <code>airelays init</code>.</li>
-<li>Relay access can be rotated independently from upstream login state.</li>
-<li>Abuse controls apply before request bodies are parsed or upstream calls are made.</li>
-<li>Future provider adapters can remain behind one stable client-facing relay boundary.</li>
-</ul>
-<h3 id="negative">Negative<a class="headerlink" href="#negative" title="Permanent link">&para;</a></h3>
-<ul>
-<li>AIRelays now owns a small amount of local secret state.</li>
-<li>Rate limiting is single-process and not distributed across multiple instances.</li>
-<li>Setup and docs must explain two credential layers clearly.</li>
-</ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Multi-tenant access control</li>
-<li>Distributed rate limiting</li>
-<li>Shared remote operations control plane</li>
-</ul>
+<p>The same bounded behavior applies to standalone and tray-managed relays without
+requiring a platform-specific log-rotation service. Existing eligible traffic
+logs are evaluated on the first upgraded start, so users should archive any
+history they need before enabling or tightening retention.</p>
+<p>Retention removes complete files permanently. It provides an upper bound on
+traffic-log contents rather than a guaranteed number of days of history: a busy
+relay can reach the size limit before the age limit. All writers sharing a log
+directory must use a retention-aware AIRelays version; external writers and
+older relay versions are outside this policy.</p>
+<p>See <a href="../../configuration/#traffic-log-retention">Configuration</a> for operation
+and <a href="../../api/#traffic-log-retention-api">API Notes</a> for the HTTP contract.</p>
 
 
 

@@ -419,6 +419,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#traffic-log-retention-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Traffic log retention API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#compatibility-adaptations-read-this-first" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -852,6 +863,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0004-provider-runtime-boundary-and-experimental-local-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provider Runtime Boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0005-bounded-traffic-log-retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bounded Traffic-Log Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -884,6 +951,17 @@
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#traffic-log-retention-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Traffic log retention API
+      
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#compatibility-adaptations-read-this-first" class="md-nav__link">
@@ -1038,6 +1116,31 @@
 
 
 <h1 id="api-notes">API Notes<a class="headerlink" href="#api-notes" title="Permanent link">&para;</a></h1>
+<h2 id="traffic-log-retention-api">Traffic log retention API<a class="headerlink" href="#traffic-log-retention-api" title="Permanent link">&para;</a></h2>
+<p><code>GET /v1/relay/logging</code> returns current policy and disk usage without deleting
+logs. <code>PUT /v1/relay/logging</code> validates, persists and applies a partial policy
+update immediately; omitted fields retain their saved values. These routes use
+the same bearer-token gate and rate limits as the other <code>/v1/*</code> routes.</p>
+<p>Example PUT body (all values must be integers; sizes are MiB):</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"retention_days"</span><span class="p">:</span><span class="w"> </span><span class="mi">30</span><span class="p">,</span><span class="w"> </span><span class="nt">"max_total_mb"</span><span class="p">:</span><span class="w"> </span><span class="mi">1024</span><span class="p">,</span><span class="w"> </span><span class="nt">"max_file_mb"</span><span class="p">:</span><span class="w"> </span><span class="mi">50</span><span class="p">}</span>
+</code></pre></div>
+<p>Both responses contain <code>policy</code>, <code>policy_source</code> (<code>saved</code> or <code>config</code>, including
+built-in defaults), <code>policy_path</code>, <code>logs_dir</code>, <code>usage_bytes</code>, <code>file_count</code>,
+<code>over_budget</code>, <code>cleanup_interval_seconds</code>, <code>last_cleanup_at</code>, <code>deleted_files</code>,
+<code>deleted_bytes</code>, <code>oversized_records</code>, <code>dropped_records</code>, and <code>last_error</code>. Cleanup counters and
+errors are local to the process answering the request; disk usage and saved
+policy are shared. <code>last_cleanup_at</code> is the most recent completed cleanup pass,
+which may have encountered deletion errors. It is <code>null</code> before a pass completes.</p>
+<p>Invalid values, unknown fields, zero size limits, or a file limit larger than
+the total budget return 422 without altering the saved policy. Storage failures
+preventing policy reads or persistence return 503. A successfully saved policy
+returns 200 even if cleanup fails; inspect <code>last_error</code> and <code>over_budget</code> before
+reporting successful reclamation. A policy update permanently deletes eligible
+old files. GET requests do not trigger reclamation.</p>
+<p>Defaults: 7 days, 1024 MiB total, 50 MiB per file. <code>retention_days: 0</code> removes the
+age limit but leaves size enforcement enabled. See
+<a href="../configuration/#traffic-log-retention">configuration</a> for bounds, precedence,
+rotation behavior, migration, and CLI/tray controls.</p>
 <h2 id="compatibility-adaptations-read-this-first">Compatibility Adaptations (read this first)<a class="headerlink" href="#compatibility-adaptations-read-this-first" title="Permanent link">&para;</a></h2>
 <p>The verified upstream is the ChatGPT subscription backend, not the public
 platform API. AIRelays adapts requests on the three text-generation routes

@@ -902,6 +902,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0004-provider-runtime-boundary-and-experimental-local-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provider Runtime Boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0005-bounded-traffic-log-retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bounded Traffic-Log Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1259,7 +1315,12 @@ they do not establish support on an unknown account.</p>
 <h3 id="airelaystraffic"><code>airelays.traffic</code><a class="headerlink" href="#airelaystraffic" title="Permanent link">&para;</a></h3>
 <ul>
 <li>redacted JSONL logging</li>
+<li>hourly and size rotation, age/total-size retention, and visible storage errors</li>
+<li>shared policy persistence and process locking in <code>airelays.log_retention</code></li>
 </ul>
+<p>The relay owns retention; CLI and tray/API controls use the same saved policy.
+See <a href="../adr/0005-bounded-traffic-log-retention/">the retention decision</a> for
+ownership, alternatives, migration, and operating limits.</p>
 <h2 id="state-model">State Model<a class="headerlink" href="#state-model" title="Permanent link">&para;</a></h2>
 <p>OpenAI runtime:</p>
 <ul>

@@ -797,6 +797,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0004-provider-runtime-boundary-and-experimental-local-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provider Runtime Boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0005-bounded-traffic-log-retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bounded Traffic-Log Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -998,6 +1054,12 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <li>usage summaries</li>
 </ul>
 <p>Request and response contents, including prompts and model outputs, can be written to the local AIRelays log files. Raw bearer tokens are redacted.</p>
+<p>Traffic logs default to a 7-day age limit and 1 GiB disk budget, with hourly/
+50 MiB rotation. The oldest whole files are permanently deleted, including
+eligible logs already present when upgrading. Use the tray's retention controls,
+<code>airelays logs</code>, or the authenticated <code>/v1/relay/logging</code> API to change the policy.
+This is log retention only; stored uploads and conversations are separate.
+See <a href="../configuration/#traffic-log-retention">configuration</a> for details.</p>
 
 
 
