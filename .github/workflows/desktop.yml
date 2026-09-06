@@ -4,6 +4,11 @@ on:
   push:
     tags: ["desktop-v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: Existing release version whose desktop installers should be built and attached
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,7 +19,6 @@ jobs:
   # desktop-vX.Y.Z tag, the desktop manifests, and pyproject.toml must
   # all agree before anything builds.
   version-guard:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
@@ -30,11 +34,16 @@ jobs:
           import tomllib
           from pathlib import Path
 
-          ref = os.environ.get("GITHUB_REF_NAME", "")
-          match = re.fullmatch(r"desktop-v(\d+\.\d+\.\d+(?:[a-zA-Z0-9.-]+)?)", ref)
-          if not match:
-              raise SystemExit(f"Unexpected desktop tag: {ref!r}")
-          version = match.group(1)
+          if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+              version = os.environ.get("INPUT_VERSION", "")
+              if not re.fullmatch(r"\d+\.\d+\.\d+(?:[a-zA-Z0-9.-]+)?", version):
+                  raise SystemExit(f"Unexpected release version: {version!r}")
+          else:
+              ref = os.environ.get("GITHUB_REF_NAME", "")
+              match = re.fullmatch(r"desktop-v(\d+\.\d+\.\d+(?:[a-zA-Z0-9.-]+)?)", ref)
+              if not match:
+                  raise SystemExit(f"Unexpected desktop tag: {ref!r}")
+              version = match.group(1)
 
           # Canonical sources: src/airelay/__init__.py (relay; pyproject is
           # dynamic) and desktop/src-tauri/Cargo.toml (desktop; tauri.conf
@@ -65,7 +74,7 @@ jobs:
 
   build:
     needs: [version-guard]
-    if: always() && (needs.version-guard.result == 'success' || github.event_name == 'workflow_dispatch')
+    if: needs.version-guard.result == 'success'
     strategy:
       fail-fast: false
       matrix:
@@ -142,7 +151,7 @@ jobs:
   # release page carrying both the Python distributions and the desktop
   # installers.
   attach-to-release:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [version-guard, build]
     runs-on: ubuntu-latest
     permissions:
@@ -157,8 +166,5 @@ jobs:
         with:
           tag_name: v${{ needs.version-guard.outputs.version }}
           files: |
-            installers/**/*.dmg
-            installers/**/*.exe
-            installers/**/*.AppImage
-            installers/**/*.deb
+            installers/*
           fail_on_unmatched_files: true
