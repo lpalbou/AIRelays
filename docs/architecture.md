@@ -130,6 +130,12 @@ they do not establish support on an unknown account.
 ### `airelays.traffic`
 
 - redacted JSONL logging
+- hourly and size rotation, age/total-size retention, and visible storage errors
+- shared policy persistence and process locking in `airelays.log_retention`
+
+The relay owns retention; CLI and tray/API controls use the same saved policy.
+See [the retention decision](adr/0005-bounded-traffic-log-retention.md) for
+ownership, alternatives, migration, and operating limits.
 
 ## State Model
 

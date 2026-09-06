@@ -1447,6 +1447,39 @@ def _run_serve(args: argparse.Namespace) -> None:
     uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
 
 
+def _run_logs(args: argparse.Namespace) -> None:
+    """The same policy service as the API, usable even with the relay stopped."""
+    from airelay.traffic import TrafficLogger
+
+    settings = _base_settings(args)
+    changes = {
+        key: getattr(args, key)
+        for key in ("retention_days", "max_total_mb", "max_file_mb")
+        if getattr(args, key) is not None
+    }
+    try:
+        traffic = TrafficLogger(settings.logs_dir, settings.log_policy())
+        result = traffic.configure(changes) if changes else traffic.status()
+    except (OSError, ValueError, TypeError) as error:
+        raise SystemExit(f"Cannot configure log retention: {error}") from error
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+    policy = result["policy"]
+    days = policy["retention_days"]
+    _print_title("AIRelays Traffic Logs")
+    _print_field("Logs dir", result["logs_dir"])
+    _print_field("Retention", f"{days} days" if days else "No age limit")
+    _print_field("Disk limit", f"{policy['max_total_mb']} MiB (oldest files removed first)")
+    _print_field("Rotate at", f"{policy['max_file_mb']} MiB or hourly")
+    _print_field("Disk usage", f"{result['usage_bytes'] / (1024 * 1024):.1f} MiB, {result['file_count']} files")
+    if changes:
+        _print_field("Reclaimed", f"{result['deleted_bytes'] / (1024 * 1024):.1f} MiB")
+        print("  Saved. Running relays sharing this log directory apply it within 60 seconds.")
+    if result["last_error"]:
+        _print_field("Cleanup error", result["last_error"], kind="warn")
+
+
 def _add_json_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
@@ -1482,6 +1515,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     serve.set_defaults(func=_run_serve)
+
+    logs = subparsers.add_parser(
+        "logs", parents=[shared],
+        help="Show traffic-log usage or save retention limits (applied without restart)",
+    )
+    _add_json_argument(logs)
+    logs.add_argument("--retention-days", type=int, help="Keep up to N days (7 = week, 30 = month, 0 = no age limit)")
+    logs.add_argument("--max-total-mb", type=int, help="Total traffic-log budget in MiB (default 1024)")
+    logs.add_argument("--max-file-mb", type=int, help="Rotate files at this many MiB (default 50)")
+    logs.set_defaults(func=_run_logs)
 
     init = subparsers.add_parser(
         "init",

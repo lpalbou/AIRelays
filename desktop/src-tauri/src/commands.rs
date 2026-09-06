@@ -854,6 +854,48 @@ pub async fn refresh_accounts(app: AppHandle) -> Result<Value, String> {
     response.json().await.map_err(|_| "Unexpected refresh response.".to_string())
 }
 
+/// Retention is owned by the relay, independent of generated desktop settings.
+async fn log_retention_request(app: AppHandle, policy: Option<Value>) -> Result<Value, String> {
+    let (base_url, requires_auth) = {
+        let state = app.state::<AppState>();
+        let settings = robust_lock(&state.settings);
+        (settings.base_url(), settings.require_bearer_auth)
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let url = format!("{base_url}/relay/logging");
+    let mut request = match policy {
+        Some(value) => client.put(url).json(&value),
+        None => client.get(url),
+    };
+    if requires_auth {
+        if let Ok(token) = std::fs::read_to_string(AppSettings::bearer_token_file()) {
+            request = request.bearer_auth(token.trim());
+        }
+    }
+    let response = request.send().await
+        .map_err(|_| "Cannot reach the relay. Start it to configure log retention.".to_string())?;
+    let status = response.status();
+    let body: Value = response.json().await
+        .map_err(|_| "Unexpected log retention response.".to_string())?;
+    if !status.is_success() {
+        return Err(format!("Log retention ({status}): {}", body.get("detail").unwrap_or(&body)));
+    }
+    Ok(body)
+}
+
+#[tauri::command]
+pub async fn get_log_retention(app: AppHandle) -> Result<Value, String> {
+    log_retention_request(app, None).await
+}
+
+#[tauri::command]
+pub async fn set_log_retention(app: AppHandle, policy: Value) -> Result<Value, String> {
+    log_retention_request(app, Some(policy)).await
+}
+
 /// Fetches the relay's model list (all providers), for the Models tab.
 #[tauri::command]
 pub async fn get_models(app: AppHandle, refresh: Option<bool>) -> Result<Value, String> {

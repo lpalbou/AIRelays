@@ -177,7 +177,7 @@ def _file_sha256(data: bytes) -> str:
 def create_app(settings: Settings) -> FastAPI:
     settings.ensure_directories()
     settings.validate_provider_guardrails()
-    traffic = TrafficLogger(settings.logs_dir)
+    traffic = TrafficLogger(settings.logs_dir, settings.log_policy())
     store = AppStore(settings.data_dir)
     # One user may have several of their own subscriptions enrolled; the
     # pool balances across them and degenerates to plain single-account
@@ -207,6 +207,7 @@ def create_app(settings: Settings) -> FastAPI:
         "/v1/account/rate_limits",
         "/v1/relay/status",
         "/v1/relay/accounts/refresh",
+        "/v1/relay/logging",
         "/v1/completions",
         "/v1/responses",
         "/v1/chat/completions",
@@ -229,6 +230,7 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.backend = backend
         app.state.providers = providers
         app.state.protector = protector
+        await asyncio.to_thread(traffic.maintain)
         traffic.write(
             {
                 "phase": "endpoint_security_ready",
@@ -260,11 +262,20 @@ def create_app(settings: Settings) -> FastAPI:
             if hasattr(backend, "usage_refresh_loop")
             else None
         )
-        yield
-        for task in (warm_task, usage_task):
-            if task is not None and not task.done():
+        async def maintain_logs() -> None:
+            while True:
+                await asyncio.sleep(traffic.cleanup_interval_seconds)
+                await asyncio.to_thread(traffic.maintain)
+
+        retention_task = asyncio.create_task(maintain_logs())
+        try:
+            yield
+        finally:
+            tasks = [task for task in (warm_task, usage_task, retention_task) if task is not None]
+            for task in tasks:
                 task.cancel()
-        await backend.close()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await backend.close()
 
     app = FastAPI(title=APP_NAME, version=__version__, lifespan=lifespan)
 
@@ -661,6 +672,22 @@ def create_app(settings: Settings) -> FastAPI:
             "supported_routes": supported_routes,
         }
         return logged_json(request_id, payload, loggable=False)
+
+    @app.get("/v1/relay/logging")
+    async def log_settings() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(traffic.status)
+        except (OSError, ValueError, TypeError) as error:
+            raise HTTPException(status_code=503, detail=f"Cannot read log retention: {error}") from error
+
+    @app.put("/v1/relay/logging")
+    async def configure_logs(changes: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(traffic.configure, changes)
+        except (ValueError, TypeError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except OSError as error:
+            raise HTTPException(status_code=503, detail=f"Cannot save log retention: {error}") from error
 
     @app.post("/v1/files")
     async def upload_file(request: Request, file: UploadFile = File(...), purpose: str = "assistants") -> JSONResponse:

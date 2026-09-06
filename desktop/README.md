@@ -15,6 +15,13 @@ web codebase shared across macOS, Windows, and Linux.
 
 ## Develop
 
+The Settings tab includes **Traffic log retention**, with week/month presets,
+custom disk and file limits, and current usage. **Apply log retention** calls
+the running relay API immediately, independently of Save & Restart. The saved
+policy belongs to the relay's log directory, so desktop config generation
+cannot overwrite changes made through the CLI or API. With the relay stopped,
+use `airelays logs` to configure the same policy offline.
+
 ```bash
 cd desktop
 npm install

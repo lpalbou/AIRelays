@@ -5,7 +5,7 @@
 - [Desktop App](../desktop/README.md)
   - the cross-platform tray app: layout, build, and supervision behavior
 - [Configuration](configuration.md)
-  - config file shape, environment overrides, and provider toggles
+  - config file shape, environment overrides, provider toggles, and traffic-log retention
 - [Security](security.md)
   - relay auth, open local relay mode, and Claude guardrails
 - [API Notes](api.md)

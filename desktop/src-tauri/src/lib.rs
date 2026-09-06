@@ -89,6 +89,8 @@ pub fn run() {
             commands::submit_login_code,
             commands::cancel_login,
             commands::get_models,
+            commands::get_log_retention,
+            commands::set_log_retention,
         ])
         .build(tauri::generate_context!())
         .expect("error building AIRelays desktop app")

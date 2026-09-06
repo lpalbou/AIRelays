@@ -2,6 +2,7 @@
 
 - [Getting Started](getting-started.md)
 - [Configuration](configuration.md)
+  - paths, provider settings, and traffic-log retention
 - [Security](security.md)
 - [API Notes](api.md)
 - [Architecture](architecture.md)

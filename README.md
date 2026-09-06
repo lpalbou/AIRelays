@@ -5,7 +5,7 @@
 - The default runtime uses an AIRelays-owned ChatGPT subscription login.
 - An optional Claude runtime uses the local `claude` CLI and its existing subscription auth state.
 - AIRelays protects the relay with its own bearer token by default.
-- Every transit is logged to hourly JSONL files.
+- Traffic is logged to JSONL files with automatic rotation and retention (7 days, 1 GiB total by default).
 
 ## Independence And Intended Use
 
@@ -385,6 +385,15 @@ Claude runtime:
 - the Claude runtime is loopback-only and follows the relay's protected or open local auth mode
 
 ## Configuration
+
+Traffic logs are bounded by default: up to **7 days**, **1 GiB total**, and
+**50 MiB per file**, with hourly rotation and oldest-first cleanup. A busy
+relay may keep less history because the disk limit takes precedence.
+Use `airelays logs --retention-days 30` for a month, or the tray app's
+**Settings → Traffic log retention** controls. Changes persist without a
+restart; `GET`/`PUT /v1/relay/logging` expose the same policy and current usage.
+Starting the upgraded relay also applies the limits to existing traffic logs.
+See [retention configuration](docs/configuration.md#traffic-log-retention).
 
 AIRelays reads configuration in this order:
 

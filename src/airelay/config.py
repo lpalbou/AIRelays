@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from airelay.log_retention import LogRetentionPolicy
+
 
 CHATGPT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 OPENAI_AUTH_ISSUER = "https://auth.openai.com"
@@ -184,6 +186,9 @@ class Settings:
     # response is hundreds of lines), so it is opt-in. The per-request
     # summary records (request, usage, response, errors) are always logged.
     log_stream_lines: bool = False
+    log_retention_days: int = 7
+    log_max_total_mb: int = 1024
+    log_max_file_mb: int = 50
     enable_openai_provider: bool = True
     models_cache_ttl_seconds: float = 300.0
     # Multiple own accounts: "balanced" (default) routes to the account with
@@ -389,6 +394,9 @@ class Settings:
                 or _cfg(payload, "logging", "stream_lines"),
                 False,
             ),
+            log_retention_days=payload.get("logging", {}).get("retention_days", 7),
+            log_max_total_mb=payload.get("logging", {}).get("max_total_mb", 1024),
+            log_max_file_mb=payload.get("logging", {}).get("max_file_mb", 50),
             enable_openai_provider=_bool(
                 _env("AIRELAYS_ENABLE_OPENAI", "AIRELAY_ENABLE_OPENAI")
                 or _cfg(payload, "providers", "openai", "enabled"),
@@ -478,6 +486,9 @@ class Settings:
                 DEFAULT_OPENAI_EXTRA_MODELS,
             ),
         )
+
+    def log_policy(self) -> LogRetentionPolicy:
+        return LogRetentionPolicy(self.log_retention_days, self.log_max_total_mb, self.log_max_file_mb)
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -626,6 +637,9 @@ max_total_upload_bytes = {self.max_total_upload_bytes}
 
 [logging]
 stream_lines = {str(self.log_stream_lines).lower()}
+retention_days = {self.log_retention_days}
+max_total_mb = {self.log_max_total_mb}
+max_file_mb = {self.log_max_file_mb}
 
 [providers.openai]
 enabled = {str(self.enable_openai_provider).lower()}

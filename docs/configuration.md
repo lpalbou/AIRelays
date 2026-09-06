@@ -8,6 +8,73 @@ AIRelays resolves settings in this order:
 4. `~/.config/airelays/config.toml`
 5. built-in defaults
 
+Traffic-log retention is live configuration: a saved policy in the selected
+log directory takes precedence over its `[logging]` defaults. See
+[Traffic log retention](#traffic-log-retention) below.
+
+## Traffic log retention
+
+Traffic logs rotate hourly and at a size limit. Cleanup runs on startup,
+every 60 seconds while the relay is running (including when idle), on rotation,
+and when applying a policy. Both age and size limits apply; whichever requires
+removing a file first wins. Defaults are deliberately bounded on upgrades too.
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `retention_days` | `7` | Maximum age since a file's last write; `30` means 30 days, `0` disables only the age limit. Range: 0–36500. |
+| `max_total_mb` | `1024` | Total managed traffic-log budget in MiB (1 GiB by default). Range: 1–1048576. |
+| `max_file_mb` | `50` | Rotate before the next record would exceed this size in MiB. Range: 1–10240; must not exceed the total budget. |
+
+Retention is an upper limit, not a promise of seven days of history: under load,
+the disk budget removes older files sooner. Cleanup reserves room for the active
+file, so usage can be below the configured budget by up to a chunk plus the last
+whole file removed. Files are deleted whole, oldest modification time first.
+The budget counts file contents; filesystem allocation and metadata overhead
+are not included in `usage_bytes`.
+
+From the CLI (also works with the relay stopped):
+
+```bash
+airelays logs                         # policy and current usage; no cleanup
+airelays logs --retention-days 30      # keep up to a month, save and apply
+airelays logs --retention-days 7 --max-total-mb 1024 --max-file-mb 50
+airelays logs --json                  # machine-readable policy, usage, errors
+airelays logs --config /path/to/config.toml --retention-days 14
+```
+
+The selected `--config`, `--data-dir`, and `--logs-dir` determine which log
+directory is managed. Use the same directory as the running relay.
+
+In the cross-platform tray app, open **Settings → Traffic log retention**.
+Choose **1 week**, **1 month (30 days)**, or a custom duration and disk limit,
+then **Apply log retention**. The relay must be running for the tray controls;
+the CLI can configure it offline. This section applies independently of the
+other settings' Save & Restart workflow. It shows disk usage and cleanup errors.
+
+The [HTTP API](api.md#traffic-log-retention-api) exposes the same policy.
+API/tray updates apply immediately. Other relay processes sharing the directory
+pick up the saved policy on their next write or within 60 seconds while idle.
+
+Policy changes are saved atomically to `<logs_dir>/.retention.json`. That file
+overrides the three TOML retention defaults and survives restarts, CLI sessions,
+and the tray's regeneration of `config.toml`. Change it through the API or CLI;
+editing the TOML defaults after saving a policy does not override that policy.
+The `stream_lines` option remains a separate startup setting.
+
+Cleanup includes existing `YYYY/MM/DD-HH.log` files and new size-rotated
+`YYYY/MM/DD-HH.<uuid>.log` files. It does not manage console/stdout logs, uploads,
+conversations, unrelated files, symlinks, or hard links. Use an app-owned local
+log directory; every writer sharing it must run a retention-aware AIRelays
+version. External writers or an older relay can defeat the disk limit.
+
+A record larger than `max_file_mb` becomes an explicit `log_record_omitted`
+JSON record with its request ID, phase, byte count and SHA-256; the payload is
+omitted from the log without altering the actual request or response. Cleanup
+and I/O failures are reported on stderr and through `last_error`; traffic
+logging pauses on cleanup failure and retries, rather than growing past the
+budget or failing client requests. Deletion is permanent: archive any logs you
+need before first starting the upgraded relay or reducing a policy.
+
 ## Default Paths
 
 - config: `~/.config/airelays/config.toml`
@@ -62,6 +129,9 @@ max_total_upload_bytes = 268435456
 # streamed response (~50x log growth under load); summary records
 # (request, usage, response, errors) are always logged regardless.
 stream_lines = false
+retention_days = 7
+max_total_mb = 1024
+max_file_mb = 50
 
 [providers.openai]
 enabled = true

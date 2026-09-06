@@ -14,6 +14,7 @@
 - docs/faq.md: common questions and limits
 - docs/troubleshooting.md: symptoms, causes, fixes
 - desktop/README.md: desktop app layout, build, supervision behavior
+- docs/adr/README.md: durable design decisions
 
 ---
 
@@ -24,7 +25,8 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - The default runtime uses an AIRelays-owned ChatGPT subscription login.
 - An optional Claude runtime uses the local `claude` CLI and its existing subscription auth state.
 - AIRelays protects the relay with its own bearer token by default; open local relay mode (`--no-auth`) disables only the client-token gate.
-- Every transit is logged to hourly JSONL files.
+- Traffic logs rotate hourly and at a size limit. By default, AIRelays keeps
+  up to 7 days and 1024 MiB of managed traffic logs.
 - AIRelays is an independent third-party project designed for a single user running a local relay for personal convenience. It is not a shared, pooled, multi-user, or resale service (see DISCLAIMER.md).
 
 ## Install
@@ -85,6 +87,7 @@ One person can enroll several of their own OpenAI subscriptions; `airelays login
 - `GET /v1/subscription/status` (alias `GET /v1/account/rate_limits`) — normalized usage; `?provider=claude`, `?account=`, `?all_accounts=true`, `?raw=true`
 - `POST /v1/relay/accounts/refresh` — clear usage-limit holds and re-check capacity
 - `GET /v1/relay/status` — diagnostics, provider readiness, `requests_total`
+- `GET`/`PUT /v1/relay/logging` — traffic-log retention policy and usage
 - `POST/GET/DELETE /v1/files...`, `POST/GET/DELETE /v1/conversations...` — local files and conversations
 - `/no-tools/v1/*` — tool-disabled variants
 - `GET /healthz` — minimal public health check
@@ -126,9 +129,11 @@ usage endpoint; stale fallbacks explicitly report their age and reason.
 
 ## Configuration
 
-Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/config.toml` → defaults. Notable keys: `[server] host/port`, `[security] require_bearer_auth`, `[logging] stream_lines` (opt-in per-line stream logging; summary records are always kept), `[providers.openai] enabled/balance/account_cooldown_seconds/retry_attempts/retry_backoff_seconds`, `[providers.claude] enabled/bin/models`. See docs/configuration.md for the full file shape and variable list.
+Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/config.toml` → defaults. Notable keys: `[server] host/port`, `[security] require_bearer_auth`, `[logging] stream_lines`, `retention_days`, `max_total_mb`, and `max_file_mb`, `[providers.openai] enabled/balance/account_cooldown_seconds/retry_attempts/retry_backoff_seconds`, `[providers.claude] enabled/bin/models`. Saved log-directory retention policy overrides the three logging defaults. See docs/configuration.md for the full file shape and limits.
 
 ## Diagnostics
+
+- `airelays logs` — inspect or apply traffic-log retention, including `--retention-days 30` for a month and `--max-total-mb` / `--max-file-mb` limits in MiB. The tray's Settings → Traffic log retention and GET/PUT `/v1/relay/logging` use the same saved policy. Defaults are 7 days, 1024 MiB total, and 50 MiB per file; `0` days disables the age limit only. Cleanup permanently removes oldest managed files, including eligible existing traffic logs. It excludes console output, uploads, and conversations. See docs/configuration.md, docs/api.md, and docs/troubleshooting.md for limits, API response fields, and cleanup-error recovery.
 
 - `airelays status` — local config, token, and provider readiness
 - `airelays doctor` — setup checks plus live upstream `/models` and a tiny `/responses` smoke request (`--skip-response` to skip)

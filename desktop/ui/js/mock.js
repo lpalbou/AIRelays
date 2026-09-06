@@ -165,10 +165,20 @@ const traffic = [
   },
 ];
 
+let logRetention = {
+  policy: { retention_days: 7, max_total_mb: 1024, max_file_mb: 50 },
+  usage_bytes: 73400320, file_count: 24, over_budget: false, last_error: null,
+};
+
 export async function mockInvoke(command, args = {}) {
   switch (command) {
     case "get_state":
       return state();
+    case "get_log_retention":
+      return structuredClone(logRetention);
+    case "set_log_retention":
+      logRetention.policy = structuredClone(args.policy);
+      return structuredClone(logRetention);
     case "save_settings":
       Object.assign(settings, args.settings);
       return null;

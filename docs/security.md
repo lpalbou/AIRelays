@@ -93,3 +93,10 @@ AIRelays logs:
 - usage summaries
 
 Request and response contents, including prompts and model outputs, can be written to the local AIRelays log files. Raw bearer tokens are redacted.
+
+Traffic logs default to a 7-day age limit and 1 GiB disk budget, with hourly/
+50 MiB rotation. The oldest whole files are permanently deleted, including
+eligible logs already present when upgrading. Use the tray's retention controls,
+`airelays logs`, or the authenticated `/v1/relay/logging` API to change the policy.
+This is log retention only; stored uploads and conversations are separate.
+See [configuration](configuration.md#traffic-log-retention) for details.

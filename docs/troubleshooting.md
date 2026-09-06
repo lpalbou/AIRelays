@@ -1,5 +1,30 @@
 # Troubleshooting
 
+## Traffic logs report a cleanup error
+
+The tray Settings page or `GET /v1/relay/logging` can report `last_error`, or
+`airelays logs` can print a cleanup error. AIRelays pauses traffic-log writes
+until it can enforce the configured limit; relay requests continue normally.
+
+Check that the configured log directory is writable and has space available:
+
+```bash
+airelays logs
+airelays status --json
+```
+
+If the limit is smaller than the history you need, archive the relevant log
+files first, then raise the total limit or shorten retention:
+
+```bash
+airelays logs --retention-days 30 --max-total-mb 2048 --max-file-mb 50
+```
+
+Use the same `--config`, `--data-dir`, or `--logs-dir` arguments as the
+running relay. Apply the policy again, then confirm that `last_error` is empty
+and `over_budget` is false. See [traffic-log retention](configuration.md#traffic-log-retention)
+for the policy, ownership boundaries, and permanent-deletion behavior.
+
 ## A model is missing or a Claude alias is unclear
 
 Use the Models tab's Refresh button or `GET /v1/models?refresh=true` to

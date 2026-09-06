@@ -5,6 +5,9 @@ repo_url: https://github.com/lpalbou/AIRelays
 repo_name: lpalbou/AIRelays
 
 docs_dir: docs
+# `docs/README.md` is the repository navigation index. `docs/index.md` is the
+# published-site home page, so exclude the former to avoid duplicate URLs.
+exclude_docs: /README.md
 
 theme:
   name: material
@@ -49,3 +52,5 @@ nav:
       - No Silent Degradation: adr/0001-no-silent-degradation-truncation-or-budget-invention.md
       - Subscription Compatibility Boundary: adr/0002-chatgpt-subscription-backend-compatibility-boundary.md
       - Local Config And Relay Security: adr/0003-local-config-and-default-deny-relay-security.md
+      - Provider Runtime Boundary: adr/0004-provider-runtime-boundary-and-experimental-local-adapters.md
+      - Bounded Traffic-Log Retention: adr/0005-bounded-traffic-log-retention.md

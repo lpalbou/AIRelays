@@ -1,5 +1,38 @@
 # API Notes
 
+## Traffic log retention API
+
+`GET /v1/relay/logging` returns current policy and disk usage without deleting
+logs. `PUT /v1/relay/logging` validates, persists and applies a partial policy
+update immediately; omitted fields retain their saved values. These routes use
+the same bearer-token gate and rate limits as the other `/v1/*` routes.
+
+Example PUT body (all values must be integers; sizes are MiB):
+
+```json
+{"retention_days": 30, "max_total_mb": 1024, "max_file_mb": 50}
+```
+
+Both responses contain `policy`, `policy_source` (`saved` or `config`, including
+built-in defaults), `policy_path`, `logs_dir`, `usage_bytes`, `file_count`,
+`over_budget`, `cleanup_interval_seconds`, `last_cleanup_at`, `deleted_files`,
+`deleted_bytes`, `oversized_records`, `dropped_records`, and `last_error`. Cleanup counters and
+errors are local to the process answering the request; disk usage and saved
+policy are shared. `last_cleanup_at` is the most recent completed cleanup pass,
+which may have encountered deletion errors. It is `null` before a pass completes.
+
+Invalid values, unknown fields, zero size limits, or a file limit larger than
+the total budget return 422 without altering the saved policy. Storage failures
+preventing policy reads or persistence return 503. A successfully saved policy
+returns 200 even if cleanup fails; inspect `last_error` and `over_budget` before
+reporting successful reclamation. A policy update permanently deletes eligible
+old files. GET requests do not trigger reclamation.
+
+Defaults: 7 days, 1024 MiB total, 50 MiB per file. `retention_days: 0` removes the
+age limit but leaves size enforcement enabled. See
+[configuration](configuration.md#traffic-log-retention) for bounds, precedence,
+rotation behavior, migration, and CLI/tray controls.
+
 ## Compatibility Adaptations (read this first)
 
 The verified upstream is the ChatGPT subscription backend, not the public

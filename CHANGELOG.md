@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.14.0
+
+### Added
+
+- Automatic traffic-log retention: 7 days and 1 GiB total by default, with hourly/50 MiB rotation. Cleanup runs at startup and while idle. Oversized records are explicitly marked as omitted, and storage failures are reported without failing relay requests.
+- Live `GET`/`PUT /v1/relay/logging`, offline-capable `airelays logs`, and tray Settings controls with week/month presets, custom limits, usage, and cleanup errors. The shared saved policy survives desktop config regeneration and requires no restart.
+
+### Upgrade notes
+
+- Retention applies to existing traffic logs on the first upgraded start. Eligible files are permanently deleted; archive any history you need beforehand. Console output, uploads and stored conversations are outside this policy.
+
 ## 0.13.1
 
 ### Fixed

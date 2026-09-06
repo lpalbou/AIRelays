@@ -6,13 +6,14 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 - [README.md](README.md): overview, install (CLI and desktop), quick start, compatibility layer
 - [docs/getting-started.md](docs/getting-started.md): setup, sign-in flows, verification
-- [docs/configuration.md](docs/configuration.md): config file shape and environment overrides
+- [docs/configuration.md](docs/configuration.md): config file shape, environment overrides, and traffic-log retention
 - [docs/security.md](docs/security.md): relay auth, open local relay mode, Claude guardrails
 - [docs/api.md](docs/api.md): routes, compatibility adaptations, provider limits
 - [docs/architecture.md](docs/architecture.md): request flow and module boundaries
 - [docs/subscription-status.md](docs/subscription-status.md): usage reporting for OpenAI and Claude
 - [docs/faq.md](docs/faq.md): common questions and limits
 - [docs/troubleshooting.md](docs/troubleshooting.md): symptoms, causes, fixes
+- [docs/adr/README.md](docs/adr/README.md): durable design decisions
 - [desktop/README.md](desktop/README.md): desktop app layout, build, supervision behavior
 - [DISCLAIMER.md](DISCLAIMER.md): independence and intended use
 
@@ -22,12 +23,14 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - `airelays login` (additive; repeat to enroll more accounts) / `airelays login --device` (headless)
 - `airelays logout <email>` / `airelays accounts` (list, order, refresh)
 - `airelays serve` / `airelays serve --no-auth`
-- `airelays status` / `airelays doctor` / `airelays models`
+- `airelays status` / `airelays doctor` / `airelays models` / `airelays logs`
 - `airelays token show` / `airelays token rotate`
 - `airelays claude set-token` / `airelays claude logout`
 - `claude auth login --claudeai` / `claude setup-token`
 
 ## Important Notes
+
+- Traffic logs default to 7 days, 1024 MiB total, and hourly/50 MiB rotation. `airelays logs`, GET/PUT `/v1/relay/logging`, and tray Settings inspect or change the saved policy; see `docs/configuration.md` for limits and permanent-deletion behavior.
 
 - OpenAI runtime: first-class `responses`, `chat.completions`, and `completions`
 - Claude runtime: text `chat.completions` and text `completions` only

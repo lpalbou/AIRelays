@@ -4,3 +4,4 @@
 - [0002: ChatGPT Subscription Backend Compatibility Boundary](0002-chatgpt-subscription-backend-compatibility-boundary.md)
 - [0003: Local Config And Default-Deny Relay Security](0003-local-config-and-default-deny-relay-security.md)
 - [0004: Provider Runtime Boundary And Experimental Local Adapters](0004-provider-runtime-boundary-and-experimental-local-adapters.md)
+- [0005: Bounded Traffic-Log Retention](0005-bounded-traffic-log-retention.md)

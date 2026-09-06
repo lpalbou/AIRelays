@@ -3,10 +3,12 @@
 
 import { api, call, toast } from "../api.js";
 import { icon } from "../icons.js";
+import { mountLogRetention } from "./log-retention.js";
 
 let root = null;
 let draft = null;
 let dirty = false;
+let retentionEditor = null;
 
 // kind: "text" | "bool" | "select" | number with {min, max}
 const FIELDS = [
@@ -98,16 +100,6 @@ export const settingsView = {
     dirty = false;
     root.innerHTML = `
       <h1 class="view-title">Settings</h1>
-      <p class="view-subtitle">
-        Saving writes the relay's config file. A running relay keeps its old
-        settings until it restarts — use "Save &amp; Restart" to apply now.
-      </p>
-      <div class="row" style="margin-bottom:14px">
-        <button class="btn btn-primary" id="se-save">${icon("checkCircle")} Save</button>
-        <button class="btn" id="se-save-restart">${icon("restart")} Save &amp; Restart</button>
-        <span class="spacer"></span>
-        <button class="btn" id="se-reset">${icon("trash")} Discard changes</button>
-      </div>
       <section class="card">
         <h2>Desktop App</h2>
         <p class="card-caption">Applied immediately — not part of the saved relay settings.</p>
@@ -116,11 +108,24 @@ export const settingsView = {
           <label for="se-autostart">Start AIRelays at login</label>
         </div>
       </section>
+      <section class="card" id="se-log-retention"></section>
+      <h2>Relay configuration</h2>
+      <p class="view-subtitle">
+        The settings below apply on restart. Use "Save &amp; Restart" to apply now.
+        Log retention above applies separately, without restarting.
+      </p>
+      <div class="row" style="margin-bottom:14px">
+        <button class="btn btn-primary" id="se-save">${icon("checkCircle")} Save</button>
+        <button class="btn" id="se-save-restart">${icon("restart")} Save &amp; Restart</button>
+        <span class="spacer"></span>
+        <button class="btn" id="se-reset">${icon("trash")} Discard relay changes</button>
+      </div>
       <div id="se-sections"></div>
     `;
     container.appendChild(root);
     renderSections();
     bindAutostart();
+    retentionEditor = mountLogRetention(root.querySelector("#se-log-retention"));
 
     root.querySelector("#se-save").addEventListener("click", () => save(false));
     root.querySelector("#se-save-restart").addEventListener("click", () => save(true));
@@ -139,10 +144,12 @@ export const settingsView = {
   // No live update while editing: the form is a draft until saved.
   async update() {},
   canLeave() {
-    if (!dirty) return true;
+    if (!dirty && !retentionEditor?.dirty) return true;
     return window.confirm("You have unsaved settings changes. Leave and discard them?");
   },
   unmount() {
+    if (retentionEditor) retentionEditor.disposed = true;
+    retentionEditor = null;
     root = null;
     draft = null;
     dirty = false;
