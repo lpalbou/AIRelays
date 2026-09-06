@@ -162,9 +162,21 @@ jobs:
           pattern: airelays-desktop-*
           path: installers
           merge-multiple: true
+
+      # Downloaded artifacts retain their source-relative directories. Collect
+      # only the supported installer formats into one predictable directory
+      # before passing them to the release action.
+      - name: Collect release assets
+        shell: bash
+        run: |
+          mkdir release-assets
+          find installers -type f \( \
+            -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \
+          \) -exec cp {} release-assets/ \;
+          test "$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 4
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.version-guard.outputs.version }}
           files: |
-            installers/*
+            release-assets/*
           fail_on_unmatched_files: true
