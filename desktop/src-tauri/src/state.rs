@@ -158,8 +158,6 @@ pub fn spawn_status_loop(app: AppHandle) {
             .build()
             .expect("reqwest client");
         let mut last_reachable: Option<bool> = None;
-        // Served-request count from the previous poll, for the activity blink.
-        let mut last_requests_total: Option<u64> = None;
         // Liveness debounce and the status-fetch cadence divider.
         let mut health_failures: u32 = 0;
         let mut mismatch_streak: u32 = 0;
@@ -385,21 +383,7 @@ pub fn spawn_status_loop(app: AppHandle) {
                     None => {}
                 }
 
-                // Activity blink: the relay counts real requests; any
-                // increase since the last fetched payload flashes the tray.
-                let mut should_pulse = false;
                 if let Some(status) = &fetched_status {
-                    let requests_total = status
-                        .as_ref()
-                        .and_then(|payload| payload.get("requests_total"))
-                        .and_then(Value::as_u64);
-                    should_pulse = matches!(
-                        (last_requests_total, requests_total),
-                        (Some(previous), Some(current)) if current > previous
-                    );
-                    if requests_total.is_some() {
-                        last_requests_total = requests_total;
-                    }
                     *robust_lock(&state.relay_status) = status.clone();
                 }
                 if !reachable {
@@ -414,16 +398,73 @@ pub fn spawn_status_loop(app: AppHandle) {
                     last_reachable = Some(reachable);
                     crate::tray::refresh(&app);
                 }
-                if should_pulse {
-                    crate::tray::pulse(&app);
-                } else {
-                    // Self-healing: re-assert the icon every tick; a missed
-                    // or failed set_icon no longer sticks until the next
-                    // reachability change.
-                    crate::tray::sync_icon(&app);
-                }
+                crate::tray::sync_icon(&app);
             }
             tokio::time::sleep(Duration::from_millis(1500)).await;
+        }
+    });
+}
+
+/// Keep request feedback independent of slow diagnostics and supervision.
+/// Requests arriving within one sample share a pulse; subsequent samples
+/// restart it, so bursts stay visible until a second after the last activity.
+pub fn spawn_activity_loop(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(1))
+            .build()
+            .expect("activity client");
+        let mut previous: Option<u64> = None;
+        let mut previous_url = String::new();
+        loop {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let (reachable, base_url, requires_auth, auth_mismatch) = {
+                let state = app.state::<AppState>();
+                let settings = robust_lock(&state.settings);
+                let mismatch = *robust_lock(&state.auth_mismatch);
+                (
+                    state.is_reachable(),
+                    settings.base_url(),
+                    settings.require_bearer_auth,
+                    mismatch,
+                )
+            };
+            if !reachable || auth_mismatch {
+                previous = None;
+                continue;
+            }
+            if previous_url != base_url {
+                previous = None;
+                previous_url = base_url.clone();
+            }
+            let mut request = client.get(format!("{base_url}/relay/status?activity_only=true"));
+            if requires_auth {
+                let Ok(token) = std::fs::read_to_string(AppSettings::bearer_token_file()) else {
+                    continue;
+                };
+                request = request.bearer_auth(token.trim());
+            }
+            let response = match request.send().await {
+                Ok(response) if response.status().is_success() => response,
+                _ => {
+                    // Avoid hammering an unavailable relay or a rotated token.
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
+            };
+            if let Ok(payload) = response.json::<Value>().await {
+                if let Some(current) = payload.get("requests_total").and_then(Value::as_u64) {
+                    if previous.is_some_and(|count| current > count) {
+                        crate::tray::pulse(&app);
+                    }
+                    previous = Some(current);
+                }
+                if payload.get("object").is_some() {
+                    // Older relays ignore activity_only and return costly,
+                    // rate-limited diagnostics: retain their slower cadence.
+                    tokio::time::sleep(Duration::from_millis(4250)).await;
+                }
+            }
         }
     });
 }

@@ -2446,6 +2446,51 @@ def test_healthz_is_minimal_and_public(tmp_path) -> None:
     assert response.json() == {"ok": True, "app_name": "AIRelays", "version": __version__}
 
 
+def test_activity_poll_counts_requests_without_counting_itself(tmp_path) -> None:
+    app = create_app(make_settings(tmp_path, require_bearer_auth=False))
+    with TestClient(app) as client:
+        endpoint = "/v1/relay/status?activity_only=true"
+        assert client.get(endpoint).json() == {"requests_total": 0}
+        assert client.get("/healthz").status_code == 200
+        assert client.get(endpoint).json() == {"requests_total": 0}
+        assert client.get("/").status_code == 200
+        assert client.get(endpoint).json() == {"requests_total": 1}
+        assert client.get(endpoint).json() == {"requests_total": 1}
+
+
+def test_activity_poll_requires_status_authentication(tmp_path) -> None:
+    app = create_app(make_settings(
+        tmp_path,
+        require_bearer_auth=True,
+        auto_generate_bearer_token=False,
+        bearer_token="secret-token",
+    ))
+    with TestClient(app) as client:
+        endpoint = "/v1/relay/status?activity_only=true"
+        assert client.get(endpoint).status_code == 401
+        response = client.get(endpoint, headers={"authorization": "Bearer secret-token"})
+        assert response.status_code == 200
+        assert response.json() == {"requests_total": 0}
+
+
+def test_activity_poll_does_not_spend_query_quota(tmp_path) -> None:
+    app = create_app(make_settings(
+        tmp_path,
+        require_bearer_auth=True,
+        auto_generate_bearer_token=False,
+        bearer_token="secret-token",
+        rate_limit_burst=1,
+        rate_limit_per_minute=1,
+    ))
+    with TestClient(app) as client:
+        headers = {"authorization": "Bearer secret-token"}
+        for _ in range(5):
+            assert client.get("/v1/relay/status?activity_only=true", headers=headers).status_code == 200
+        assert client.get("/v1/relay/status", headers=headers).status_code == 200
+        assert client.get("/v1/relay/status?activity_only=true", headers=headers).status_code == 200
+        assert client.get("/v1/relay/status", headers=headers).status_code == 429
+
+
 def test_relay_status_returns_protected_diagnostics(tmp_path) -> None:
     settings = make_settings(
         tmp_path,

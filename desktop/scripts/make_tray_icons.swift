@@ -128,28 +128,35 @@ func renderPulseFrame(base: CGColor, peak: CGColor, intensity: CGFloat, ripple: 
     let center = CGPoint(x: canvas / 2, y: canvas / 2)
     let glyphColor = mix(base, peak, intensity)
 
-    // Ring first: it emanates from under the bolt. It reuses the glyph
+    // A pronounced contraction and recovery remains visible even where
+    // the menu bar background makes brightness changes hard to see.
+    context.saveGState()
+    let scale = 1 - 0.28 * intensity
+    context.translateBy(x: center.x, y: center.y)
+    context.scaleBy(x: scale, y: scale)
+    context.translateBy(x: -center.x, y: -center.y)
+    drawGlyph(
+        context, color: glyphColor, arcs: true,
+        glowBlur: canvas * (0.22 + 0.18 * intensity),
+        glowPasses: intensity > 0.55 ? 3 : 2
+    )
+    context.restoreGState()
+
+    // The ring expands around the contracted bolt. It reuses the glyph
     // color (not a lighter tint): a pale ring vanishes on light menu bars.
-    let ringAlpha = 0.9 * pow(1 - ripple, 1.5)
+    let ringAlpha = 0.95 * pow(1 - ripple, 0.7)
     if ringAlpha > 0.02 {
         context.saveGState()
         context.setStrokeColor(glyphColor.copy(alpha: ringAlpha)!)
-        context.setLineWidth(3.4 - 1.8 * ripple)
+        context.setLineWidth(4.5 - 1.5 * ripple)
         context.addArc(
-            center: center, radius: canvas * (0.20 + 0.30 * ripple),
+            center: center, radius: canvas * (0.23 + 0.23 * ripple),
             startAngle: 0, endAngle: 2 * .pi, clockwise: false
         )
         context.strokePath()
         context.restoreGState()
     }
 
-    drawGlyph(
-        context, color: glyphColor, arcs: true,
-        // The halo swells with the glyph: at 22 pt the expanding glow
-        // carries much of the signal.
-        glowBlur: canvas * (0.22 + 0.18 * intensity),
-        glowPasses: intensity > 0.55 ? 3 : 2
-    )
     return context.makeImage()!
 }
 
@@ -187,10 +194,9 @@ for frame in 0..<pulseFrameCount {
     } else {
         // Slow ease-out decay back to the resting glyph.
         let u = (t - attackEnd) / (1 - attackEnd)
-        intensity = pow(1 - u, 1.8)
+        intensity = pow(1 - u, 0.8)
     }
-    // Ease-out cubic: the ring shoots out fast, then drifts as it fades.
-    let ripple = 1 - pow(1 - t, 3)
+    let ripple = t
     write(
         renderPulseFrame(base: green, peak: pulsePeak, intensity: intensity, ripple: ripple),
         String(format: "tray-pulse-%02d.png", frame)

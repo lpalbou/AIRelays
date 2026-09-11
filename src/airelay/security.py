@@ -107,6 +107,22 @@ class EndpointProtector:
                     reason="auth_block_active",
                     retry_after=retry_after,
                 )
+            # The lightweight tray counter must remain available while a
+            # query occupies the last slot, and must not spend query quota.
+            # Only authenticated GETs qualify; invalid credentials continue
+            # through the normal rate limits and failed-auth protection.
+            if (
+                request.method == "GET"
+                and request.url.path == "/v1/relay/status"
+                and request.query_params.get("activity_only") == "true"
+            ):
+                expected = self._settings.resolve_bearer_token()
+                presented = self._presented_bearer_token(request)
+                if not self._settings.require_bearer_auth or (
+                    expected and presented and secrets.compare_digest(expected, presented)
+                ):
+                    lease.released = True  # No concurrency slot was acquired.
+                    return lease, None
             if state.active_requests >= self._settings.concurrent_requests_per_ip:
                 return lease, self._reject(
                     request_id=request_id,

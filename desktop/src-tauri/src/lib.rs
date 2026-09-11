@@ -51,6 +51,7 @@ pub fn run() {
                 commands::show_dashboard(app.handle());
             }
             state::spawn_status_loop(app.handle().clone());
+            state::spawn_activity_loop(app.handle().clone());
             state::spawn_launch_start(app.handle().clone());
             Ok(())
         })

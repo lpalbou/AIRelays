@@ -35,10 +35,9 @@ static APPLIED_ICON: AtomicU8 = AtomicU8::new(ICON_NONE);
 
 /// Activity pulse: a fast-attack / slow-decay glow swell with a ripple
 /// ring, pre-rendered by scripts/make_tray_icons.swift. The total runtime
-/// (~1.1s) is deliberately below the 1.5s status-loop tick, so a pulse
-/// started on one tick always finishes before the next tick syncs.
+/// (~1s) is protected from status-loop updates by the animation deadline.
 const PULSE_FRAME_COUNT: usize = 16;
-const PULSE_FRAME_MS: u64 = 70;
+const PULSE_FRAME_MS: u64 = 65;
 static PULSE_FRAMES: [&[u8]; PULSE_FRAME_COUNT] = [
     include_bytes!("../icons/tray-pulse-00.png"),
     include_bytes!("../icons/tray-pulse-01.png"),
@@ -103,7 +102,7 @@ pub fn refresh(app: &AppHandle) {
 /// correct, so the status loop calls it every tick — any missed update
 /// self-heals within one poll instead of sticking until the next change.
 /// While a pulse animation is in flight it yields (the animation re-syncs
-/// state itself when it finishes, at most ~1.1s later).
+/// state itself when it finishes, about one second after the last request).
 pub fn sync_icon(app: &AppHandle) {
     if monotonic_ms() < PULSE_DEADLINE_MS.load(Ordering::Relaxed) {
         return;
@@ -117,7 +116,7 @@ pub fn sync_icon(app: &AppHandle) {
 }
 
 /// One activity pulse: the glyph swells bright with a ripple ring, then
-/// eases back to the state icon (~1.1s). A re-trigger while animating
+/// eases back to the state icon (~1s). A re-trigger while animating
 /// restarts the pulse from the attack instead of interleaving two runs.
 pub fn pulse(app: &AppHandle) {
     let generation = PULSE_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;

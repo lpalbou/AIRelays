@@ -634,7 +634,11 @@ def create_app(settings: Settings) -> FastAPI:
         )
 
     @app.get("/v1/relay/status")
-    async def relay_status(request: Request) -> JSONResponse:
+    async def relay_status(request: Request, activity_only: bool = False) -> JSONResponse:
+        if activity_only:
+            # Frequent tray polling must not scan storage or probe providers.
+            # This uses the same authentication as the full status endpoint.
+            return JSONResponse({"requests_total": request_counter["total"]})
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
         provider_statuses = providers.provider_statuses()
