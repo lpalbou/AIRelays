@@ -26,6 +26,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check desktop tag matches relay and desktop versions
         id: check
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           python - <<'PY'
           import json
