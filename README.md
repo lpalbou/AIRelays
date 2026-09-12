@@ -14,7 +14,7 @@
 - AIRelays is designed for a single user running a local relay for personal convenience.
 - AIRelays is not presented as a shared, pooled, multi-user, or resale service.
 - The Claude runtime is local-only and not presented as a sanctioned provider integration path.
-- You are responsible for complying with each provider's terms. Both providers currently frame subscription access around ordinary, individual use by the account holder; the moment anyone else's requests flow through your relay, you are outside that.
+- Personal, local, or noncommercial use does not by itself establish provider permission. You are responsible for checking that your access methods, automation, credential handling, and workloads comply with the applicable terms. AIRelays does not certify compliance; unauthorized use may lead to account suspension or termination, and relay compatibility may stop working without notice.
 
 See [DISCLAIMER.md](DISCLAIMER.md) — it links the official Anthropic and OpenAI terms and policy pages to review.
 

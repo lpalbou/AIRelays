@@ -72,14 +72,14 @@ app shows both providers' usage bars in the Accounts card. See
 
 ## Is using my subscription through AIRelays allowed by the providers?
 
-That is defined by your agreement with each provider, and it is your
-responsibility to review it. Both providers currently frame subscription
-access around ordinary, individual use by the account holder. AIRelays is
-built for exactly that shape — one person, local relay, provider-owned
-tooling and sign-ins — and is not a mechanism for sharing access with
-anyone else. See the [disclaimer](disclaimer.md) for the official terms
-links (Anthropic consumer terms, Claude Code authentication policy, OpenAI
-terms and usage policies); re-check them periodically, they change.
+AIRelays does not certify that your use is permitted. Personal, local, or
+noncommercial use and a successful login do not by themselves establish
+authorization. Your provider's terms govern access methods, automation,
+credential handling, and workloads; permission for its own CLI or SDK does
+not necessarily cover every part of AIRelays. Unauthorized use may lead to
+account suspension or termination, and compatibility may change without
+notice. See the [disclaimer](disclaimer.md) for the access mechanisms used
+by each runtime and official terms to review.
 
 ## How do I control reasoning depth?
 
