@@ -4,6 +4,24 @@ Cross-platform tray app for AIRelays, built with Tauri v2: a Rust core
 supervises the relay process and owns the system tray; the dashboard is one
 web codebase shared across macOS, Windows, and Linux.
 
+## Install a release
+
+The one-line installers download the newest release installer, verify its
+SHA-256 digest, and install it without sudo or admin rights:
+
+```bash
+# macOS (Apple Silicon) and Linux (x86_64)
+curl -fsSL https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-desktop.sh | bash
+```
+
+```powershell
+# Windows (x64), PowerShell
+irm https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-desktop.ps1 | iex
+```
+
+See the [README's install section](../README.md#install) for what each
+platform installs and the `AIRELAYS_VERSION` / `AIRELAYS_NO_LAUNCH` options.
+
 ## Layout
 
 - `src-tauri/` — Rust core: tray, relay supervision, config rendering,

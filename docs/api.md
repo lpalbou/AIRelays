@@ -174,6 +174,12 @@ Returns relay diagnostics, provider readiness, provider cache status, and
 this process, usable as a lightweight activity signal. OpenAI model-list
 cache diagnostics live under `providers.openai.models_cache`.
 
+`GET /v1/relay/status?activity_only=true` returns only
+`{"requests_total": N}`. It requires the same authentication as the full
+status, but it does not scan storage or probe providers, is not itself
+counted, and does not consume rate-limit quota or a concurrency slot, so
+clients such as the desktop tray can poll it frequently.
+
 ## CLI Diagnostics
 
 `airelays status` reports local config, relay-token, and provider readiness

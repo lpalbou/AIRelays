@@ -1,0 +1,80 @@
+name: installers
+
+# Exercises the one-line installers in scripts/ against the published GitHub
+# release and PyPI package: on changes to the scripts, after every desktop
+# release (when the new installers are attached), and on demand.
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "scripts/install-*"
+      - ".github/workflows/installers.yml"
+  workflow_run:
+    workflows: ["desktop"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version to install (empty for the newest)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  AIRELAYS_VERSION: ${{ inputs.version }}
+  AIRELAYS_NO_LAUNCH: "1"
+
+jobs:
+  desktop-unix:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install desktop app
+        run: bash scripts/install-desktop.sh
+      - name: Verify macOS app
+        if: runner.os == 'macOS'
+        run: /Applications/AIRelays.app/Contents/Resources/runtime/bin/python3 -c "import airelay; print(airelay.__version__)"
+      - name: Verify Linux AppImage
+        if: runner.os == 'Linux'
+        run: |
+          test -x ~/.local/bin/airelays-desktop
+          grep -q '^Exec=.*airelays-desktop' ~/.local/share/applications/airelays.desktop
+          cd "$RUNNER_TEMP" && ~/.local/bin/airelays-desktop --appimage-extract >/dev/null
+          find squashfs-root -path '*runtime/bin/python3' | head -1 | xargs -I{} {} -c "import airelay; print(airelay.__version__)"
+
+  desktop-windows:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install desktop app (Windows PowerShell, as piped to iex)
+        shell: powershell
+        run: Get-Content -Raw scripts/install-desktop.ps1 | Invoke-Expression
+      - name: Verify install
+        shell: powershell
+        run: |
+          $exe = Join-Path $env:LOCALAPPDATA 'AIRelays\airelays-desktop.exe'
+          if (-not (Test-Path $exe)) { Get-ChildItem -Recurse "$env:LOCALAPPDATA\AIRelays" | Select-Object -First 20; throw "missing $exe" }
+
+  headless:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install headless relay
+        run: bash scripts/install-headless.sh
+      - name: Verify CLI
+        run: |
+          ~/.local/bin/airelays --help >/dev/null
+          ~/.local/bin/airelays init --no-auth

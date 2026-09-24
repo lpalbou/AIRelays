@@ -17,6 +17,13 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - [desktop/README.md](desktop/README.md): desktop app layout, build, supervision behavior
 - [DISCLAIMER.md](DISCLAIMER.md): independence and intended use
 
+## Install
+
+- Headless relay and CLI (macOS, Linux): `curl -fsSL https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-headless.sh | bash`
+- Desktop app (macOS Apple Silicon, Linux x86_64): `curl -fsSL https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-desktop.sh | bash`
+- Desktop app (Windows x64, PowerShell): `irm https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-desktop.ps1 | iex`
+- PyPI: `python -m pip install airelays`; `AIRELAYS_VERSION=X.Y.Z` pins a release for any installer
+
 ## Main Commands
 
 - `airelays init` / `airelays init --no-auth`

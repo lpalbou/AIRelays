@@ -1,9 +1,9 @@
 # Documentation
 
 - [Getting Started](getting-started.md)
-  - installation, OpenAI setup, Claude setup, and verification
+  - one-line and PyPI installation, OpenAI setup, Claude setup, and verification
 - [Desktop App](../desktop/README.md)
-  - the cross-platform tray app: layout, build, and supervision behavior
+  - the cross-platform tray app: one-line install, layout, build, and supervision behavior
 - [Configuration](configuration.md)
   - config file shape, environment overrides, provider toggles, and traffic-log retention
 - [Security](security.md)
@@ -17,7 +17,7 @@
 - [FAQ](faq.md)
   - common usage and provider questions
 - [Troubleshooting](troubleshooting.md)
-  - auth, provider, and route troubleshooting
+  - desktop install, auth, provider, and route troubleshooting
 - [disclaimer.md](disclaimer.md)
   - independence and intended use
 - [ADR Index](adr/README.md)

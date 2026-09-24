@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.14.1
+
+### Added
+
+- One-line installers. `scripts/install-desktop.sh` (macOS Apple Silicon, Linux x86_64) and `scripts/install-desktop.ps1` (Windows x64) install or update the desktop app from the newest GitHub Release, verify its published SHA-256 digest, and need no sudo, admin rights, Python, or Node. `scripts/install-headless.sh` installs the `airelays` relay and CLI from PyPI into an isolated environment (uv or a Python 3.11+ virtualenv). All three accept `AIRELAYS_VERSION` to pin a release. See the README's Install section.
+
+### Fixed
+
+- The desktop tray icon pulses within about a quarter second of each served request, and bursts stay visible until a second after the last one. Activity polling uses a lightweight `GET /v1/relay/status?activity_only=true` that requires the same authentication as full status but does not count as a request, consume rate-limit quota, or occupy a concurrency slot.
+
+### Changed
+
+- Disclaimer and FAQ wording on intended use and provider terms were clarified.
+
 ## 0.14.0
 
 ### Added

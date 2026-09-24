@@ -31,13 +31,31 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 ## Install
 
-CLI / server (PyPI):
+Headless relay and CLI (macOS, Linux), one line, no sudo; installs the newest PyPI release with uv or into a Python 3.11+ virtualenv linked as `~/.local/bin/airelays` (installs uv first when neither uv nor Python 3.11+ is present):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-headless.sh | bash
+```
+
+Or directly from PyPI:
 
 ```bash
 python -m pip install airelays
 ```
 
-Desktop app (macOS, Windows, Linux): a Tauri tray app under `desktop/` with a dashboard for relay start/stop, auth and network modes, OpenAI and Claude sign-in/sign-out, per-account usage bars, a model list with copy-ready ids, live traffic, and diagnostics. The tray icon shows connection state and blinks on request activity; the app can start at login, starts the relay when it opens, and restarts a crashed relay automatically. Both installs share the same config (`~/.config/airelays`) and data (`~/.airelays`).
+Desktop app, one line, no sudo or admin; downloads the newest GitHub Release installer, verifies its SHA-256 digest, installs, and starts the app. macOS (Apple Silicon) installs `AIRelays.app` into `/Applications`; Linux (x86_64) installs the AppImage as `~/.local/bin/airelays-desktop` with a menu entry; Windows (x64) runs the NSIS setup silently for the current user:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-desktop.sh | bash
+```
+
+```powershell
+irm https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-desktop.ps1 | iex
+```
+
+Set `AIRELAYS_VERSION=X.Y.Z` to pin a release and `AIRELAYS_NO_LAUNCH=1` to skip starting the app. Run the same command again to update. Desktop builds are not notarized or code-signed; see docs/troubleshooting.md "Desktop app install" for Gatekeeper, SmartScreen, and AppImage FUSE notes. Intel Macs and non-x86_64 Linux use the headless installer.
+
+Desktop app details: a Tauri tray app under `desktop/` with a dashboard for relay start/stop, auth and network modes, OpenAI and Claude sign-in/sign-out, per-account usage bars, a model list with copy-ready ids, live traffic, and diagnostics. The tray icon shows connection state and pulses on request activity; the app can start at login, starts the relay when it opens, and restarts a crashed relay automatically. Both installs share the same config (`~/.config/airelays`) and data (`~/.airelays`).
 
 ## First Run (CLI)
 
@@ -86,7 +104,7 @@ One person can enroll several of their own OpenAI subscriptions; `airelays login
 - `POST /v1/responses`, `POST /v1/chat/completions`, `POST /v1/completions` — text generation
 - `GET /v1/subscription/status` (alias `GET /v1/account/rate_limits`) — normalized usage; `?provider=claude`, `?account=`, `?all_accounts=true`, `?raw=true`
 - `POST /v1/relay/accounts/refresh` — clear usage-limit holds and re-check capacity
-- `GET /v1/relay/status` — diagnostics, provider readiness, `requests_total`
+- `GET /v1/relay/status` — diagnostics, provider readiness, `requests_total`; `?activity_only=true` returns only the counter for frequent polling
 - `GET`/`PUT /v1/relay/logging` — traffic-log retention policy and usage
 - `POST/GET/DELETE /v1/files...`, `POST/GET/DELETE /v1/conversations...` — local files and conversations
 - `/no-tools/v1/*` — tool-disabled variants
@@ -151,4 +169,5 @@ Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/
 - 422 on token-limit fields: the subscription backend does not accept them; remove the fields
 - browser login URL only works on the relay's own machine; use `airelays login --device` on servers
 - Claude not ready in network mode: the runtime is loopback-only; switch to loopback binding
+- macOS "AIRelays is damaged" after a browser download: `xattr -dr com.apple.quarantine /Applications/AIRelays.app` (the one-line installer avoids this); Linux AppImage FUSE error: install libfuse2 or set `APPIMAGE_EXTRACT_AND_RUN=1`
 - see docs/troubleshooting.md for full workflows

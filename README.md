@@ -23,12 +23,25 @@ See [DISCLAIMER.md](DISCLAIMER.md) — it links the official Anthropic and OpenA
 AIRelays ships two ways; both drive the same relay and share the same
 config (`~/.config/airelays`) and data (`~/.airelays`).
 
-### CLI / server install (PyPI)
+### Headless relay and CLI (macOS, Linux)
 
-For headless machines, servers, or terminal-first workflows:
+For servers, SSH sessions, Intel Macs, or terminal-first workflows, install
+the `airelays` command with one line:
 
 ```bash
-python -m pip install airelays
+curl -fsSL https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-headless.sh | bash
+```
+
+The script installs the newest PyPI release into an isolated environment
+without sudo: with [uv](https://docs.astral.sh/uv/) when available, otherwise
+into a virtualenv from Python 3.11+ (linked as `~/.local/bin/airelays`). On a
+machine with neither, it installs uv first, which provides Python. Run the
+same command again to upgrade. Then continue with the [Quick Start](#quick-start).
+
+You can also install the package yourself (Python 3.11+, including Windows):
+
+```bash
+python -m pip install airelays      # or: uv tool install airelays
 ```
 
 Or from a source checkout:
@@ -39,14 +52,46 @@ python -m pip install .
 
 ### Desktop app (GUI + system tray)
 
-A cross-platform tray app (macOS, Windows, Linux) lives under
-[desktop/](desktop/README.md): a dashboard with relay start/stop, auth and
-network modes, OpenAI and Claude sign-in/sign-out, per-account usage bars,
-a model list with copy-ready ids, live traffic, and diagnostics. The tray
-icon shows connection state and blinks on request activity; the app can
-start at login, starts the relay when it opens, and restarts a crashed
-relay automatically. Installers (DMG, NSIS, AppImage, deb) build from
-`.github/workflows/desktop.yml`; locally:
+macOS (Apple Silicon) and Linux (x86_64):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-desktop.sh | bash
+```
+
+Windows (x64), in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-desktop.ps1 | iex
+```
+
+The installers download the newest release's installer from
+[GitHub Releases](https://github.com/lpalbou/AIRelays/releases), verify its
+SHA-256 digest, install without sudo or admin rights, and start the app:
+
+- macOS: `AIRelays.app` in `/Applications` (`~/Applications` when
+  `/Applications` is not writable). A running copy is stopped and replaced.
+- Linux: the AppImage as `~/.local/bin/airelays-desktop`, plus an
+  applications-menu entry. Without `libfuse2`, the launcher uses
+  AppImage's extract-and-run mode.
+- Windows: the NSIS setup, run silently for the current user.
+
+The app is self-contained: it embeds its own Python and relay, so it needs
+neither Python nor Node. Run the same command again to update. Set
+`AIRELAYS_VERSION=0.14.1` (or `$env:AIRELAYS_VERSION` on Windows) with any
+installer to pin a release, and `AIRELAYS_NO_LAUNCH=1` to skip starting the
+app. You can also download the DMG, AppImage, deb, or setup `.exe` from the
+Releases page directly; the builds are not notarized or code-signed, see
+[Troubleshooting](docs/troubleshooting.md#desktop-app-install).
+
+The tray app ([desktop/](desktop/README.md)) provides a dashboard with relay
+start/stop, auth and network modes, OpenAI and Claude sign-in/sign-out,
+per-account usage bars, a model list with copy-ready ids, live traffic, and
+diagnostics. The tray icon shows connection state and pulses on request
+activity; the app can start at login, starts the relay when it opens, and
+restarts a crashed relay automatically.
+
+To build the installers from source (Rust and Node required), see
+[desktop/README.md](desktop/README.md#build-installers):
 
 ```bash
 cd desktop

@@ -39,6 +39,13 @@ python scripts/set_version.py 0.6.0
 The release workflows enforce that the tag, the relay version, and the
 desktop manifests agree before anything publishes.
 
+The one-line installers in `scripts/install-*` fetch published artifacts:
+`install-headless.sh` installs from PyPI, and `install-desktop.sh` /
+`install-desktop.ps1` install the installers attached to the GitHub Release
+(DMG, AppImage, setup `.exe`). Keep those asset names stable. The
+`installers` workflow runs all three on macOS, Linux, and Windows after
+every desktop release and whenever the scripts change.
+
 ## Pull Request Expectations
 
 - include tests for behavioral changes

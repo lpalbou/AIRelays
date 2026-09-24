@@ -2,21 +2,31 @@
 
 This guide covers the CLI/server install. If you prefer a GUI, the desktop
 app (macOS, Windows, Linux) wraps the same relay with a system tray,
-dashboard, and one-click sign-in — see [desktop/README.md](../desktop/README.md)
-and the README's install section.
+dashboard, and one-click sign-in — see the [README's install section](../README.md#install)
+for its one-line installers and [desktop/README.md](../desktop/README.md).
 
 ## Install
+
+One line on macOS or Linux, without sudo:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-headless.sh | bash
+```
+
+The script installs the newest PyPI release into an isolated environment
+(uv tool or a Python 3.11+ virtualenv) and links `~/.local/bin/airelays`.
+Set `AIRELAYS_VERSION=X.Y.Z` to pin a release; run it again to upgrade.
+
+From PyPI directly:
+
+```bash
+python -m pip install airelays
+```
 
 From a source checkout:
 
 ```bash
 python -m pip install .
-```
-
-From PyPI:
-
-```bash
-python -m pip install airelays
 ```
 
 ## Initialize AIRelays

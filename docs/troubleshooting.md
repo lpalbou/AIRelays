@@ -1,5 +1,36 @@
 # Troubleshooting
 
+## Desktop app install
+
+The desktop builds are not notarized (macOS) or code-signed (Windows), so
+the operating system may warn when you install them by hand. The one-line
+installers in the [README](../README.md#install) avoid these prompts on
+macOS and Linux.
+
+- macOS says "AIRelays is damaged" or "cannot be verified" after you
+  downloaded the DMG in a browser: clear the quarantine flag, then open the
+  app again.
+
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/AIRelays.app
+  ```
+
+  Alternatively, Control-click the app in Finder and choose **Open**.
+- The installer reports that no desktop installer exists for your system:
+  desktop builds cover Apple Silicon Macs, x86_64 Linux, and x64 Windows.
+  On other machines, including Intel Macs, use the headless installer
+  (`scripts/install-headless.sh`); it runs the same relay without the tray.
+- Windows SmartScreen blocks the setup `.exe`: choose **More info** →
+  **Run anyway**, or use the PowerShell installer.
+- Linux: the AppImage does not start from a terminal with a FUSE error:
+  install `libfuse2` (`libfuse2t64` on Ubuntu 24.04), or run it with
+  `APPIMAGE_EXTRACT_AND_RUN=1`. The menu entry created by the installer
+  already does this when FUSE 2 is missing. GNOME needs the AppIndicator
+  extension to show the tray icon.
+- The headless installer warns that `~/.local/bin` is not on your `PATH`:
+  add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile and open
+  a new terminal.
+
 ## Traffic logs report a cleanup error
 
 The tray Settings page or `GET /v1/relay/logging` can report `last_error`, or
