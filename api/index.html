@@ -1274,6 +1274,11 @@ wait for the scheduled reset. CLI equivalent: <code>airelays accounts refresh</c
 <code>requests_total</code> — the count of real (non-monitoring) requests served by
 this process, usable as a lightweight activity signal. OpenAI model-list
 cache diagnostics live under <code>providers.openai.models_cache</code>.</p>
+<p><code>GET /v1/relay/status?activity_only=true</code> returns only
+<code>{"requests_total": N}</code>. It requires the same authentication as the full
+status, but it does not scan storage or probe providers, is not itself
+counted, and does not consume rate-limit quota or a concurrency slot, so
+clients such as the desktop tray can poll it frequently.</p>
 <h2 id="cli-diagnostics">CLI Diagnostics<a class="headerlink" href="#cli-diagnostics" title="Permanent link">&para;</a></h2>
 <p><code>airelays status</code> reports local config, relay-token, and provider readiness
 state. <code>airelays doctor</code> runs the same local checks and also probes the OpenAI
