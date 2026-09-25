@@ -16,6 +16,7 @@
 #   AIRELAYS_VERSION=0.14.1  install that release instead of the newest one
 #   AIRELAYS_APP_DIR=DIR     macOS: install AIRelays.app into DIR
 #   AIRELAYS_NO_LAUNCH=1     do not start the app after installing
+#   GITHUB_TOKEN=...         optional; authenticates GitHub API lookups
 set -euo pipefail
 
 REPO="lpalbou/AIRelays"
@@ -27,11 +28,11 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 command -v curl >/dev/null || die "curl is required."
 
 case "$(uname -s)/$(uname -m)" in
-  Darwin/arm64) PLATFORM=macos; ASSET_PATTERN='_aarch64\.dmg$' ;;
+  Darwin/arm64) PLATFORM=macos; ASSET_SUFFIX='_aarch64.dmg' ;;
   Darwin/*)
     die "the desktop app is only built for Apple Silicon Macs. On Intel Macs, install the headless relay instead:
   curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/install-headless.sh | bash" ;;
-  Linux/x86_64) PLATFORM=linux; ASSET_PATTERN='_amd64\.AppImage$' ;;
+  Linux/x86_64) PLATFORM=linux; ASSET_SUFFIX='_amd64.AppImage' ;;
   Linux/*)
     die "the desktop app is only built for x86_64 Linux. Install the headless relay instead:
   curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/install-headless.sh | bash" ;;
@@ -43,25 +44,51 @@ esac
 # Splitting on JSON separators keeps this independent of jq, Python, and of
 # whether the API response is pretty-printed.
 find_asset() {
-  tr ',{}' '\n\n\n' | awk -v pattern="$ASSET_PATTERN" '
+  tr ',{}' '\n\n\n' | awk -v suffix="$ASSET_SUFFIX" '
     /"digest":/ { digest = $0; sub(/.*"digest": *"?/, "", digest); sub(/".*/, "", digest) }
     /"browser_download_url":/ {
       url = $0; sub(/.*"browser_download_url": *"/, "", url); sub(/".*/, "", url)
-      if (url ~ pattern) { print url, (digest == "" || digest == "null" ? "-" : digest); exit }
+      if (substr(url, length(url) - length(suffix) + 1) == suffix) { print url, (digest == "" || digest == "null" ? "-" : digest); exit }
       digest = ""
     }'
 }
 
+api_get() {
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$API/$1"
+  else
+    curl -fsSL "$API/$1"
+  fi
+}
+
+TAG=""
 if [[ -n "${AIRELAYS_VERSION:-}" ]]; then
   TAG="v${AIRELAYS_VERSION#v}"
-  RELEASES="$(curl -fsSL "$API/releases/tags/$TAG")" || die "release $TAG not found."
+  RELEASES="$(api_get "releases/tags/$TAG")" || RELEASES=""
 else
   # Newest release first. Desktop installers are attached a few minutes after
   # a release is created, so fall back to the newest release that has one.
-  RELEASES="$(curl -fsSL "$API/releases?per_page=10")" || die "could not reach the GitHub API."
+  RELEASES="$(api_get "releases?per_page=10")" || RELEASES=""
 fi
-read -r URL DIGEST < <(printf '%s' "$RELEASES" | find_asset) || true
-[[ -n "${URL:-}" ]] || die "no $PLATFORM desktop installer found in ${TAG:-the recent releases}."
+
+if [[ -n "$RELEASES" ]]; then
+  read -r URL DIGEST < <(printf '%s' "$RELEASES" | find_asset) || true
+  [[ -n "${URL:-}" ]] || die "no $PLATFORM desktop installer found in ${TAG:-the recent releases}."
+else
+  # The API is unreachable or rate-limited (60 anonymous requests per hour
+  # per IP). Release downloads are not rate-limited: resolve the newest tag
+  # from the releases/latest redirect and use the installer naming scheme.
+  if [[ -z "$TAG" ]]; then
+    TAG="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")" \
+      || die "could not reach GitHub."
+    TAG="${TAG##*/}"
+    [[ "$TAG" == v* ]] || die "could not determine the newest release."
+  fi
+  URL="https://github.com/$REPO/releases/download/$TAG/AIRelays_${TAG#v}$ASSET_SUFFIX"
+  DIGEST="unverified"
+  say "The GitHub API is unavailable (rate limit?); installing $TAG without checksum verification."
+  say "Set GITHUB_TOKEN, or retry later, to verify the download."
+fi
 
 TMP="$(mktemp -d)"
 cleanup() {
@@ -72,7 +99,8 @@ trap cleanup EXIT
 
 FILE="$TMP/${URL##*/}"
 say "Downloading ${URL##*/}"
-curl -fL --progress-bar -o "$FILE" "$URL"
+curl -fL --progress-bar -o "$FILE" "$URL" \
+  || die "download failed. A new release's desktop installers appear a few minutes after it is published; retry shortly."
 
 if [[ "$DIGEST" == sha256:* ]]; then
   if command -v sha256sum >/dev/null; then
@@ -82,7 +110,7 @@ if [[ "$DIGEST" == sha256:* ]]; then
   fi
   [[ "$ACTUAL" == "${DIGEST#sha256:}" ]] || die "checksum mismatch for ${URL##*/}: expected ${DIGEST#sha256:}, got $ACTUAL"
   say "Checksum verified (sha256 $ACTUAL)"
-else
+elif [[ "$DIGEST" == "-" ]]; then
   say "GitHub published no checksum for this asset; skipping verification."
 fi
 

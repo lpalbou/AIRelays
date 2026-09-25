@@ -10,6 +10,7 @@
 # Environment:
 #   $env:AIRELAYS_VERSION = "0.14.1"  install that release instead of the newest one
 #   $env:AIRELAYS_NO_LAUNCH = "1"     do not start the app after installing
+#   $env:GITHUB_TOKEN = "..."         optional; authenticates GitHub API lookups
 
 & {
     $ErrorActionPreference = 'Stop'
@@ -19,6 +20,8 @@
     $repo = 'lpalbou/AIRelays'
     $api = "https://api.github.com/repos/$repo"
     $headers = @{ 'User-Agent' = 'airelays-installer' }
+    $apiHeaders = $headers.Clone()
+    if ($env:GITHUB_TOKEN) { $apiHeaders['Authorization'] = "Bearer $env:GITHUB_TOKEN" }
 
     if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64' -and $env:PROCESSOR_ARCHITEW6432 -ne 'AMD64') {
         throw "The AIRelays desktop app is only built for x64 Windows. Install the relay with: py -m pip install airelays"
@@ -26,11 +29,11 @@
 
     if ($env:AIRELAYS_VERSION) {
         $tag = 'v' + $env:AIRELAYS_VERSION.TrimStart('v')
-        $releases = @(Invoke-RestMethod -Headers $headers "$api/releases/tags/$tag")
+        $releases = @(Invoke-RestMethod -Headers $apiHeaders "$api/releases/tags/$tag")
     } else {
         # Desktop installers are attached a few minutes after a release is
         # created, so fall back to the newest release that has one.
-        $releases = @(Invoke-RestMethod -Headers $headers "$api/releases?per_page=10")
+        $releases = @(Invoke-RestMethod -Headers $apiHeaders "$api/releases?per_page=10")
     }
     $asset = $releases | ForEach-Object { $_.assets } |
         Where-Object { $_.name -like '*_x64-setup.exe' } | Select-Object -First 1
