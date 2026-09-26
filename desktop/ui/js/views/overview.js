@@ -19,6 +19,8 @@ let pendingClaudeLogout = null;
 let pendingClaudeMethod = null;
 // The outside-click menu closer, removed on unmount.
 let documentClickHandler = null;
+let expandedAccountDetails = null;
+let accountDetailsSequence = 0;
 
 let usageLoadedOnce = false;
 // Last usage payload, keyed by account email, merged into the Accounts card.
@@ -60,6 +62,7 @@ export const overviewView = {
     pendingLogout.clear();
     pendingLogoutTarget = null;
     pendingClaudeLogout = null;
+    expandedAccountDetails = null;
     usageByEmail = new Map();
     claudeUsage = null;
     usageStamp = 0;
@@ -117,11 +120,42 @@ function template() {
         <span>ⓘ</span>
         <span>Open mode is active: clients connect without any key. Most SDKs still require a non-empty value — any placeholder works.</span>
       </div>
+      <div class="connection-access" role="group" aria-label="Connection access">
+        <div class="control-row">
+          <div class="control-group">
+            <span class="control-label" id="ov-auth-label">Authentication</span>
+            <div class="segmented" role="group" aria-labelledby="ov-auth-label">
+              <button id="ov-auth-protected">Protected (API key)</button>
+              <button id="ov-auth-open">Open (no key)</button>
+            </div>
+          </div>
+          <div class="control-group">
+            <span class="control-label" id="ov-net-label">Who can connect</span>
+            <div class="segmented" role="group" aria-labelledby="ov-net-label">
+              <button id="ov-net-loopback">This machine only</button>
+              <button id="ov-net-lan">Devices on my network</button>
+            </div>
+          </div>
+        </div>
+        <div class="hint warn" id="ov-open-lan-warning" hidden>
+          <span>⚠</span>
+          <span><strong>Open + network access:</strong> anyone on your network can use the relay — and your subscription quota — without a key.</span>
+        </div>
+        <div class="hint warn" id="ov-open-warning" hidden>
+          <span>⚠</span>
+          <span>Without a key, any program on this machine can use the relay and your subscription quota.</span>
+        </div>
+        <div class="hint" id="ov-claude-note" hidden>
+          <span>ⓘ</span>
+          <span>The Claude provider only works in "This machine only" mode; it stays off while network access is on.</span>
+        </div>
+        <p class="card-caption">Access changes apply immediately and restart a running relay.</p>
+      </div>
     </section>
 
-    <section class="card" aria-label="OpenAI accounts">
-      <div class="row">
-        <h2 style="margin:0">OpenAI</h2>
+    <section class="card provider-card provider-openai" aria-label="OpenAI accounts">
+      <div class="provider-head">
+        <h2 class="provider-title">OpenAI</h2>
         <span class="spacer"></span>
         <button class="btn btn-small btn-ghost" id="ov-refresh" title="Re-check limits and reload usage">${icon("refresh", 13)} Refresh</button>
         <div class="split-btn">
@@ -136,9 +170,9 @@ function template() {
       <div id="ov-accounts"><div class="empty">Start the relay to see accounts.</div></div>
     </section>
 
-    <section class="card" id="ov-claude-section" aria-label="Claude accounts" hidden>
-      <div class="row">
-        <h2 style="margin:0">Claude</h2>
+    <section class="card provider-card provider-anthropic" id="ov-claude-section" aria-label="Anthropic accounts" hidden>
+      <div class="provider-head">
+        <h2 class="provider-title">Anthropic</h2>
         <span class="badge badge-warn" id="ov-claude-off-badge" hidden>Off in network mode</span>
         <span class="spacer"></span>
         <button class="btn btn-small btn-ghost" id="ov-refresh-claude" title="Reload Claude usage">${icon("refresh", 13)} Refresh</button>
@@ -187,38 +221,6 @@ function template() {
       </div>
     </section>
 
-    <section class="card" aria-label="Access">
-      <h2>Access</h2>
-      <p class="card-caption">Changes apply immediately and restart a running relay.</p>
-      <div class="control-row">
-        <div class="control-group">
-          <span class="control-label" id="ov-auth-label">Authentication</span>
-          <div class="segmented" role="group" aria-labelledby="ov-auth-label">
-            <button id="ov-auth-protected">Protected (API key)</button>
-            <button id="ov-auth-open">Open (no key)</button>
-          </div>
-        </div>
-        <div class="control-group">
-          <span class="control-label" id="ov-net-label">Who can connect</span>
-          <div class="segmented" role="group" aria-labelledby="ov-net-label">
-            <button id="ov-net-loopback">This machine only</button>
-            <button id="ov-net-lan">Devices on my network</button>
-          </div>
-        </div>
-      </div>
-      <div class="hint warn" id="ov-open-lan-warning" hidden>
-        <span>⚠</span>
-        <span><strong>Open + network access:</strong> anyone on your network can use the relay — and your subscription quota — without a key.</span>
-      </div>
-      <div class="hint warn" id="ov-open-warning" hidden>
-        <span>⚠</span>
-        <span>Without a key, any program on this machine can use the relay and your subscription quota.</span>
-      </div>
-      <div class="hint" id="ov-claude-note" hidden>
-        <span>ⓘ</span>
-        <span>The Claude provider only works in "This machine only" mode; it stays off while network access is on.</span>
-      </div>
-    </section>
 
     <dialog id="ov-logout-dialog">
       <h3 id="ov-logout-title">Sign out?</h3>
@@ -448,7 +450,8 @@ function bindActions(ctx) {
   // Close any open method menu on an outside click. Registered once per
   // mount and removed on unmount — accumulating document listeners across
   // view switches was a slow leak.
-  documentClickHandler = () => {
+  documentClickHandler = (event) => {
+    if (!event.target.closest(".account-more")) closeAccountDetails();
     for (const id of ["ov-login-menu", "ov-claude-menu"]) {
       const menu = root?.querySelector(`#${id}`);
       if (menu) menu.hidden = true;
@@ -1134,10 +1137,14 @@ function accountBlock(account, index, total, balance) {
   emailEl.className = "account-email";
   emailEl.textContent = email;
   emailEl.title = email;
+  const identity = document.createElement("div");
+  identity.className = "account-identity";
+  identity.append(emailEl, windowTokensDetail(account.window_tokens, usageEntry?.status, true,
+    email, `openai:${account.slug ?? email}`));
   const plan = document.createElement("span");
   plan.className = "account-plan";
   plan.textContent = account.plan_type ?? "";
-  head.append(emailEl, plan, accountStatusBadge(account, index, total, balance, usageError));
+  head.append(identity, plan, accountStatusBadge(account, index, total, balance, usageError));
   // The repair sits in the header, touching the badge that names the
   // problem: "Sign-in expired → Sign in again" reads as one statement.
   if (usageError?.authExpired && !pendingLogout.has(email)) {
@@ -1172,7 +1179,6 @@ function accountBlock(account, index, total, balance) {
     err.title = usageEntry.error;
     block.appendChild(err);
   }
-  block.appendChild(windowTokensDetail(account.window_tokens, usageEntry?.status));
   return block;
 }
 
@@ -1265,35 +1271,87 @@ function formatMinorMoney(value) {
   return `${value.currency} ${(value.amount_minor / 10 ** value.exponent).toFixed(value.exponent)}`;
 }
 
-// Ground truth behind the usage bars, revealed on hover of "more": the
+function closeAccountDetails() {
+  expandedAccountDetails = null;
+  for (const wrap of root?.querySelectorAll(".account-more") ?? []) {
+    wrap.querySelector(".account-more-panel").hidden = true;
+    wrap.querySelector(".account-more-trigger").setAttribute("aria-expanded", "false");
+  }
+}
+
+// Ground truth behind the usage bars, revealed by the account's ? button: the
 // account facts the bars can't carry (usageFacts above), then what this
 // relay served on the account during its current usage window, per model.
 // The window's horizon is plan-dependent (weekly on current OpenAI plans),
 // so the title names the window the tally payload reports instead of
 // hardcoding "5h". Every account gets the affordance; without data the
 // panel says so instead of the trigger silently missing.
-function windowTokensDetail(windowTokens, status, showTokens = true) {
+function windowTokensDetail(windowTokens, status, showTokens = true, accountName = "account", accountKey = accountName) {
   const models = Array.isArray(windowTokens?.models) ? windowTokens.models : [];
   const wrap = document.createElement("div");
   wrap.className = "account-more";
-  const trigger = document.createElement("span");
+  wrap.dataset.accountDetailsKey = accountKey;
+  const trigger = document.createElement("button");
+  trigger.type = "button";
   trigger.className = "account-more-trigger";
-  trigger.textContent = "more";
+  trigger.textContent = "?";
+  trigger.setAttribute("aria-label", `Account details for ${accountName}`);
+  trigger.setAttribute("aria-expanded", "false");
   const panel = document.createElement("div");
   panel.className = "account-more-panel";
-  // The panel opens upward (bottom anchor); with the facts section it can
-  // now be taller than the space above a high-on-screen row, and a hover
-  // panel cut off at the viewport edge is unreadable — flip it downward
-  // when the room above is short. mouseover (not mouseenter) so a block
-  // rebuilt under a near-stationary cursor re-measures on the next child
-  // boundary crossing; by dispatch time :hover has already laid the panel
-  // out, so offsetHeight is real.
-  wrap.addEventListener("mouseover", () => {
-    panel.classList.toggle(
-      "flip-down",
-      wrap.getBoundingClientRect().top < panel.offsetHeight + 12
-    );
+  panel.id = `account-details-${++accountDetailsSequence}`;
+  panel.hidden = true;
+  panel.tabIndex = 0;
+  panel.setAttribute("role", "region");
+  panel.setAttribute("aria-label", `Account details for ${accountName}`);
+  trigger.setAttribute("aria-controls", panel.id);
+  const show = () => {
+    panel.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+    // Stay inside the scrolling content area, even beside a long email.
+    const anchor = wrap.getBoundingClientRect();
+    const bounds = document.getElementById("content").getBoundingClientRect();
+    const top = Math.max(0, bounds.top) + 8;
+    const bottom = Math.min(window.innerHeight, bounds.bottom) - 8;
+    const below = bottom - anchor.bottom;
+    const above = anchor.top - top;
+    panel.style.maxHeight = `${Math.max(0, Math.max(above, below))}px`;
+    panel.classList.toggle("flip-down", below >= panel.offsetHeight || below >= above);
+    const left = Math.max(bounds.left + 8, Math.min(anchor.left, bounds.right - panel.offsetWidth - 8));
+    panel.style.left = `${left - anchor.left}px`;
+  };
+  wrap.addEventListener("pointerenter", (event) => {
+    if (event.pointerType !== "touch" && !expandedAccountDetails) show();
   });
+  wrap.addEventListener("pointerleave", () => {
+    if (expandedAccountDetails !== accountKey) {
+      panel.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+    }
+  });
+  trigger.addEventListener("click", () => {
+    const wasPinned = expandedAccountDetails === accountKey;
+    closeAccountDetails();
+    if (!wasPinned) {
+      expandedAccountDetails = accountKey;
+      show();
+    }
+  });
+  wrap.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeAccountDetails();
+      trigger.focus({preventScroll: true});
+    }
+  });
+  wrap.addEventListener("focusout", (event) => {
+    if (wrap.isConnected && event.relatedTarget && !wrap.contains(event.relatedTarget)
+        && expandedAccountDetails === accountKey) closeAccountDetails();
+  });
+  if (expandedAccountDetails === accountKey) {
+    requestAnimationFrame(() => { if (wrap.isConnected) show(); });
+  }
   const facts = usageFacts(status);
   if (facts.length > 0) {
     const factsTitle = document.createElement("div");
@@ -1314,6 +1372,12 @@ function windowTokensDetail(windowTokens, status, showTokens = true) {
     panel.appendChild(factsTable);
   }
   if (!showTokens) {
+    if (facts.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "account-more-note";
+      empty.textContent = status?.error ?? "Account usage details are not available yet.";
+      panel.appendChild(empty);
+    }
     wrap.append(trigger, panel);
     return wrap;
   }
@@ -1378,6 +1442,7 @@ function renderAccounts(state) {
     return;
   }
   renderCache.accounts = cacheKey;
+  const focusedDetailsKey = document.activeElement?.closest(".account-more")?.dataset.accountDetailsKey;
 
   const container = el("ov-accounts");
   if (!providers) {
@@ -1439,6 +1504,12 @@ function renderAccounts(state) {
         : "Requests are balanced by remaining capacity. When usage is unavailable, accounts take turns.";
     claudeContainer.appendChild(caption);
   }
+  // Background status updates must not discard keyboard focus on help.
+  if (focusedDetailsKey) {
+    const replacement = [...root.querySelectorAll(".account-more")]
+      .find((wrap) => wrap.dataset.accountDetailsKey === focusedDetailsKey);
+    replacement?.querySelector(".account-more-trigger").focus({preventScroll: true});
+  }
 }
 
 function claudeAccountList(claude) {
@@ -1466,6 +1537,13 @@ function claudeBlock(claude, paused, claudeUsage, count) {
   emailEl.textContent = claude.email ?? claudeUsage?.account?.email ?? "Not signed in";
   if (claude.cli_version) {
     emailEl.title = `Served by the local claude CLI ${claude.cli_version}`;
+  }
+  const identity = document.createElement("div");
+  identity.className = "account-identity";
+  identity.appendChild(emailEl);
+  if (claude.slug || claude.email || claude.ready_for_requests) {
+    identity.appendChild(windowTokensDetail(null, claudeUsage, false,
+      emailEl.textContent, `claude:${claude.slug ?? claude.email ?? "default"}`));
   }
 
   const plan = document.createElement("span");
@@ -1510,7 +1588,7 @@ function claudeBlock(claude, paused, claudeUsage, count) {
     badge.textContent = "Not signed in";
   }
 
-  head.append(emailEl, plan, badge);
+  head.append(identity, plan, badge);
 
   // Sign-out parity with OpenAI rows. Also offered when only a stored
   // token exists: a stale token silently masks CLI auth, and sign-out is
@@ -1570,7 +1648,6 @@ function claudeBlock(claude, paused, claudeUsage, count) {
     for (const [label, window] of usageWindows(claudeUsage)) {
       block.appendChild(usageWindowRow(label, window));
     }
-    block.appendChild(windowTokensDetail(null, claudeUsage, false));
     // Stale snapshot: show the bars (better than nothing) but say they are
     // cached, and why a fresh read isn't possible yet.
     if (claudeUsage.stale) {

@@ -54,3 +54,4 @@ nav:
       - Local Config And Relay Security: adr/0003-local-config-and-default-deny-relay-security.md
       - Provider Runtime Boundary: adr/0004-provider-runtime-boundary-and-experimental-local-adapters.md
       - Bounded Traffic-Log Retention: adr/0005-bounded-traffic-log-retention.md
+      - Isolated Claude Subscription Accounts: adr/0006-isolated-claude-subscription-accounts.md

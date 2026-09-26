@@ -21,6 +21,7 @@
   --bad-bg: rgba(255, 69, 58, 0.12);
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --radius: 10px;
+  --heading-size: 17px;
 }
 
 * { box-sizing: border-box; }
@@ -73,27 +74,54 @@ html, body {
   margin-left: 6px;
 }
 
-/* "more" hover: per-model token breakdown behind an account's usage bars */
+/* Account facts and token details, beside the account name. */
 .account-more {
   position: relative;
-  display: inline-block;
-  margin-top: 2px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding-block: 6px;
+  margin-block: -6px;
 }
 
 .account-more-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  font: inherit;
   font-size: 11px;
-  color: var(--muted, #8b93a7);
-  cursor: default;
-  border-bottom: 1px dotted var(--muted, #8b93a7);
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.account-more-trigger:hover,
+.account-more-trigger[aria-expanded="true"] {
+  color: var(--text);
+  border-color: var(--text-faint);
+  background: var(--bg-hover);
+}
+
+.account-more-trigger:focus-visible,
+.account-more-panel:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
 }
 
 .account-more-panel {
-  display: none;
   position: absolute;
-  bottom: calc(100% + 6px);
+  bottom: 100%;
   left: 0;
   z-index: 30;
   min-width: 300px;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 40px));
+  overflow-y: auto;
+  overflow-wrap: anywhere;
   padding: 10px 12px;
   border: 1px solid var(--border, #2a2f42);
   border-radius: 8px;
@@ -101,14 +129,10 @@ html, body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
-.account-more:hover .account-more-panel {
-  display: block;
-}
-
 /* Not enough room above the row: open downward instead (set from JS). */
 .account-more-panel.flip-down {
   bottom: auto;
-  top: calc(100% + 6px);
+  top: 100%;
 }
 
 .account-more-title {
@@ -227,7 +251,7 @@ html, body {
 
 .view-title {
   margin: 0 0 4px;
-  font-size: 17px;
+  font-size: var(--heading-size);
   font-weight: 700;
 }
 
@@ -249,14 +273,25 @@ html, body {
 
 .card h2 {
   margin: 0 0 4px;
-  font-size: 13px;
-  font-weight: 650;
+  font-size: var(--heading-size);
+  font-weight: 700;
 }
 
 .card .card-caption {
   margin: 0 0 12px;
   font-size: 12px;
   color: var(--text-dim);
+}
+
+.connection-access {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.connection-access .card-caption {
+  margin: 8px 0 0;
+  font-size: 11px;
 }
 
 .grid-2 {
@@ -289,12 +324,12 @@ html, body {
   margin-top: 12px;
 }
 
-/* Side-by-side labeled control groups (Access card): top-aligned so the
+/* Side-by-side connection access controls: top-aligned so the
    labels and their segmented controls sit on the same lines. */
 .control-row {
   display: flex;
   align-items: flex-start;
-  gap: 28px;
+  gap: 12px 28px;
   flex-wrap: wrap;
 }
 
@@ -702,18 +737,33 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 14px 0 6px;
-  padding-bottom: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 2px;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--border);
 }
 
-.provider-head h3 {
+.provider-card .provider-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--heading-size);
   font-weight: 700;
-  letter-spacing: 0.2px;
+  letter-spacing: normal;
   color: var(--text);
 }
+
+.provider-title::before {
+  content: "";
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--provider-accent, var(--accent-strong));
+}
+
+.provider-openai { --provider-accent: #78d8b0; }
+.provider-anthropic { --provider-accent: #dfaa8b; }
 
 /* One account = identity header (email absorbs the free space; plan,
    status and sign-out hug the right edge) plus usage meters underneath.
@@ -735,10 +785,17 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
   min-width: 0;
 }
 
-/* Emails are items under a provider header: regular weight, slightly
-   dimmer than the header so the section structure reads first. */
-.account-email {
+/* The name and help stay together; only the name truncates on narrow rows. */
+.account-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 1 1 auto;
+  min-width: 0;
+}
+
+.account-email {
+  flex: 0 1 auto;
   min-width: 0;
   font-weight: 500;
   font-size: 12.5px;

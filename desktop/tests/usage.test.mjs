@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 function element() {
   return {
-    children: [], style: {}, textContent: "", classList: { add() {} },
+    children: [], style: {}, dataset: {}, textContent: "", classList: { add() {} },
     append(...children) { this.children.push(...children); },
     appendChild(child) { this.children.push(child); },
     setAttribute() {}, addEventListener() {},
@@ -48,14 +48,14 @@ test("expired and unknown windows never show a healthy zero", () => {
 
 test("Fable limit does not label all Claude models exhausted", () => {
   const ctx = view();
-  vm.runInContext(`claudeUsage = {
+  const usage = {
     rate_limit_reached_type: null,
     rate_limits: {default: {primary_window: {used_percent: 8, window_label: "5h"}}, additional: [{
       limit_name: "Fable", rate_limit: {limit_reached: true,
         primary_window: {used_percent: 100, window_label: "weekly"}}
     }]}
-  }`, ctx);
-  const block = ctx.claudeBlock({ready_for_requests: true}, false);
+  };
+  const block = ctx.claudeBlock({ready_for_requests: true}, false, usage);
   assert.equal(block.children[0].children[2].textContent, "Fable at limit");
   assert.equal(block.children[2].children[0].children[0].textContent, "Fable · Weekly");
 });

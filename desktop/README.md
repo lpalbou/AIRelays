@@ -24,6 +24,11 @@ platform installs and the `AIRELAYS_VERSION` / `AIRELAYS_NO_LAUNCH` options.
 
 ## Layout
 
+In Overview, **Connect Your App** combines the endpoint and relay key with
+**Authentication** and **Who can connect**. Access changes take effect
+immediately and restart a running relay; the card explains open-mode risks
+and when network access pauses Claude.
+
 - `src-tauri/` — Rust core: tray, relay supervision, config rendering,
   status polling, and the command layer the dashboard calls.
 - `ui/` — the dashboard (vanilla HTML/CSS/JS, no build step): Overview,
@@ -88,6 +93,12 @@ CI builds all three platforms from `.github/workflows/desktop.yml` on
   then eases back. Security toggles live only in the dashboard, where their
   consequences are explained.
 - First run (or a failed tray) opens the dashboard window automatically.
+- Clicking outside the dashboard hides it without quitting the app or
+  stopping the relay; the page and unsaved edits stay open. On macOS and
+  Windows, left-click the tray icon to reopen it, or right-click for the
+  menu and **Open Dashboard**. On Linux, use **Open Dashboard** in the tray
+  menu. Automatic hiding is disabled if tray initialization fails.
+- On macOS, opening the already-running app also reopens its dashboard.
 - Linux: GNOME needs the AppIndicator extension to show tray icons; the deb
   declares `libayatana-appindicator3-1` and `xdg-utils` as dependencies.
 - Windows: the relay tree is supervised through a Job Object, so stopping
@@ -101,12 +112,3 @@ CI builds all three platforms from `.github/workflows/desktop.yml` on
   `~/.airelays`, shared with the CLI and the native macOS menu bar app.
   Saving settings rewrites `config.toml`; hand-edits to keys the app does
   not manage are not preserved.
-
-## Quality process
-
-The initial implementation went through a six-reviewer adversarial pass
-(correctness, architecture-fit, frontend contract, cross-platform &
-packaging, naive-user UX, expert UX + visual design). All blocking findings
-were fixed; residual risks are the unsigned macOS artifact, the not yet
-exercised Windows/Linux CI legs, and the config-ownership overlap noted
-above.

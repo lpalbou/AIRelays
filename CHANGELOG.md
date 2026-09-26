@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.0
 
 ### Added
 
@@ -11,6 +11,23 @@
   options, per-account concurrency, model-specific usage checks, cooldowns,
   and failover before response content reaches the client.
 - Per-account Claude usage and readiness in the API and desktop dashboard.
+
+### Changed
+
+- Stronger OpenAI and Anthropic section headings in the desktop dashboard.
+  Account details open from **?** beside each name, replacing the separate
+  **more** row; supports hover, click, and keyboard access.
+- Card headings share the Overview heading size. **Connect Your App** includes
+  authentication and network access controls, replacing the separate Access card.
+- The dashboard hides when it loses focus, preserving the running relay and
+  unsaved edits. Left-click the tray icon to reopen it on macOS and Windows;
+  right-click opens the control menu. **Open Dashboard** remains available
+  from the tray menu on all platforms.
+
+### Fixed
+
+- Shared CLI options such as `--config`, `--data-dir`, and `--auth-storage`
+  retain their values when placed before commands or nested Claude commands.
 
 ### Compatibility
 

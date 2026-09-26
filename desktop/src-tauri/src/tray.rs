@@ -17,10 +17,10 @@ use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
-const TRAY_ID: &str = "airelays-tray";
+pub(crate) const TRAY_ID: &str = "airelays-tray";
 
 // Last icon actually applied to the tray (0 = none yet). A missed or failed
 // set_icon used to stick until the next reachability *change*; tracking the
@@ -79,7 +79,19 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
         .icon(icon_image(ICON_DISCONNECTED))
         .tooltip(format!("AIRelays {}", app.package_info().version))
         .menu(&build_menu(app)?)
-        .show_menu_on_left_click(true)
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| {
+            if matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }
+            ) {
+                crate::commands::show_dashboard(tray.app_handle());
+            }
+        })
         .on_menu_event(handle_menu_event)
         .build(app)?;
     let _ = tray;

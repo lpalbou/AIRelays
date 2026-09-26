@@ -63,7 +63,9 @@ for one account. Each list entry contains `slug`, `email`, and either `status`
 or `error`. The desktop shows a separate set of bars for each Claude account.
 
 `spend` and `extra_usage` preserve usage-credit status, disabled reasons,
-and reported amounts. The desktop **more** details format money only with
+and reported amounts. Hover over or activate **?** beside an account name
+in the OpenAI or Anthropic section to open details; press **Escape** to close.
+These details format money only with
 its declared currency and decimal scale (`amount_minor` / `exponent` in
 `spend`, or `decimal_places` in `extra_usage`). A missing balance or limit
 is not inferred from zero spend. Notes:

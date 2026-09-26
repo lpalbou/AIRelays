@@ -18,7 +18,7 @@ def open_dashboard(page, url):
         }}};
     """)
     page.goto(url)
-    section = page.get_by_role("region", name="Claude accounts", exact=True)
+    section = page.get_by_role("region", name="Anthropic accounts", exact=True)
     playwright.expect(section.get_by_text("work@claude.ai", exact=True)).to_be_visible()
     return section
 

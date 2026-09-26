@@ -77,7 +77,7 @@ SHA-256 digest, install without sudo or admin rights, and start the app:
 
 The app is self-contained: it embeds its own Python and relay, so it needs
 neither Python nor Node. Run the same command again to update. Set
-`AIRELAYS_VERSION=0.14.1` (or `$env:AIRELAYS_VERSION` on Windows) with any
+`AIRELAYS_VERSION=0.15.0` (or `$env:AIRELAYS_VERSION` on Windows) with any
 installer to pin a release, and `AIRELAYS_NO_LAUNCH=1` to skip starting the
 app. You can also download the DMG, AppImage, deb, or setup `.exe` from the
 Releases page directly; the builds are not notarized or code-signed, see
@@ -89,6 +89,12 @@ per-account usage bars, a model list with copy-ready ids, live traffic, and
 diagnostics. The tray icon shows connection state and pulses on request
 activity; the app can start at login, starts the relay when it opens, and
 restarts a crashed relay automatically.
+
+In Overview, **Connect Your App** brings the endpoint, relay key, authentication,
+and network access controls together. Clicking outside the dashboard hides it
+without stopping the relay or discarding edits. On macOS and Windows, left-click
+the tray icon to reopen it; right-click for the menu. **Open Dashboard** is also
+available from the tray menu on every platform.
 
 To build the installers from source (Rust and Node required), see
 [desktop/README.md](desktop/README.md#build-installers):
@@ -179,7 +185,7 @@ airelays claude login --replace ACCOUNT      # renew one sign-in
 airelays claude logout ACCOUNT               # sign out just this account
 ```
 
-The desktop Claude card offers **Add account**, separate usage bars, and
+The desktop Anthropic card offers **Add account**, separate usage bars, and
 sign-out on each row. Accounts join and leave routing without a relay restart.
 The default `balanced` strategy prefers available execution slots and the
 lowest reported weekly usage among eligible accounts. Without fresh usage
@@ -318,7 +324,7 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 - Claude model discovery queries the installed CLI and exposes both aliases and concrete model ids. The Models tab and `airelays models` show each reported alias resolution, such as `claude:fable` resolving to `claude-fable-5-1`.
 - The Models tab refreshes automatically every five minutes while reachable. Its Refresh button, or `GET /v1/models?refresh=true`, requests fresh provider catalogs. See [model discovery](docs/api.md#get-v1models) for cache and availability limits.
 - With multiple OpenAI accounts, `/v1/models` is the union of their catalogs. Balancing, conversation affinity, and failover stay within each model's supporting account subset. The Models tab shows account coverage and labels entries the upstream hides from its own picker.
-- Subscription bars report upstream allowances, including Claude's separately scoped Fable weekly cap when present. Credit details and snapshot times appear under each account's **more** affordance; percentages are not token counts. See [Subscription Status](docs/subscription-status.md).
+- Subscription bars report upstream allowances, including Claude's separately scoped Fable weekly cap when present. Hover over or activate the **?** beside an account name for credit details and snapshot times; percentages are not token counts. See [Subscription Status](docs/subscription-status.md).
 - AIRelays rejects requests when the selected runtime is disabled or the route is outside that runtime's published subset
 
 ## What AIRelays Exposes

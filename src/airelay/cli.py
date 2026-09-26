@@ -1584,7 +1584,9 @@ def _add_json_argument(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    shared = argparse.ArgumentParser(add_help=False)
+    # A nested parser must not replace options already supplied to its
+    # parent with None. Shared options work at every command level.
+    shared = argparse.ArgumentParser(add_help=False, argument_default=argparse.SUPPRESS)
     shared.add_argument("--config", help="Path to the AIRelays config file")
     shared.add_argument("--data-dir", help="Local AIRelays state directory")
     shared.add_argument("--logs-dir", help="Traffic log directory")

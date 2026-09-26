@@ -1,9 +1,9 @@
 # Documentation
 
 - [Getting Started](getting-started.md)
-  - one-line and PyPI installation, OpenAI setup, Claude setup, and verification
+  - one-line and PyPI installation, custom CLI configuration, multi-account sign-in, and verification
 - [Desktop App](../desktop/README.md)
-  - the cross-platform tray app: one-line install, layout, build, and supervision behavior
+  - the cross-platform tray app: connection/access controls, hide-on-blur dashboard, install, and supervision
 - [Configuration](configuration.md)
   - config file shape, environment overrides, provider toggles, and traffic-log retention
 - [Security](security.md)

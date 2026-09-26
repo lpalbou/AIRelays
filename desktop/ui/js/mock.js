@@ -230,13 +230,16 @@ export async function mockInvoke(command, args = {}) {
             email: account.email,
             status: {
               object: "subscription_status", provider: "claude",
+              captured_at: new Date().toISOString(),
               account: {email: account.email, plan_type: account.subscription_type},
               rate_limits: {
                 default: {
                   primary_window: {used_percent: 22 + index * 10, window_seconds: 18000,
-                    window_label: "5h", reset_after_seconds: 9000},
+                    window_label: "5h", reset_after_seconds: 9000,
+                    reset_at_iso: new Date(Date.now() + 9000 * 1000).toISOString()},
                   secondary_window: {used_percent: 61 - index * 20, window_seconds: 604800,
-                    window_label: "weekly", reset_after_seconds: 400000},
+                    window_label: "weekly", reset_after_seconds: 400000,
+                    reset_at_iso: new Date(Date.now() + 400000 * 1000).toISOString()},
                 },
                 additional: [],
               },

@@ -11,6 +11,10 @@ mod tray;
 use state::AppState;
 use tauri::Manager;
 
+fn should_hide_dashboard(label: &str, tray_available: bool, visible: bool, focused: bool) -> bool {
+    label == "main" && tray_available && visible && !focused
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
@@ -56,10 +60,32 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the dashboard hides it; the app lives in the tray.
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            match event {
+                // Hiding preserves the page, edits, and running relay.
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                tauri::WindowEvent::Focused(false) if window.label() == "main" => {
+                    let window = window.clone();
+                    tauri::async_runtime::spawn(async move {
+                        // Let tray/menu focus settle before checking again: an
+                        // old blur must not hide a newly reopened dashboard.
+                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                        let app = window.app_handle().clone();
+                        let _ = app.run_on_main_thread(move || {
+                            if should_hide_dashboard(
+                                window.label(),
+                                window.app_handle().tray_by_id(tray::TRAY_ID).is_some(),
+                                window.is_visible().unwrap_or(false),
+                                window.is_focused().unwrap_or(true),
+                            ) {
+                                let _ = window.hide();
+                            }
+                        });
+                    });
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -96,6 +122,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error building AIRelays desktop app")
         .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                commands::show_dashboard(app);
+            }
             if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
                 // Keep running when all windows are hidden; only explicit
                 // Quit (exit code set) may terminate the app.
@@ -106,4 +136,18 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_hide_dashboard;
+
+    #[test]
+    fn dashboard_hides_only_after_blur_with_a_tray_available() {
+        assert!(should_hide_dashboard("main", true, true, false));
+        assert!(!should_hide_dashboard("main", true, true, true));
+        assert!(!should_hide_dashboard("main", false, true, false));
+        assert!(!should_hide_dashboard("main", true, false, false));
+        assert!(!should_hide_dashboard("other", true, true, false));
+    }
 }

@@ -5,7 +5,7 @@
 ## Document Index
 
 - README.md: overview, install (CLI and desktop), quick start, compatibility layer
-- docs/getting-started.md: setup, sign-in flows, verification
+- docs/getting-started.md: setup, custom CLI configuration, multi-account sign-in, verification
 - docs/configuration.md: config file shape and environment overrides
 - docs/security.md: relay auth, open local relay mode, Claude guardrails
 - docs/api.md: routes, compatibility adaptations, provider limits
@@ -13,7 +13,7 @@
 - docs/subscription-status.md: usage reporting for OpenAI and Claude
 - docs/faq.md: common questions and limits
 - docs/troubleshooting.md: symptoms, causes, fixes
-- desktop/README.md: desktop app layout, build, supervision behavior
+- desktop/README.md: combined connection/access card, hide-on-blur dashboard, tray controls, build, supervision
 - docs/adr/README.md: durable design decisions
 
 ---
@@ -57,7 +57,16 @@ Set `AIRELAYS_VERSION=X.Y.Z` to pin a release and `AIRELAYS_NO_LAUNCH=1` to skip
 
 Desktop app details: a Tauri tray app under `desktop/` with a dashboard for relay start/stop, auth and network modes, OpenAI and Claude sign-in/sign-out, per-account usage bars, a model list with copy-ready ids, live traffic, and diagnostics. The tray icon shows connection state and pulses on request activity; the app can start at login, starts the relay when it opens, and restarts a crashed relay automatically. Both installs share the same config (`~/.config/airelays`) and data (`~/.airelays`).
 
+In Overview, **Connect Your App** combines the endpoint and relay key with authentication and network access controls. Access changes apply immediately and restart a running relay. Clicking outside the dashboard hides it while preserving the relay, page, and unsaved edits. On macOS and Windows, left-click the tray icon to reopen it; right-click opens the menu. **Open Dashboard** remains available in the tray menu on all platforms. Automatic hiding is disabled if tray initialization fails; opening the already-running macOS app also reopens the dashboard.
+
 ## First Run (CLI)
+
+The CLI and desktop share saved accounts and configuration by default. Use
+`--config ./relay.toml` consistently with `init`, sign-in, account commands,
+and `serve` to select another configuration. Shared options (`--config`,
+`--data-dir`, `--logs-dir`, `--auth-storage`, `--bearer-token-file`) work
+before or after subcommands; a later explicit value wins. For example:
+`airelays --config ./relay.toml claude accounts --json`.
 
 OpenAI runtime:
 
@@ -152,8 +161,10 @@ The verified upstream is the ChatGPT subscription backend, not the public platfo
 ## Subscription Usage
 
 Claude reports explicit scoped limits, including Fable's weekly cap when
-present, separately from all-model windows. The desktop names the exhausted
-scope, exposes credit/spend details with their declared currency scale, and
+present, separately from all-model windows. The desktop groups accounts under
+OpenAI and Anthropic headings. The **?** beside each account name opens details
+on hover, click, or keyboard activation; Escape closes them. It names exhausted
+scopes, exposes credit/spend details with their declared currency scale, and
 does not infer missing balances. OpenAI preserves `model_usage`, credits,
 spend controls, and the distinction between available and currently usable
 limit-reset credits. Quota percentages are not token counts; the token

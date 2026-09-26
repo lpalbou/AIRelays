@@ -5,16 +5,16 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 ## Key Docs
 
 - [README.md](README.md): overview, install (CLI and desktop), quick start, compatibility layer
-- [docs/getting-started.md](docs/getting-started.md): setup, sign-in flows, verification
+- [docs/getting-started.md](docs/getting-started.md): setup, custom CLI configuration, multi-account sign-in, verification
 - [docs/configuration.md](docs/configuration.md): config file shape, environment overrides, and traffic-log retention
 - [docs/security.md](docs/security.md): relay auth, open local relay mode, Claude guardrails
 - [docs/api.md](docs/api.md): routes, compatibility adaptations, provider limits
 - [docs/architecture.md](docs/architecture.md): request flow and module boundaries
-- [docs/subscription-status.md](docs/subscription-status.md): usage reporting for OpenAI and Claude
+- [docs/subscription-status.md](docs/subscription-status.md): usage reporting for OpenAI and Claude, desktop account details via **?**
 - [docs/faq.md](docs/faq.md): common questions and limits
 - [docs/troubleshooting.md](docs/troubleshooting.md): symptoms, causes, fixes
 - [docs/adr/README.md](docs/adr/README.md): durable design decisions
-- [desktop/README.md](desktop/README.md): desktop app layout, build, supervision behavior
+- [desktop/README.md](desktop/README.md): combined connection/access card, hide-on-blur dashboard, tray controls, build, supervision
 - [DISCLAIMER.md](DISCLAIMER.md): independence and intended use
 
 ## Install
@@ -32,12 +32,14 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - `airelays serve` / `airelays serve --no-auth`
 - `airelays status` / `airelays doctor` / `airelays models` / `airelays logs`
 - `airelays token show` / `airelays token rotate`
-- `airelays claude set-token` / `airelays claude logout`
+- `airelays claude set-token` (headless default account)
 - `airelays claude login` (additive) / `airelays claude accounts`
 - `airelays claude login --replace ACCOUNT` / `airelays claude logout ACCOUNT`
 - `claude auth login --claudeai` / `claude setup-token`
 
 ## Important Notes
+
+- Shared CLI options (`--config`, `--data-dir`, `--logs-dir`, `--auth-storage`, `--bearer-token-file`) work before or after subcommands; a later explicit value wins.
 
 - Traffic logs default to 7 days, 1024 MiB total, and hourly/50 MiB rotation. `airelays logs`, GET/PUT `/v1/relay/logging`, and tray Settings inspect or change the saved policy; see `docs/configuration.md` for limits and permanent-deletion behavior.
 

@@ -45,7 +45,7 @@ Yes, in a constrained text-only form.
 - local `claude` CLI only
 - text `chat.completions`
 - text `completions`
-- bearer-auth-required
+- follows the relay's protected or open local authentication mode
 - loopback-only
 - stateless
 
@@ -74,7 +74,8 @@ remain subscription tokens; adding accounts does not enable API-key auth.
 
 Yes: `GET /v1/subscription/status?provider=claude` returns the 5-hour and
 weekly windows in the same normalized shape as OpenAI usage. The desktop
-app shows both providers' usage bars in the Accounts card. See
+app shows per-account usage in the OpenAI and Anthropic cards. Use **?** beside
+an account name for details. See
 [Subscription Status](subscription-status.md).
 
 ## Is using my subscription through AIRelays allowed by the providers?
@@ -112,9 +113,20 @@ selector, so AIRelays does not claim a concrete resolution for it.
 
 No.
 
-## Why do token-limit parameters return `422` on the OpenAI runtime?
+## Why does the dashboard disappear when I click another window?
 
-The verified OpenAI subscription backend does not currently accept those fields on AIRelays’ OpenAI-shaped text-generation routes, so AIRelays rejects them explicitly.
+The dashboard hides when it loses focus; the relay keeps running and unsaved
+edits remain in the window. On macOS and Windows, left-click the tray icon to
+reopen it, or right-click for the menu. **Open Dashboard** is available in the
+tray menu on all platforms. In Overview, **Connect Your App** contains both
+connection details and the authentication/network access controls.
+
+## Are output-token limits enforced?
+
+No. AIRelays strips unsupported output-token limits such as `max_tokens`,
+`max_completion_tokens`, and `max_output_tokens` on both runtimes and reports
+them through the `x-airelays-ignored-parameters` response header. It does not
+silently truncate generated output. See [API Notes](api.md).
 
 ## Why did I get `401` and then `429`?
 

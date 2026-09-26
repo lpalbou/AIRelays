@@ -48,6 +48,23 @@ Show the current relay token at any time:
 airelays token show
 ```
 
+## Custom Configuration
+
+The CLI and desktop use the same saved accounts and relay configuration by
+default. To use another configuration, pass `--config` consistently when
+signing in, inspecting accounts, and starting the relay:
+
+```bash
+airelays --config ./relay.toml init
+airelays --config ./relay.toml claude login
+airelays --config ./relay.toml claude accounts --json
+airelays --config ./relay.toml serve --host 127.0.0.1 --port 8080
+```
+
+Shared options such as `--config` and `--data-dir` work before or after
+subcommands. A later explicit value takes precedence. See
+[Configuration](configuration.md) for paths and environment overrides.
+
 ## OpenAI Runtime
 
 Log in:
@@ -133,7 +150,7 @@ service managers (systemd, docker) or reboots.
 Browser sign-in adds an isolated profile. Claude Code owns its credentials
 and refreshes them automatically. Existing CLI sign-in and the headless token
 remain available as the `default` account; a headless token does not override
-browser-added accounts. The desktop offers **Add account** in the Claude card.
+browser-added accounts. The desktop offers **Add account** in the Anthropic card.
 
 Manage one account using its email or id from `airelays claude accounts`:
 
@@ -174,7 +191,7 @@ Current Claude limits:
 
 - local-only
 - loopback-only
-- bearer-auth-required
+- follows the relay's protected or open local authentication mode
 - text-only
 - stateless
 
