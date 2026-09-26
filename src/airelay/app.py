@@ -262,6 +262,8 @@ def create_app(settings: Settings) -> FastAPI:
             if hasattr(backend, "usage_refresh_loop")
             else None
         )
+        claude_warm_task = asyncio.create_task(providers.claude.warm_start()) if providers.claude else None
+        claude_usage_task = asyncio.create_task(providers.claude.usage_refresh_loop()) if providers.claude else None
         async def maintain_logs() -> None:
             while True:
                 await asyncio.sleep(traffic.cleanup_interval_seconds)
@@ -271,7 +273,7 @@ def create_app(settings: Settings) -> FastAPI:
         try:
             yield
         finally:
-            tasks = [task for task in (warm_task, usage_task, retention_task) if task is not None]
+            tasks = [task for task in (warm_task, usage_task, retention_task, claude_warm_task, claude_usage_task) if task is not None]
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -560,7 +562,11 @@ def create_app(settings: Settings) -> FastAPI:
                     detail="The Claude runtime is disabled for this AIRelays process.",
                 )
             try:
-                payload = await runtime.get_subscription_status(request_id)
+                if all_accounts:
+                    payload = {"object": "subscription_status_list", "provider": "claude",
+                               "accounts": await runtime.subscription_statuses(request_id)}
+                else:
+                    payload = await runtime.get_subscription_status(request_id, slug=account)
             except Exception as exc:  # noqa: BLE001
                 raise _http_error(exc) from exc
             return logged_json(request_id, payload, loggable=False)
@@ -620,13 +626,18 @@ def create_app(settings: Settings) -> FastAPI:
         return logged_json(request_id, payload, loggable=False)
 
     @app.post("/v1/relay/accounts/refresh")
-    async def refresh_accounts(request: Request) -> JSONResponse:
+    async def refresh_accounts(request: Request, provider: str = "openai") -> JSONResponse:
         request_id = _request_id(request)
         # Clears usage-limit benches and re-probes so recovered accounts
         # return to rotation immediately, without waiting out an estimated
         # reset or restarting the relay.
         try:
-            accounts = await backend.hard_refresh(request_id)
+            if provider == "claude" and providers.claude:
+                accounts = await providers.claude.hard_refresh(request_id)
+            elif provider == "openai":
+                accounts = await backend.hard_refresh(request_id)
+            else:
+                raise HTTPException(501, "The requested provider is unavailable.")
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
         return logged_json(
@@ -1013,6 +1024,8 @@ def create_app(settings: Settings) -> FastAPI:
                             # failure in-band the way OpenAI does instead of
                             # silently truncating the stream.
                             yield _stream_error_event(exc.detail, exc.code)
+                        finally:
+                            await claude_stream.aclose()
 
                     return StreamingResponse(
                         claude_event_stream(),
@@ -1239,6 +1252,8 @@ def create_app(settings: Settings) -> FastAPI:
                                 yield chunk
                         except ProviderError as exc:
                             yield _stream_error_event(exc.detail, exc.code)
+                        finally:
+                            await claude_stream.aclose()
 
                     return StreamingResponse(
                         claude_event_stream(),

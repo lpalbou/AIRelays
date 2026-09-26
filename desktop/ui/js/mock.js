@@ -37,6 +37,8 @@ const settings = {
   claudeBin: "claude",
   claudeTimeoutSeconds: 600,
   claudeMaxConcurrentRequests: 2,
+  claudeBalance: "balanced",
+  claudeAccountCooldownSeconds: 300,
   claudeStripApiKeyEnv: true,
   claudeModelsCsv: "claude:sonnet, claude:opus, claude:haiku, claude:fable",
   extraServeArgs: "",
@@ -44,6 +46,10 @@ const settings = {
 
 let managed = true;
 let mockAutostart = false;
+let claudeAccounts = [
+  {slug: "default", email: "perso@claude.ai", subscription_type: "pro", ready_for_requests: true, managed_profile: false},
+  {slug: "claude-work", email: "work@claude.ai", subscription_type: "max", ready_for_requests: true, managed_profile: true},
+];
 
 const state = () => ({
   lifecycle: managed ? "running" : "stopped",
@@ -122,6 +128,8 @@ const state = () => ({
             email: "perso@claude.ai",
             subscription_type: "pro",
             cli_version: "2.1.0",
+            balance: settings.claudeBalance,
+            accounts: claudeAccounts.map((account) => ({...account})),
           },
         },
       }
@@ -215,8 +223,25 @@ export async function mockInvoke(command, args = {}) {
       return {
         object: "subscription_status_list",
         claude: {
-          object: "subscription_status",
+          object: "subscription_status_list",
           provider: "claude",
+          accounts: claudeAccounts.map((account, index) => ({
+            slug: account.slug,
+            email: account.email,
+            status: {
+              object: "subscription_status", provider: "claude",
+              account: {email: account.email, plan_type: account.subscription_type},
+              rate_limits: {
+                default: {
+                  primary_window: {used_percent: 22 + index * 10, window_seconds: 18000,
+                    window_label: "5h", reset_after_seconds: 9000},
+                  secondary_window: {used_percent: 61 - index * 20, window_seconds: 604800,
+                    window_label: "weekly", reset_after_seconds: 400000},
+                },
+                additional: [],
+              },
+            },
+          })),
           account: { email: "perso@claude.ai", plan_type: "pro" },
           rate_limit_reached_type: null,
           rate_limits: {
@@ -369,6 +394,7 @@ export async function mockInvoke(command, args = {}) {
     case "clear_claude_token":
       return true;
     case "logout_claude":
+      claudeAccounts = claudeAccounts.filter((account) => account.slug !== args.account);
       return { token_removed: true, cli_signed_out: true, cli_error: null };
     case "cancel_login":
       return null;
@@ -386,8 +412,14 @@ export async function mockInvoke(command, args = {}) {
     case "set_custom_token":
     case "set_claude_token":
     case "submit_login_code":
-    case "run_login":
     case "open_path":
+      return null;
+    case "run_login":
+      if (args.provider === "claude" && !args.account) {
+        const number = claudeAccounts.length + 1;
+        claudeAccounts.push({slug: `claude-${number}`, email: `account${number}@claude.ai`,
+          subscription_type: "pro", ready_for_requests: true, managed_profile: true});
+      }
       return null;
     default:
       throw new Error(`Unknown mock command: ${command}`);

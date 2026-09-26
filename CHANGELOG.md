@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Multiple Claude subscription accounts through isolated Claude Code profiles.
+  Use `airelays claude login` or the desktop's **Add account**, inspect accounts
+  with `airelays claude accounts`, and renew or sign out individual profiles.
+- Claude account selection by remaining quota, with round-robin and ordered
+  options, per-account concurrency, model-specific usage checks, cooldowns,
+  and failover before response content reaches the client.
+- Per-account Claude usage and readiness in the API and desktop dashboard.
+
+### Compatibility
+
+- Existing CLI and stored-token sign-ins remain the `default` account. Global
+  tokens do not override browser-added profiles. With multiple accounts,
+  `airelays claude logout` requires a target or `--all`; signing out `default`
+  also signs out other tools using that CLI profile.
+
 ## 0.14.1
 
 ### Added

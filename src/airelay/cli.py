@@ -26,7 +26,11 @@ from airelay.app import create_app
 from airelay.auth import AuthenticationError, AuthManager, AuthRecord, AuthStorage
 from airelay.backend import ChatGptCodexBackend
 from airelay.config import APP_NAME, Settings
-from airelay.providers import ProviderRegistry
+from airelay.providers import ClaudeCliRuntime, ProviderRegistry
+from airelay.claude_auth import (
+    ClaudeProfile, account_identity, discover_profiles, enroll_profile,
+    forget_profile, new_profile, resolve_profile, suspend_profile,
+)
 from airelay.terminal import accent, bad, bold, good, muted, warn
 
 
@@ -1313,43 +1317,138 @@ def _run_claude_set_token(args: argparse.Namespace) -> None:
     print()
 
 
-def _run_claude_logout(args: argparse.Namespace) -> None:
-    """Complete Claude sign-out, mirroring the desktop app: the stored
-    relay token first (it can mask CLI auth), then the claude CLI's own
-    credentials, with each result reported separately."""
+def _claude_profiles_with_identity(settings: Settings) -> list[ClaudeProfile]:
+    profiles = discover_profiles(settings)
+    default = ClaudeCliRuntime(settings)._run_status_command()
+    if default.get("logged_in") or settings.claude_oauth_token_source() != "none":
+        profiles[0] = ClaudeProfile("default", identity=default)
+    else:
+        profiles = profiles[1:]
+    return profiles
+
+
+def _run_claude_login(args: argparse.Namespace) -> None:
+    """Delegate sign-in and refresh-token storage to the unmodified CLI."""
     import subprocess
 
     settings = _base_settings(args)
-    _print_title("Claude Sign-Out")
-    token_file = settings.claude_oauth_token_file
-    if token_file.exists():
-        token_file.unlink()
-        _print_field("Stored token", f"removed ({token_file})", kind="good")
-    else:
-        _print_field("Stored token", "none stored")
+    profiles = _claude_profiles_with_identity(settings)
+    try:
+        profile = resolve_profile(profiles, args.replace) if args.replace else new_profile(settings)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    expected = account_identity(profile.identity)
+    if not profile.managed:
+        # Renew the legacy account into isolation. Never overwrite another
+        # tool's default CLI login or delete its stored OAuth token.
+        profile = new_profile(settings)
+        print("Renewing the default account into an isolated profile; the existing CLI sign-in is kept.", flush=True)
+    elif args.replace:
+        suspend_profile(profile)
+    runtime = ClaudeCliRuntime(settings, profile=profile)
+    env = runtime._subprocess_env()
+    env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+    print("Sign in to your Claude subscription in the browser.", flush=True)
     try:
         result = subprocess.run(
-            [settings.claude_bin, "auth", "logout"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
+            [settings.claude_bin, "auth", "login", "--claudeai"], env=env, check=False,
         )
-    except FileNotFoundError:
-        _print_field("claude CLI", f"not found ({settings.claude_bin}); nothing else to sign out", kind="warn")
+    except OSError as error:
+        raise SystemExit(f"Cannot launch Claude Code: {error}") from error
+    if result.returncode != 0:
+        raise SystemExit("Claude sign-in did not finish; no account was added.")
+    status = runtime._run_status_command()
+    if expected and account_identity(status) != expected:
+        raise SystemExit("A different Claude account was selected. This profile will not serve requests; sign in again with the original account.")
+    if profile.managed:
+        duplicate = next((p for p in profiles if p.managed and p.slug != profile.slug
+                          and account_identity(p.identity) == account_identity(status)), None)
+        if duplicate:
+            # Leave the original profile and its credentials untouched.
+            try:
+                cleanup = subprocess.run([settings.claude_bin, "auth", "logout"], env=env,
+                                         capture_output=True, check=False, timeout=60)
+                if cleanup.returncode != 0:
+                    print(f"The unused profile at {profile.config_dir} could not be signed out; it is not enrolled.")
+            except (OSError, subprocess.TimeoutExpired):
+                print(f"The unused profile at {profile.config_dir} could not be signed out; it is not enrolled.")
+            print(f"This account is already enrolled as {duplicate.slug}. Use `airelays claude login --replace {duplicate.slug}` to renew its sign-in.")
+            return
+        try:
+            enroll_profile(profile, status)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+    print(f"Claude account ready: {status.get('email') or profile.slug} ({profile.slug}).")
+    print("The running relay adds it to load balancing automatically.")
+
+
+def _run_claude_accounts(args: argparse.Namespace) -> None:
+    from airelay.claude_accounts import ClaudeAccountPool
+
+    status = ClaudeAccountPool(_base_settings(args)).status()
+    if args.json:
+        print(json.dumps({"accounts": status["accounts"], "balance": status["balance"]}, indent=2))
         return
-    except subprocess.TimeoutExpired:
-        raise SystemExit("`claude auth logout` timed out. Run it manually to finish the sign-out.")
-    if result.returncode == 0:
-        _print_field("claude CLI", "signed out on this machine", kind="good")
-        print("  Note: other tools using the claude CLI here (e.g. Claude Code)")
-        print("  are signed out too.")
+    _print_title("Claude Accounts")
+    for account in status["accounts"]:
+        _print_field(account["slug"], account.get("email") or "Identity unavailable")
+        _print_field("Status", "ready" if account.get("ready_for_requests") else "sign-in required")
+    if not status["accounts"]:
+        print("No Claude accounts signed in.")
+    print("\nAdd: airelays claude login")
+    print("Renew: airelays claude login --replace ACCOUNT")
+    print("Sign out: airelays claude logout ACCOUNT")
+
+
+def _run_claude_logout(args: argparse.Namespace) -> None:
+    import subprocess
+
+    settings = _base_settings(args)
+    profiles = _claude_profiles_with_identity(settings)
+    needle = getattr(args, "account", None)
+    if getattr(args, "all", False):
+        selected = profiles
+    elif needle:
+        try:
+            selected = [resolve_profile(profiles, needle)]
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+    elif len(profiles) > 1:
+        raise SystemExit("Choose a Claude account to sign out: `airelays claude logout ACCOUNT` (or `--all`).")
     else:
-        detail = (result.stderr or result.stdout).strip().splitlines()
-        raise SystemExit(
-            "`claude auth logout` failed: "
-            + (detail[-1] if detail else f"exit code {result.returncode}")
-        )
+        selected = profiles or [ClaudeProfile("default")]
+    outcomes = []
+    for profile in selected:
+        runtime = ClaudeCliRuntime(settings, profile=profile)
+        token_removed = False
+        if not profile.managed and settings.claude_oauth_token_file.exists():
+            settings.claude_oauth_token_file.unlink()
+            token_removed = True
+        env = runtime._subprocess_env()
+        env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+        error = None
+        try:
+            result = subprocess.run([settings.claude_bin, "auth", "logout"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=60)
+            if result.returncode != 0:
+                error = (result.stderr or result.stdout).strip() or f"Claude exited {result.returncode}"
+            elif not profile.managed and os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+                error = "CLI signed out, but CLAUDE_CODE_OAUTH_TOKEN remains set. Remove it from the relay environment and restart."
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            error = str(exc)
+        if error is None:
+            forget_profile(profile)
+        outcomes.append({"slug": profile.slug, "token_removed": token_removed,
+                         "cli_signed_out": error is None, "cli_error": error})
+    if getattr(args, "json", False):
+        print(json.dumps(outcomes[0] if len(outcomes) == 1 else {"accounts": outcomes}))
+        return
+    for outcome in outcomes:
+        if outcome["cli_error"]:
+            raise SystemExit(f"Claude sign-out incomplete ({outcome['slug']}): {outcome['cli_error']}")
+        print(f"Signed out Claude account {outcome['slug']}.")
+        if outcome["slug"] == "default":
+            print("Other tools using the default Claude CLI sign-in are also signed out.")
 
 
 def _run_models(args: argparse.Namespace) -> None:
@@ -1646,6 +1745,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Manage the local Claude runtime credentials",
     )
     claude_subparsers = claude_cmd.add_subparsers(dest="claude_command", required=True)
+    claude_login = claude_subparsers.add_parser(
+        "login", parents=[shared], help="Add a Claude subscription using an isolated Claude Code profile",
+    )
+    claude_login.add_argument("--replace", metavar="ACCOUNT", help="Renew one existing account (email or account id)")
+    claude_login.set_defaults(func=_run_claude_login)
+    claude_accounts = claude_subparsers.add_parser(
+        "accounts", parents=[shared], help="List Claude accounts and their account ids",
+    )
+    _add_json_argument(claude_accounts)
+    claude_accounts.set_defaults(func=_run_claude_accounts)
     claude_set_token = claude_subparsers.add_parser(
         "set-token",
         parents=[shared],
@@ -1655,8 +1764,12 @@ def build_parser() -> argparse.ArgumentParser:
     claude_logout = claude_subparsers.add_parser(
         "logout",
         parents=[shared],
-        help="Sign Claude out: remove the stored token and run `claude auth logout`",
+        help="Sign out one Claude account without changing the others",
     )
+    claude_logout_target = claude_logout.add_mutually_exclusive_group()
+    claude_logout_target.add_argument("account", nargs="?", help="Account email or id; required with multiple accounts")
+    claude_logout_target.add_argument("--all", action="store_true", help="Sign out every enrolled Claude account")
+    _add_json_argument(claude_logout)
     claude_logout.set_defaults(func=_run_claude_logout)
 
     models = subparsers.add_parser(

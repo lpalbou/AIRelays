@@ -255,8 +255,10 @@ final class RelayController: ObservableObject {
     }
 
     func runClaudeLogin() {
-        let command = "cd \(shellEscape(settings.expandedWorkingDirectory)) && \(shellEscape(settings.expandedClaudeBin)) auth login --claudeai"
-        runDetachedShellCommand(label: "claude-login", shellCommand: command)
+        runDetachedShellCommand(
+            label: "claude-login",
+            shellCommand: settings.relayShellCommand(["claude", "login", "--config", settings.expandedConfigPath])
+        )
     }
 
     func runClaudeSetupToken() {

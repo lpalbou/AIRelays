@@ -3416,7 +3416,10 @@ def test_claude_concrete_id_discovered_before_first_request(tmp_path, monkeypatc
         return {"result": "OK", "usage": {"input_tokens": 1, "output_tokens": 1}}
 
     with TestClient(app) as client:
-        runtime = app.state.providers.claude_runtime
+        runtime = app.state.providers.claude_runtime._accounts["default"].runtime
+        monkeypatch.setattr(runtime, "status", lambda: {
+            "ready_for_requests": True, "logged_in": True, "email": "claude@example.com",
+        })
         monkeypatch.setattr(runtime, "_discover_models", catalog)
         monkeypatch.setattr(runtime, "_run_json", generate)
         response = client.post("/v1/chat/completions", json={

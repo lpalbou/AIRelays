@@ -13,7 +13,7 @@ let revealedToken = null;
 const pendingLogout = new Set();
 // The sign-out the confirmation dialog is about: {provider, email}.
 let pendingLogoutTarget = null;
-let pendingClaudeLogout = false;
+let pendingClaudeLogout = null;
 // Claude method chosen while the provider was off (network mode); resumed
 // after the user confirms the mode switch.
 let pendingClaudeMethod = null;
@@ -59,7 +59,7 @@ export const overviewView = {
     renderCache = { endpoints: "", accounts: "" };
     pendingLogout.clear();
     pendingLogoutTarget = null;
-    pendingClaudeLogout = false;
+    pendingClaudeLogout = null;
     usageByEmail = new Map();
     claudeUsage = null;
     usageStamp = 0;
@@ -136,7 +136,7 @@ function template() {
       <div id="ov-accounts"><div class="empty">Start the relay to see accounts.</div></div>
     </section>
 
-    <section class="card" id="ov-claude-section" aria-label="Claude account" hidden>
+    <section class="card" id="ov-claude-section" aria-label="Claude accounts" hidden>
       <div class="row">
         <h2 style="margin:0">Claude</h2>
         <span class="badge badge-warn" id="ov-claude-off-badge" hidden>Off in network mode</span>
@@ -147,7 +147,7 @@ function template() {
           <button class="btn btn-small split-btn-toggle" id="ov-login-claude-menu" aria-label="Choose Claude sign-in method" aria-haspopup="true">${icon("chevronDown", 12)}</button>
           <div class="split-menu" id="ov-claude-menu" hidden role="menu">
             <button role="menuitem" data-method="browser">In a browser (this machine)</button>
-            <button role="menuitem" data-method="token">With a token (any device)</button>
+            <button role="menuitem" data-method="token">Set default account token…</button>
           </div>
         </div>
       </div>
@@ -272,7 +272,7 @@ function template() {
     </dialog>
 
     <dialog id="ov-claude-token-dialog">
-      <h3>Sign in to Claude with a token</h3>
+      <h3>Set default Claude account token</h3>
       <p class="dialog-text">
         On any machine with a browser, run <code>claude setup-token</code>
         in a terminal, approve the sign-in, then paste the token it prints.
@@ -283,9 +283,9 @@ function template() {
                placeholder="sk-ant-oat…" />
       </div>
       <p class="dialog-text" style="margin-top:10px; font-size:12px">
-        A stored token overrides the claude CLI's own sign-in for relay
-        requests. Removing it keeps the CLI's sign-in; the account row's
-        sign-out removes everything.
+        This replaces the default account's token. Accounts added with
+        browser sign-in keep their own credentials. Removing the token
+        restores the default CLI sign-in.
       </p>
       <div class="row" style="margin-top:14px">
         <button class="btn btn-ghost" id="ov-claude-token-clear">Remove stored token</button>
@@ -464,11 +464,11 @@ function bindActions(ctx) {
     el("ov-logout-dialog").close();
     if (!target) return;
     if (target.provider === "claude") {
-      pendingClaudeLogout = true;
+      pendingClaudeLogout = target.slug;
       renderCache.accounts = "";
       render(ctx.getState());
-      const outcome = await call(api.logoutClaude(), "Claude sign-out failed");
-      pendingClaudeLogout = false;
+      const outcome = await call(api.logoutClaude(target.slug), "Claude sign-out failed");
+      pendingClaudeLogout = null;
       renderCache.accounts = "";
       if (outcome !== undefined) {
         if (outcome.cli_signed_out) {
@@ -478,7 +478,7 @@ function bindActions(ctx) {
           // remain, so the relay could still answer Claude requests.
           toast(
             "Claude sign-out incomplete",
-            `${outcome.cli_error ?? "The claude CLI sign-out failed."} Run \u201Cclaude auth logout\u201D in a terminal to finish.`,
+            outcome.cli_error ?? "The Claude CLI sign-out failed. Try signing out this account again.",
             "error"
           );
         }
@@ -574,9 +574,9 @@ function runClaudeMethod(method) {
 }
 
 // Runs a sign-in; a deliberate cancel is informational, never an error.
-async function runLoginFlow(provider, failTitle) {
+async function runLoginFlow(provider, failTitle, account = null) {
   try {
-    await api.runLogin(provider);
+    await api.runLogin(provider, account);
     return true;
   } catch (error) {
     const message = String(error);
@@ -589,13 +589,17 @@ async function runLoginFlow(provider, failTitle) {
   }
 }
 
-async function startClaudeSignIn() {
+async function startClaudeSignIn(account = null, email = null) {
   toast(
     "Claude sign-in started",
-    "A browser opens for the Anthropic sign-in. If the final page shows a code, paste it in the banner below."
+    email
+      ? `Pick ${email} in the browser to renew this account's sign-in.`
+      : "Pick the Claude account to add in the browser. If the final page shows a code, paste it in the banner below."
   );
-  if (await runLoginFlow("claude", "Claude sign-in failed")) {
-    toast("Claude sign-in finished", "", "success");
+  if (await runLoginFlow("claude", "Claude sign-in failed", account)) {
+    toast("Claude account ready", "It joins load balancing automatically; existing accounts are kept.", "success");
+    loadUsage();
+    setTimeout(() => loadUsage(), 4000);
   }
 }
 
@@ -635,13 +639,15 @@ function openLogoutDialog(email, isLast) {
   root.querySelector("#ov-logout-dialog").showModal();
 }
 
-function openClaudeLogoutDialog() {
-  pendingLogoutTarget = { provider: "claude", email: null };
-  root.querySelector("#ov-logout-title").textContent = "Sign out of Claude?";
-  root.querySelector("#ov-logout-text").textContent =
-    "This signs the claude CLI out on this machine and removes any token stored in AIRelays. " +
-    "Claude requests will fail until you sign in again, and other tools that use the claude CLI here " +
-    "— including Claude Code — are signed out too. Your Anthropic account itself is unaffected.";
+function openClaudeLogoutDialog(account, count) {
+  pendingLogoutTarget = { provider: "claude", slug: account.slug ?? "default" };
+  root.querySelector("#ov-logout-title").textContent = `Sign out ${account.email ?? "of Claude"}?`;
+  const routing = count > 1
+    ? "Claude requests will use your remaining accounts. "
+    : "Claude requests will fail until you sign in again. ";
+  root.querySelector("#ov-logout-text").textContent = account.managed_profile
+    ? routing + "This signs out only this AIRelays profile. Your other Claude sign-ins and Anthropic account are unaffected."
+    : routing + "This removes the default sign-in and stored token. Other tools using this default Claude Code sign-in are also signed out.";
   root.querySelector("#ov-logout-dialog").showModal();
 }
 
@@ -947,22 +953,17 @@ function render(state) {
     false
   );
 
-  // Claude accepts a single account: once one is registered (the relay
-  // answers with it, or a token is stored here), sign-in greys out —
-  // switching accounts goes through sign-out first.
-  const claudeRegistered = Boolean(
-    state.relay_status?.providers?.claude?.ready_for_requests || state.claude_token_present
-  );
+  const claudeRegistered = claudeAccountList(state.relay_status?.providers?.claude).length > 0;
   setSignInButton(
     el("ov-login-claude"),
-    "logIn",
-    "Sign in",
+    claudeRegistered ? "plus" : "logIn",
+    claudeRegistered ? "Add account" : "Sign in",
     claudeRegistered
-      ? "Only one Claude account is supported — sign out first to switch accounts."
+      ? "Sign in with another Claude account; existing accounts are kept."
       : "Sign in to Claude",
-    claudeRegistered
+    false
   );
-  el("ov-login-claude-menu").disabled = claudeRegistered;
+  el("ov-login-claude-menu").disabled = false;
 
   // Sign-in in progress: the banner appears as soon as the flow starts —
   // before the URL is printed it still offers Cancel (a flow stuck ahead
@@ -1420,17 +1421,43 @@ function renderAccounts(state) {
   );
   const claudeContainer = el("ov-claude-account");
   claudeContainer.innerHTML = "";
-  claudeContainer.appendChild(claudeBlock(claude ?? {}, claudePaused));
+  const claudeAccounts = claudeAccountList(claude);
+  for (const account of claudeAccounts.length ? claudeAccounts : [{}]) {
+    const entry = claudeUsage?.accounts?.find((item) => item.slug === account.slug);
+    const usage = Array.isArray(claudeUsage?.accounts)
+      ? (entry?.status ?? (entry?.error ? {error: entry.error} : null))
+      : claudeUsage;
+    claudeContainer.appendChild(claudeBlock(account, claudePaused, usage, claudeAccounts.length));
+  }
+  if (claudeAccounts.length > 1) {
+    const caption = document.createElement("p");
+    caption.className = "card-caption";
+    caption.textContent = claude?.balance === "ordered"
+      ? "Requests use the first eligible account with capacity."
+      : claude?.balance === "round_robin"
+        ? "Requests rotate across eligible accounts with capacity."
+        : "Requests are balanced by remaining capacity. When usage is unavailable, accounts take turns.";
+    claudeContainer.appendChild(caption);
+  }
+}
+
+function claudeAccountList(claude) {
+  if (Array.isArray(claude?.accounts)) return claude.accounts;
+  if (claude?.ready_for_requests || claude?.email || lastState?.claude_token_present) {
+    return [{...claude, slug: "default", managed_profile: false}];
+  }
+  return [];
 }
 
 // Claude rendered with the exact same block as an OpenAI account: identity
 // grid on top (email / plan / badge / sign-out), usage bars with reset
 // times underneath (from the same endpoint shape Claude Code's /usage
 // command reads).
-function claudeBlock(claude, paused) {
+function claudeBlock(claude, paused, claudeUsage, count) {
   const block = document.createElement("div");
   block.className = "account-block";
-  if (pendingClaudeLogout) block.classList.add("pending");
+  const pendingSignOut = pendingClaudeLogout === (claude.slug ?? "default");
+  if (pendingSignOut) block.classList.add("pending");
   const head = document.createElement("div");
   head.className = "account-head";
 
@@ -1458,6 +1485,10 @@ function claudeBlock(claude, paused) {
     badge.className = "badge badge-neutral";
     badge.textContent = "Paused";
     badge.title = "Off while network access is on — switch to \u201CThis machine only\u201D to use it.";
+  } else if (claude.cooldown_seconds > 0) {
+    badge.className = "badge badge-warn";
+    badge.textContent = "Cooling down";
+    badge.title = `Available for retry in ${formatDuration(claude.cooldown_seconds)}.`;
   } else if (atLimit) {
     badge.className = "badge badge-warn";
     badge.textContent = "At limit";
@@ -1485,8 +1516,8 @@ function claudeBlock(claude, paused) {
   // token exists: a stale token silently masks CLI auth, and sign-out is
   // exactly the escape hatch for that state.
   const canSignOut =
-    !paused && (claude.ready_for_requests || Boolean(lastState?.claude_token_present));
-  if (pendingClaudeLogout) {
+    !paused && (claude.managed_profile || claude.ready_for_requests || (claude.slug === "default" && Boolean(lastState?.claude_token_present)));
+  if (pendingSignOut) {
     const pending = document.createElement("span");
     pending.className = "account-plan";
     pending.textContent = "…";
@@ -1495,9 +1526,9 @@ function claudeBlock(claude, paused) {
     const button = document.createElement("button");
     button.className = "copy-btn";
     button.innerHTML = icon("logOut", 14);
-    button.setAttribute("aria-label", "Sign out of Claude");
-    button.title = "Sign out of Claude";
-    button.addEventListener("click", () => openClaudeLogoutDialog());
+    button.setAttribute("aria-label", `Sign out of Claude account ${claude.email ?? claude.slug}`);
+    button.title = "Sign out of this Claude account";
+    button.addEventListener("click", () => openClaudeLogoutDialog(claude, count));
     head.append(button);
   }
   block.appendChild(head);
@@ -1514,10 +1545,23 @@ function claudeBlock(claude, paused) {
     note.className = "account-note";
     // A usage-fetch error (e.g. the relay process predates a settings
     // change) is more accurate than assuming the user is signed out.
-    note.textContent = claudeUsage?.error
-      ? `Usage unavailable — ${claudeUsage.error}`
-      : "Not signed in — use Sign in above.";
+    note.textContent = claude.identity_mismatch
+      ? "This profile is signed in to a different account. Sign in again with the original account."
+      : claude.reauth_required
+        ? "This account is paused until sign-in completes. Sign in again with the original account to resume."
+        : claude.duplicate_of
+          ? "This subscription is already enrolled in another profile and is counted once."
+          : claudeUsage?.error
+            ? `Usage unavailable — ${claudeUsage.error}`
+            : "Not signed in — use Sign in above.";
     block.appendChild(note);
+    if (claude.slug && !claude.duplicate_of) {
+      const renew = document.createElement("button");
+      renew.className = "btn btn-small";
+      renew.textContent = "Sign in again";
+      renew.addEventListener("click", () => startClaudeSignIn(claude.slug, claude.email));
+      block.appendChild(renew);
+    }
     return block;
   }
   // Same renderer as OpenAI usage: "5h window / Weekly" bars with

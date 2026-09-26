@@ -6,7 +6,8 @@ AIRelays is an OpenAI-shaped edge over provider-specific local runtimes.
 
 - The default runtime uses the ChatGPT Codex subscription backend and
   balances requests across every enrolled OpenAI account with capacity.
-- The Claude runtime uses isolated local `claude -p` subprocesses.
+- The Claude account pool selects an isolated CLI profile for each local
+  `claude -p` subprocess. Claude Code owns authentication and token refresh.
 
 ```mermaid
 flowchart LR
@@ -16,7 +17,8 @@ flowchart LR
         Edge["FastAPI edge\nauth · rate limits · traffic log"] --> Registry["Provider registry\nmodel id → runtime"]
         Registry -->|"other model ids"| Retry["Retry layer\nexponential backoff\npre-first-byte only"]
         Retry --> Pool["OpenAI account pool\nbalanced selection · benching · failover"]
-        Registry -->|"claude:* model ids"| ClaudeRT["Claude runtime\nvalidation · text transcript"]
+        Registry -->|"claude:* model ids"| ClaudePool["Claude account pool\ncapacity · cooldown · failover"]
+        ClaudePool --> ClaudeRT["Claude runtime per account\nvalidation · isolated environment"]
         Pool --> B1["Backend adapter\naccount 1"]
         Pool --> B2["Backend adapter\naccount N"]
     end
@@ -24,7 +26,7 @@ flowchart LR
     B1 --> Upstream["ChatGPT subscription backend"]
     B2 --> Upstream
     ClaudeRT --> CLI["local claude CLI\n(claude -p subprocess)"]
-    CLI --> Anthropic["Claude subscription"]
+    CLI --> Anthropic["Selected Claude subscription"]
 ```
 
 ## Request Flow
@@ -45,7 +47,20 @@ flowchart LR
 7. The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope; failures return OpenAI-shaped error JSON with the upstream's own reason, and failures after streaming started surface in-band.
 8. AIRelays logs the request, runtime selection, account selection, retries, and result.
 
-## Account Pool Lifecycle
+Claude selection uses available account slots, fresh weekly usage, and known
+model-specific limits. Without fresh usage, eligible accounts rotate. A CLI
+authentication, quota, or transient failure puts the account into cooldown;
+the pool can try another eligible account before any response bytes are sent.
+Claude remains stateless: there is no cross-request conversation affinity.
+
+`airelay.claude_auth` owns enrollment metadata under
+`data_dir/claude/accounts/<id>/account.json`. Each adjacent `config/` directory
+is owned by Claude Code and stays at a stable path because macOS credentials
+are scoped to it. `airelay.claude_accounts` owns selection and failover;
+`ClaudeCliRuntime` owns per-profile execution, model discovery, and usage
+backoff. See [the profile decision](adr/0006-isolated-claude-subscription-accounts.md).
+
+## OpenAI Account Pool Lifecycle
 
 ```mermaid
 stateDiagram-v2

@@ -60,11 +60,18 @@ AIRELAYS_REQUIRE_BEARER_AUTH=false airelays serve --port 8080
 
 When the Claude runtime is enabled:
 
-- bearer auth is required
+- the relay's protected or open local auth mode applies
 - loopback binding is required
 - `trust_x_forwarded_for` is rejected
 - the runtime is stateless
 - the runtime is local-only
+
+Claude accounts added through `airelays claude login` have separate CLI-owned
+credential stores. AIRelays stores identity metadata and usage state beside
+each profile; it does not implement OAuth login or refresh for these profiles.
+An ambient or stored default-account token cannot override their credentials.
+Signing out one isolated profile does not sign out other accounts. The legacy
+`default` profile is shared with other tools using that CLI sign-in.
 
 ## Rate Limits
 

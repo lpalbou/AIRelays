@@ -51,17 +51,24 @@ Yes, in a constrained text-only form.
 
 ## How do I log in to the Claude runtime?
 
-Use the local Claude CLI:
+Use the local Claude CLI through AIRelays:
 
-- browser login: `claude auth login --claudeai`
+- browser login: `airelays claude login`; repeat to add another of your accounts
 - headless login: `claude setup-token` on a browser-equipped machine, then
   `airelays claude set-token` on the relay machine (stores the token in a
   0600 file that survives service managers and reboots)
 
-Sign out with `airelays claude logout`. Note that this signs the `claude`
-CLI out machine-wide, so other tools using it (including Claude Code) are
-signed out too. The desktop app offers the same sign-in and sign-out flows
-from the Accounts card.
+List accounts with `airelays claude accounts`, renew one with
+`airelays claude login --replace ACCOUNT`, and sign out one with
+`airelays claude logout ACCOUNT`. The desktop offers **Add account** and
+per-account sign-out. Browser-added accounts use isolated profiles; signing
+out one leaves the others intact. Signing out the legacy `default` account
+also signs out other tools using that CLI profile.
+
+Claude requests balance across eligible accounts with capacity. The relay
+uses fresh weekly usage when available, rotates when usage is unknown, and
+can fail over before response bytes reach the client. Subscription tokens
+remain subscription tokens; adding accounts does not enable API-key auth.
 
 ## Can I see my Claude subscription usage?
 

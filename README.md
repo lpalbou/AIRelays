@@ -3,7 +3,7 @@
 `AIRelays` is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 - The default runtime uses an AIRelays-owned ChatGPT subscription login.
-- An optional Claude runtime uses the local `claude` CLI and its existing subscription auth state.
+- The Claude runtime balances your own subscription accounts through isolated local `claude` CLI profiles, while retaining your existing CLI sign-in.
 - AIRelays protects the relay with its own bearer token by default.
 - Traffic is logged to JSONL files with automatic rotation and retention (7 days, 1 GiB total by default).
 
@@ -149,7 +149,7 @@ Claude runtime:
 
 ```bash
 airelays init
-claude auth login --claudeai
+airelays claude login       # repeat to add another account
 airelays serve --port 8080
 ```
 
@@ -168,10 +168,30 @@ airelays serve --port 8080
 `airelays claude set-token` stores the token in `~/.airelays/claude-token`
 and passes it to the local `claude` CLI automatically — unlike a shell
 `export`, it keeps working under systemd, launchd, and docker. Exporting
-`CLAUDE_CODE_OAUTH_TOKEN` still works as a fallback. `airelays claude
-logout` signs Claude out completely: it removes the stored token and runs
-`claude auth logout` (which signs out every tool using the `claude` CLI on
-that machine).
+`CLAUDE_CODE_OAUTH_TOKEN` still works as a fallback for the default account.
+Stored and environment tokens apply only to that account; browser-added
+accounts use their own Claude Code profiles.
+
+```bash
+airelays claude accounts                     # list account ids and sign-ins
+airelays claude login                        # add another subscription
+airelays claude login --replace ACCOUNT      # renew one sign-in
+airelays claude logout ACCOUNT               # sign out just this account
+```
+
+The desktop Claude card offers **Add account**, separate usage bars, and
+sign-out on each row. Accounts join and leave routing without a relay restart.
+The default `balanced` strategy prefers available execution slots and the
+lowest reported weekly usage among eligible accounts. Without fresh usage
+information, accounts take turns. Exhausted short or model-specific windows
+are skipped; account failures can fail over only before response bytes are sent.
+Set `[providers.claude].balance` to `round_robin` or `ordered` to change selection.
+
+Your existing CLI login remains the `default` account. Signing out `default`
+also signs out other tools using that CLI profile and removes the stored relay
+token. Signing out a browser-added account affects only its isolated profile.
+With multiple accounts, `airelays claude logout` requires an account or `--all`.
+An exported token must also be removed from the relay environment to stop its use.
 
 When the Claude runtime is enabled, AIRelays keeps the same auth behavior as the rest of the relay. The default protected mode requires the AIRelays bearer token; `--no-auth` starts an open local relay. Claude remains restricted to loopback binding.
 

@@ -7,12 +7,14 @@ import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import uuid
+from contextlib import aclosing
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,16 +25,19 @@ import httpx
 from airelay.auth import AuthManager
 from airelay.backend import ChatGptCodexBackend
 from airelay.config import Settings
+from airelay.claude_auth import ClaudeProfile, account_identity
 from airelay.traffic import TrafficLogger, snapshot_body
 from airelay.transforms import chat_completion_chunk, completion_chunk
 
 
 class ProviderError(RuntimeError):
-    def __init__(self, status_code: int, detail: str, *, code: str = "provider_error") -> None:
+    def __init__(self, status_code: int, detail: str, *, code: str = "provider_error",
+                 retry_after_seconds: float | None = None) -> None:
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
         self.code = code
+        self.retry_after_seconds = retry_after_seconds
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,6 +458,26 @@ def _claude_error_detail(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _claude_failure(detail: str, payload: dict[str, Any] | None = None) -> ProviderError:
+    """Classify CLI failures without treating ordinary model output as errors."""
+    payload = payload or {}
+    error = payload.get("error")
+    marker = str(error.get("type") if isinstance(error, dict) else error or "")
+    text = (marker + " " + detail).lower()
+    if any(word in text for word in ("invalid_request_error", "context_length_exceeded", "prompt is too long", "invalid model")):
+        return ProviderError(422, detail, code="invalid_request_error")
+    if any(word in text for word in ("rate_limit", "usage_limit", "usage limit", "rate limit", "you've hit your limit", "you have hit your limit")) or re.search(r"\b429\b", text):
+        info = payload.get("rate_limit_info") or payload.get("rateLimitInfo") or {}
+        reset = info.get("resetsAt") if isinstance(info, dict) else None
+        delay = max(1.0, reset - time.time()) if isinstance(reset, (int, float)) and math.isfinite(reset) else None
+        return ProviderError(429, detail, code="provider_quota_exhausted", retry_after_seconds=delay)
+    if any(word in text for word in ("authentication_error", "oauth token", "not logged in", "please run /login", "invalid access token")) or re.search(r"\b401\b", text):
+        return ProviderError(401, detail, code="provider_auth_error")
+    if "permission_error" in text or re.search(r"\b403\b", text):
+        return ProviderError(403, detail, code="provider_auth_error")
+    return ProviderError(502, detail, code="provider_failure")
+
+
 def _usage_from_claude_result(payload: dict[str, Any] | None) -> dict[str, int]:
     usage = payload.get("usage") if isinstance(payload, dict) else None
     if not isinstance(usage, dict):
@@ -483,9 +508,11 @@ CLAUDE_SEVEN_DAY_SECONDS = 7 * 86400
 
 
 class ClaudeCliRuntime:
-    def __init__(self, settings: Settings, traffic: TrafficLogger | None = None) -> None:
+    def __init__(self, settings: Settings, traffic: TrafficLogger | None = None,
+                 *, profile: ClaudeProfile | None = None) -> None:
         self._settings = settings
         self._traffic = traffic
+        self.profile = profile or ClaudeProfile("default")
         self._semaphore = asyncio.Semaphore(settings.claude_max_concurrent_requests)
         self._models = self._build_models(settings.claude_models)
         self._models_fetched_at: float | None = None
@@ -529,7 +556,10 @@ class ClaudeCliRuntime:
         # good snapshot are persisted, so restarting the relay can never
         # turn into a fresh poke at a locked-out endpoint (the exact
         # hammering pattern that earns hour-long lockouts).
-        self._usage_state_path = settings.data_dir / "claude-usage-state.json"
+        self._usage_state_path = (
+            self.profile.root / "usage-state.json" if self.profile.root is not None
+            else settings.data_dir / "claude-usage-state.json"
+        )
         self._load_usage_state()
 
     def _build_models(self, configured: tuple[str, ...]) -> dict[str, ProviderModel]:
@@ -663,24 +693,32 @@ class ClaudeCliRuntime:
     def status(self) -> dict[str, Any]:
         probe = self._cached_probe()
         ready = bool(probe.get("installed") and probe.get("logged_in"))
+        expected = account_identity(self.profile.identity)
+        mismatch = bool(expected and account_identity(probe) != expected)
         return {
+            "slug": self.profile.slug,
+            "managed_profile": self.profile.managed,
             "enabled": True,
             "local_only": True,
             "requires_relay_bearer_auth": self._settings.require_bearer_auth,
             "stateless_only": True,
-            "ready_for_requests": ready,
+            "ready_for_requests": ready and not mismatch and not self.profile.identity.get("reauth_required"),
+            "reauth_required": bool(self.profile.identity.get("reauth_required")),
+            "identity_mismatch": mismatch,
             "cli_installed": probe.get("installed", False),
             "cli_version": probe.get("version"),
             "auth_method": probe.get("auth_method"),
             "api_provider": probe.get("api_provider"),
             "logged_in": probe.get("logged_in", False),
-            "email": probe.get("email"),
-            "subscription_type": probe.get("subscription_type"),
+            "email": self.profile.identity.get("email") or probe.get("email"),
+            "account_id": self.profile.identity.get("account_id") or probe.get("account_id"),
+            "organization_id": self.profile.identity.get("organization_id") or probe.get("organization_id"),
+            "subscription_type": probe.get("subscription_type") or self.profile.identity.get("subscription_type"),
             "models": [record.id for record in self._models.values()],
             "models_discovery_error": self._models_error,
-            "oauth_token_source": self._settings.claude_oauth_token_source(),
+            "oauth_token_source": "profile" if self.profile.managed else self._settings.claude_oauth_token_source(),
             "notes": [
-                "Use `claude auth login --claudeai` for browser-based local login.",
+                "Use `airelays claude login` to add an isolated subscription account.",
                 "For headless environments, run `claude setup-token` on a machine with a "
                 "browser, then store the token with `airelays claude set-token`.",
             ],
@@ -754,76 +792,77 @@ class ClaudeCliRuntime:
         # concatenating both would hand the client unparseable JSON, so only
         # the first block's fragments are forwarded.
         tool_use_blocks = 0
-        async for event in self._run_stream(request, request_id):
-            event_type = event.get("type")
-            if event_type == "stream_event":
-                inner = event.get("event") or {}
-                if inner.get("type") == "content_block_start":
-                    block = inner.get("content_block") or {}
-                    if block.get("type") == "tool_use":
-                        tool_use_blocks += 1
-                if inner.get("type") == "content_block_delta":
-                    delta = inner.get("delta") or {}
-                    text: Any = None
-                    if delta.get("type") == "text_delta" and not structured:
-                        text = delta.get("text")
-                    elif delta.get("type") == "input_json_delta" and structured and tool_use_blocks <= 1:
-                        text = delta.get("partial_json")
-                    if not isinstance(text, str) or not text:
-                        continue
-                    saw_text = True
-                    delta_payload: dict[str, Any] = {"content": text}
-                    if not sent_role:
-                        delta_payload = {"role": "assistant", "content": text}
-                        sent_role = True
-                    chunk = chat_completion_chunk(
-                        response_id,
-                        created_at,
-                        request.public_model,
-                        delta_payload,
+        async with aclosing(self._run_stream(request, request_id)) as events:
+            async for event in events:
+                event_type = event.get("type")
+                if event_type == "stream_event":
+                    inner = event.get("event") or {}
+                    if inner.get("type") == "content_block_start":
+                        block = inner.get("content_block") or {}
+                        if block.get("type") == "tool_use":
+                            tool_use_blocks += 1
+                    if inner.get("type") == "content_block_delta":
+                        delta = inner.get("delta") or {}
+                        text: Any = None
+                        if delta.get("type") == "text_delta" and not structured:
+                            text = delta.get("text")
+                        elif delta.get("type") == "input_json_delta" and structured and tool_use_blocks <= 1:
+                            text = delta.get("partial_json")
+                        if not isinstance(text, str) or not text:
+                            continue
+                        saw_text = True
+                        delta_payload: dict[str, Any] = {"content": text}
+                        if not sent_role:
+                            delta_payload = {"role": "assistant", "content": text}
+                            sent_role = True
+                        chunk = chat_completion_chunk(
+                            response_id,
+                            created_at,
+                            request.public_model,
+                            delta_payload,
+                        )
+                        yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
+                    elif inner.get("type") == "message_delta":
+                        finish_reason = _finish_reason((inner.get("delta") or {}).get("stop_reason"))
+                        usage = inner.get("usage")
+                        if isinstance(usage, dict):
+                            last_usage = {
+                                "prompt_tokens": int(usage.get("input_tokens") or 0),
+                                "completion_tokens": int(usage.get("output_tokens") or 0),
+                                "total_tokens": int(usage.get("input_tokens") or 0)
+                                + int(usage.get("output_tokens") or 0),
+                            }
+                elif event_type == "assistant" and not saw_text and not structured:
+                    message = event.get("message") or {}
+                    content = message.get("content") or []
+                    assistant_fallback = "".join(
+                        block.get("text", "")
+                        for block in content
+                        if isinstance(block, dict) and block.get("type") == "text"
                     )
-                    yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
-                elif inner.get("type") == "message_delta":
-                    finish_reason = _finish_reason((inner.get("delta") or {}).get("stop_reason"))
-                    usage = inner.get("usage")
-                    if isinstance(usage, dict):
-                        last_usage = {
-                            "prompt_tokens": int(usage.get("input_tokens") or 0),
-                            "completion_tokens": int(usage.get("output_tokens") or 0),
-                            "total_tokens": int(usage.get("input_tokens") or 0)
-                            + int(usage.get("output_tokens") or 0),
-                        }
-            elif event_type == "assistant" and not saw_text and not structured:
-                message = event.get("message") or {}
-                content = message.get("content") or []
-                assistant_fallback = "".join(
-                    block.get("text", "")
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                )
-            elif event_type == "result":
-                # The CLI can exit 0 while reporting failure in-band; that
-                # text is an error, never the answer (the non-stream path has
-                # always guarded this — the stream must too).
-                error_detail = _claude_error_detail(event)
-                if error_detail is not None:
-                    raise ProviderError(502, error_detail, code="provider_failure")
-                last_usage = _usage_from_claude_result(event)
-                finish_reason = _finish_reason(event.get("stop_reason"))
-                if structured:
-                    if not saw_text:
-                        structured_fallback = _claude_structured_content(event)
-                        if structured_fallback is None:
-                            raise ProviderError(
-                                502,
-                                "The Claude CLI returned no schema-conforming output for a `response_format` request.",
-                                code="provider_failure",
-                            )
-                        assistant_fallback = structured_fallback
-                elif not assistant_fallback:
-                    result_text = event.get("result")
-                    if isinstance(result_text, str):
-                        assistant_fallback = result_text
+                elif event_type == "result":
+                    # The CLI can exit 0 while reporting failure in-band; that
+                    # text is an error, never the answer (the non-stream path has
+                    # always guarded this — the stream must too).
+                    error_detail = _claude_error_detail(event)
+                    if error_detail is not None:
+                        raise _claude_failure(error_detail, event)
+                    last_usage = _usage_from_claude_result(event)
+                    finish_reason = _finish_reason(event.get("stop_reason"))
+                    if structured:
+                        if not saw_text:
+                            structured_fallback = _claude_structured_content(event)
+                            if structured_fallback is None:
+                                raise ProviderError(
+                                    502,
+                                    "The Claude CLI returned no schema-conforming output for a `response_format` request.",
+                                    code="provider_failure",
+                                )
+                            assistant_fallback = structured_fallback
+                    elif not assistant_fallback:
+                        result_text = event.get("result")
+                        if isinstance(result_text, str):
+                            assistant_fallback = result_text
         if assistant_fallback and not saw_text:
             delta_payload = {"role": "assistant", "content": assistant_fallback}
             chunk = chat_completion_chunk(
@@ -891,44 +930,45 @@ class ClaudeCliRuntime:
         saw_text = False
         assistant_fallback = ""
         finish_reason = "stop"
-        async for event in self._run_stream(request, request_id):
-            event_type = event.get("type")
-            if event_type == "stream_event":
-                inner = event.get("event") or {}
-                if inner.get("type") == "content_block_delta":
-                    delta = inner.get("delta") or {}
-                    if delta.get("type") == "text_delta":
-                        text = delta.get("text") or ""
-                        if not isinstance(text, str) or not text:
-                            continue
-                        saw_text = True
-                        chunk = completion_chunk(
-                            response_id,
-                            created_at,
-                            request.public_model,
-                            text,
-                            finish_reason=None,
-                        )
-                        yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
-                elif inner.get("type") == "message_delta":
-                    finish_reason = _finish_reason((inner.get("delta") or {}).get("stop_reason"))
-            elif event_type == "assistant" and not saw_text:
-                message = event.get("message") or {}
-                content = message.get("content") or []
-                assistant_fallback = "".join(
-                    block.get("text", "")
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                )
-            elif event_type == "result":
-                error_detail = _claude_error_detail(event)
-                if error_detail is not None:
-                    raise ProviderError(502, error_detail, code="provider_failure")
-                finish_reason = _finish_reason(event.get("stop_reason"))
-                if not assistant_fallback:
-                    result_text = event.get("result")
-                    if isinstance(result_text, str):
-                        assistant_fallback = result_text
+        async with aclosing(self._run_stream(request, request_id)) as events:
+            async for event in events:
+                event_type = event.get("type")
+                if event_type == "stream_event":
+                    inner = event.get("event") or {}
+                    if inner.get("type") == "content_block_delta":
+                        delta = inner.get("delta") or {}
+                        if delta.get("type") == "text_delta":
+                            text = delta.get("text") or ""
+                            if not isinstance(text, str) or not text:
+                                continue
+                            saw_text = True
+                            chunk = completion_chunk(
+                                response_id,
+                                created_at,
+                                request.public_model,
+                                text,
+                                finish_reason=None,
+                            )
+                            yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
+                    elif inner.get("type") == "message_delta":
+                        finish_reason = _finish_reason((inner.get("delta") or {}).get("stop_reason"))
+                elif event_type == "assistant" and not saw_text:
+                    message = event.get("message") or {}
+                    content = message.get("content") or []
+                    assistant_fallback = "".join(
+                        block.get("text", "")
+                        for block in content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    )
+                elif event_type == "result":
+                    error_detail = _claude_error_detail(event)
+                    if error_detail is not None:
+                        raise _claude_failure(error_detail, event)
+                    finish_reason = _finish_reason(event.get("stop_reason"))
+                    if not assistant_fallback:
+                        result_text = event.get("result")
+                        if isinstance(result_text, str):
+                            assistant_fallback = result_text
         if assistant_fallback and not saw_text:
             chunk = completion_chunk(
                 response_id,
@@ -1100,6 +1140,11 @@ class ClaudeCliRuntime:
                         "Claude CLI timed out while generating a response.",
                         code="provider_timeout",
                     ) from exc
+                except BaseException:
+                    if process.returncode is None:
+                        process.kill()
+                    await process.wait()
+                    raise
         self._log_result(request_id, stdout)
         if process.returncode != 0:
             # The CLI often exits nonzero with the real error (e.g. a 401
@@ -1110,15 +1155,15 @@ class ClaudeCliRuntime:
             except json.JSONDecodeError:
                 parsed = None
             if isinstance(parsed, dict) and parsed.get("result"):
-                raise ProviderError(502, str(parsed["result"]), code="provider_failure")
-            raise ProviderError(502, _stderr_message(stderr, process.returncode), code="provider_failure")
+                raise _claude_failure(str(parsed["result"]), parsed)
+            raise _claude_failure(_stderr_message(stderr, process.returncode))
         try:
             parsed = json.loads(stdout.decode("utf-8"))
         except json.JSONDecodeError as exc:
             raise ProviderError(502, "Claude CLI returned invalid JSON.", code="provider_failure") from exc
         error_detail = _claude_error_detail(parsed)
         if error_detail is not None:
-            raise ProviderError(502, error_detail, code="provider_failure")
+            raise _claude_failure(error_detail, parsed)
         return parsed
 
     async def _run_stream(
@@ -1159,13 +1204,14 @@ class ClaudeCliRuntime:
                         code="provider_unavailable",
                     ) from exc
 
-                assert process.stdin is not None
-                process.stdin.write(request.prompt.encode("utf-8"))
-                await process.stdin.drain()
-                process.stdin.close()
-
-                assert process.stdout is not None
+                stderr_task = asyncio.create_task(process.stderr.read())
+                saw_result = False
                 try:
+                    assert process.stdin is not None
+                    process.stdin.write(request.prompt.encode("utf-8"))
+                    await process.stdin.drain()
+                    process.stdin.close()
+                    assert process.stdout is not None
                     while True:
                         raw_line = await asyncio.wait_for(
                             process.stdout.readline(),
@@ -1178,21 +1224,44 @@ class ClaudeCliRuntime:
                             continue
                         self._log_stream_line(request_id, line)
                         try:
-                            yield json.loads(line)
+                            event = json.loads(line)
                         except json.JSONDecodeError:
                             continue
+                        if not isinstance(event, dict):
+                            continue
+                        saw_result = saw_result or event.get("type") == "result"
+                        info = event.get("rate_limit_info") or event.get("rateLimitInfo") or {}
+                        if event.get("type") == "rate_limit_event" and info.get("status") == "rejected":
+                            raise _claude_failure("Claude usage limit reached.", event)
+                        if event.get("type") == "assistant" and event.get("error"):
+                            content = (event.get("message") or {}).get("content") or []
+                            detail = " ".join(str(b.get("text", "")) for b in content if isinstance(b, dict))
+                            raise _claude_failure(detail or str(event["error"]), event)
+                        if event.get("type") == "stream_event" and (event.get("event") or {}).get("type") == "error":
+                            inner = event["event"]
+                            raise _claude_failure(str((inner.get("error") or {}).get("message") or "Claude stream failed."), inner)
+                        yield event
+                    async with asyncio.timeout(self._settings.claude_timeout_seconds):
+                        returncode = await process.wait()
+                        stderr = await stderr_task
+                    if returncode != 0:
+                        raise _claude_failure(_stderr_message(stderr, returncode))
+                    if not saw_result:
+                        raise ProviderError(502, "Claude stream ended without a result.", code="provider_failure")
                 except asyncio.TimeoutError as exc:
-                    process.kill()
-                    await process.wait()
                     raise ProviderError(
                         504,
                         "Claude CLI timed out while streaming a response.",
                         code="provider_timeout",
                     ) from exc
-                stderr = await process.stderr.read() if process.stderr is not None else b""
-                returncode = await process.wait()
-                if returncode != 0:
-                    raise ProviderError(502, _stderr_message(stderr, returncode), code="provider_failure")
+                finally:
+                    if process.returncode is None:
+                        try:
+                            process.kill()
+                        except ProcessLookupError:
+                            pass
+                    await process.wait()
+                    await stderr_task
 
     def _build_command(self, request: ClaudeTextRequest, *, stream: bool) -> list[str]:
         command = [
@@ -1248,9 +1317,12 @@ class ClaudeCliRuntime:
         # A stored token file beats ambient env: it is the only mechanism
         # that survives service managers (systemd, launchd, docker) where
         # shell exports never reach the relay process.
-        stored_token = self._settings.resolve_claude_oauth_token()
+        stored_token = None if self.profile.managed else self._settings.resolve_claude_oauth_token()
         if stored_token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = stored_token
+        if self.profile.config_dir is not None:
+            env["CLAUDE_CONFIG_DIR"] = str(self.profile.config_dir)
+            env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
         if self._settings.claude_strip_api_key_env:
             for name in (
                 "ANTHROPIC_API_KEY",
@@ -1532,17 +1604,24 @@ class ClaudeCliRuntime:
         is ``"expired"`` if a CLI-owned credential exists but its access
         token has lapsed between rotations (renews on the CLI's next
         request), or ``"none"`` if there is genuinely no sign-in."""
-        stored = self._settings.resolve_claude_oauth_token()
+        stored = None if self.profile.managed else self._settings.resolve_claude_oauth_token()
         if stored:
             return stored, "file"
-        env_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+        env_token = None if self.profile.managed else os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
         if env_token:
             return env_token, "env"
         saw_expired = False
+        config_dir = self.profile.config_dir
+        configured = os.environ.get("CLAUDE_CONFIG_DIR")
+        if config_dir is None and configured:
+            config_dir = Path(configured).expanduser().resolve()
+        service = "Claude Code-credentials"
+        if config_dir is not None:
+            service += "-" + hashlib.sha256(str(config_dir).encode()).hexdigest()[:8]
         if sys.platform == "darwin":
             try:
                 probe = subprocess.run(
-                    ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                    ["security", "find-generic-password", "-s", service, "-w"],
                     capture_output=True,
                     text=True,
                     check=False,
@@ -1556,7 +1635,7 @@ class ClaudeCliRuntime:
                     saw_expired = saw_expired or _has_oauth_access_token(payload)
             except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
                 pass
-        credentials = Path.home() / ".claude" / ".credentials.json"
+        credentials = (config_dir or Path.home() / ".claude") / ".credentials.json"
         try:
             payload = json.loads(credentials.read_text(encoding="utf-8"))
             token = _fresh_oauth_access_token(payload)
@@ -1673,6 +1752,8 @@ class ClaudeCliRuntime:
             "auth_method": status_payload.get("authMethod") if status_payload else None,
             "api_provider": status_payload.get("apiProvider") if status_payload else None,
             "email": status_payload.get("email") if status_payload else None,
+            "account_id": status_payload.get("accountId") if status_payload else None,
+            "organization_id": status_payload.get("orgId") if status_payload else None,
             "subscription_type": status_payload.get("subscriptionType") if status_payload else None,
         }
         self._last_probe = probe
@@ -1880,14 +1961,16 @@ class ProviderRegistry:
         self._openai_models_cache_fetched_at: float | None = None
         self._openai_models_cache_key: tuple[str | None, ...] | None = None
         self._openai_models_cache_lock = asyncio.Lock()
+        from airelay.claude_accounts import ClaudeAccountPool
+
         self._claude = (
-            ClaudeCliRuntime(settings, traffic)
+            ClaudeAccountPool(settings, traffic)
             if settings.enable_claude
             else None
         )
 
     @property
-    def claude_runtime(self) -> ClaudeCliRuntime | None:
+    def claude_runtime(self) -> Any:
         return self._claude
 
     def resolve_model(self, model_id: str) -> ResolvedModel:
@@ -2186,5 +2269,5 @@ class ProviderRegistry:
         return providers
 
     @property
-    def claude(self) -> ClaudeCliRuntime | None:
+    def claude(self) -> Any:
         return self._claude

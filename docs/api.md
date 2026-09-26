@@ -151,10 +151,13 @@ upstream policy; only reported windows are returned.
 - `?provider=claude` returns Claude subscription usage in the same
   normalized shape (see [Subscription Status](subscription-status.md))
 - `?account=<email-or-prefix>` selects one enrolled OpenAI account
+- `?provider=claude&account=<email-or-id>` selects one Claude account
 - `?all_accounts=true` returns the list shape with one entry per enrolled
   OpenAI account (an entry carries an `error` instead of a `status` when
   that account's usage probe fails)
 - `?raw=true` includes the raw upstream payload (OpenAI only)
+- `?provider=claude&all_accounts=true` returns the same list shape for
+  Claude, keyed by stable account `slug`; a failed probe affects only its entry
 
 `GET /v1/account/rate_limits` is an alias.
 
@@ -167,12 +170,21 @@ so live traffic can never slip onto a still-exhausted account during the
 re-check. Use it when you know an account has recovered and don't want to
 wait for the scheduled reset. CLI equivalent: `airelays accounts refresh`.
 
+With `?provider=claude`, refreshes Claude account usage while respecting each
+account's cached observations and upstream cooldown. It never bypasses a
+usage-endpoint `Retry-After`.
+
 ## `GET /v1/relay/status`
 
 Returns relay diagnostics, provider readiness, provider cache status, and
 `requests_total` — the count of real (non-monitoring) requests served by
 this process, usable as a lightweight activity signal. OpenAI model-list
 cache diagnostics live under `providers.openai.models_cache`.
+
+`providers.claude.accounts` lists Claude profiles with their `slug`, email,
+readiness, `managed_profile`, and request cooldown. `providers.claude.balance`
+reports their selection strategy. Duplicate subscriptions are counted once;
+an account whose identity differs from its enrollment is not eligible.
 
 `GET /v1/relay/status?activity_only=true` returns only
 `{"requests_total": N}`. It requires the same authentication as the full

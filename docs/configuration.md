@@ -162,6 +162,8 @@ enabled = false
 bin = "claude"
 timeout_seconds = 600.0
 max_concurrent_requests = 2
+balance = "balanced"                  # balanced, round_robin, or ordered
+account_cooldown_seconds = 300         # fallback when no reset time is reported
 strip_api_key_env = true
 models = ["claude:sonnet", "claude:opus", "claude:haiku", "claude:fable"]
 ```
@@ -255,7 +257,17 @@ Claude runtime:
 
 - enabled by default; set `[providers.claude].enabled = false` or `AIRELAYS_ENABLE_CLAUDE=false` to opt out (requests still require the local `claude` CLI to be installed and signed in)
 - uses the local `claude` CLI
-- browser login is handled by `claude auth login --claudeai`
+- `airelays claude login` adds an isolated account by delegating browser
+  authentication to `claude auth login --claudeai`; credentials remain CLI-owned
+- each account has its own `CLAUDE_CONFIG_DIR`, usage cache, model catalog,
+  and `max_concurrent_requests` limit
+- `balance` defaults to `balanced`: available execution slots first, then
+  lowest fresh weekly usage; `round_robin` rotates and `ordered` selects
+  the first eligible profile in stable account-id order
+- `AIRELAYS_CLAUDE_BALANCE` and `AIRELAYS_CLAUDE_ACCOUNT_COOLDOWN_SECONDS`
+  override the corresponding Claude configuration values
+- the default CLI sign-in remains available; stored tokens and ambient
+  `CLAUDE_CODE_OAUTH_TOKEN` apply only to this default account
 - headless login is handled by `claude setup-token` plus `CLAUDE_CODE_OAUTH_TOKEN`
 - follows the relay's protected or open local auth mode
 - requires loopback binding

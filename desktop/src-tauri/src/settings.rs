@@ -68,6 +68,8 @@ pub struct AppSettings {
     pub claude_bin: String,
     pub claude_timeout_seconds: f64,
     pub claude_max_concurrent_requests: u32,
+    pub claude_balance: String,
+    pub claude_account_cooldown_seconds: u32,
     pub claude_strip_api_key_env: bool,
     pub claude_models_csv: String,
     pub extra_serve_args: String,
@@ -116,6 +118,8 @@ impl Default for AppSettings {
             claude_bin: "claude".into(),
             claude_timeout_seconds: 600.0,
             claude_max_concurrent_requests: 2,
+            claude_balance: "balanced".into(),
+            claude_account_cooldown_seconds: 300,
             claude_strip_api_key_env: true,
             claude_models_csv: "claude:sonnet, claude:opus, claude:haiku, claude:fable".into(),
             extra_serve_args: String::new(),
@@ -163,6 +167,12 @@ impl AppSettings {
         }
         if !matches!(self.openai_balance.as_str(), "balanced" | "round_robin" | "ordered") {
             return Err("OpenAI account balancing must be balanced, round_robin, or ordered.".into());
+        }
+        if !matches!(self.claude_balance.as_str(), "balanced" | "round_robin" | "ordered") {
+            return Err("Claude account balancing must be balanced, round_robin, or ordered.".into());
+        }
+        if self.claude_max_concurrent_requests == 0 || self.claude_account_cooldown_seconds == 0 {
+            return Err("Claude concurrency and account cooldown must be at least 1.".into());
         }
         if self.openai_retry_attempts > 10 {
             return Err("OpenAI retry attempts must be between 0 and 10.".into());
@@ -294,6 +304,8 @@ impl AppSettings {
                     bin: &self.claude_bin,
                     timeout_seconds: self.claude_timeout_seconds,
                     max_concurrent_requests: self.claude_max_concurrent_requests,
+                    balance: &self.claude_balance,
+                    account_cooldown_seconds: self.claude_account_cooldown_seconds,
                     strip_api_key_env: self.claude_strip_api_key_env,
                     models: self.claude_models(),
                 },
@@ -387,6 +399,8 @@ struct ClaudeSection<'a> {
     bin: &'a str,
     timeout_seconds: f64,
     max_concurrent_requests: u32,
+    balance: &'a str,
+    account_cooldown_seconds: u32,
     strip_api_key_env: bool,
     models: Vec<String>,
 }

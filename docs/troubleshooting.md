@@ -112,21 +112,36 @@ manager's environment, and it evaporates on reboot. Store the token instead:
 airelays claude set-token   # paste the token from `claude setup-token`
 ```
 
-It is written 0600 to `~/.airelays/claude-token` and injected into every
-`claude` invocation automatically. `airelays status` shows the token source
+It is written 0600 to `~/.airelays/claude-token` and injected into the default
+account's `claude` invocations. Isolated browser-added profiles use their own
+CLI credentials. `airelays status` shows the token source
 (`file`, `env`, or `none`) under the Claude provider.
+
+## A Claude account needs to sign in again
+
+Use `airelays claude accounts` to find the account id, then
+`airelays claude login --replace ACCOUNT`. Choose the same account in the
+browser. A different identity is not eligible for requests through the enrolled
+profile. To add another subscription, use `airelays claude login` without
+`--replace`. The desktop offers **Sign in again** on unavailable profile rows.
+
+Do not move or rename a profile's `config/` directory: the path identifies its
+macOS Keychain entry. After a machine migration, sign in again on the new host.
+An unavailable usage meter alone does not require signing out; usage requests
+have their own cache and rate limits.
 
 ## Claude requests fail even though `claude auth login` succeeded
 
-A stored token (from `airelays claude set-token`) overrides the `claude`
-CLI's own sign-in for relay requests. If that stored token is stale, relay
-requests keep failing no matter how often you sign in through the CLI.
+A stored token (from `airelays claude set-token`) overrides the default
+`claude` CLI profile's sign-in. If it is stale, requests routed through
+`default` can fail even after signing in through the CLI. Browser-added
+profiles are unaffected.
 
 Checks and fix:
 
 - `airelays status` shows the Claude token source; `file` means a stored
   token is in effect
-- remove it with `airelays claude logout` (also signs the CLI out) or, in
+- remove it with `airelays claude logout default` (also signs that CLI profile out) or, in
   the desktop app, open the Claude token dialog and use "Remove stored
   token" (keeps the CLI sign-in)
 - verify with a `claude:*` test request or `airelays doctor`

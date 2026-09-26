@@ -58,6 +58,10 @@ buckets remain supported. A Fable cap at 100% does not mean the whole
 Claude allowance is exhausted. The desktop names the exhausted scope
 instead of presenting all Claude models as unavailable.
 
+Add `&all_accounts=true` for a per-account list, or `&account=<email-or-id>`
+for one account. Each list entry contains `slug`, `email`, and either `status`
+or `error`. The desktop shows a separate set of bars for each Claude account.
+
 `spend` and `extra_usage` preserve usage-credit status, disabled reasons,
 and reported amounts. The desktop **more** details format money only with
 its declared currency and decimal scale (`amount_minor` / `exponent` in
@@ -65,14 +69,17 @@ its declared currency and decimal scale (`amount_minor` / `exponent` in
 is not inferred from zero spend. Notes:
 
 - requires the Claude runtime to be enabled
-- credentials resolve from the stored token file
-  (`airelays claude set-token`) first, then the `claude` CLI's own
-  credential store
+- browser-added accounts read only their own CLI profile's credential store;
+  on macOS this includes the Keychain entry scoped to `CLAUDE_CONFIG_DIR`
+- the default account uses the stored token file first, then
+  `CLAUDE_CODE_OAUTH_TOKEN`, then its CLI credential store
 - the upstream source is the same usage surface Claude Code's `/usage`
   command reads; it is not a publicly documented API, so AIRelays caches it
   for five minutes and degrades gracefully if it becomes unavailable
 - upstream rate-limit cooldowns and minimum probe spacing survive restarts;
   refreshing the desktop does not bypass these protections
+- usage caches and persisted cooldowns are separate for each profile;
+  an unavailable usage meter does not imply unavailable inference
 
 ## Freshness
 
@@ -83,6 +90,9 @@ whose reset has passed without fresh evidence, display **awaiting fresh
 data**, not zero usage. Claude snapshots served after a failed refresh
 carry `stale`, `stale_reason`, and their last-good time. Neither catalog
 membership nor a quota snapshot guarantees the next request will succeed.
+For Claude routing, capacity observations older than fifteen minutes do not
+rank accounts; a known exhausted window still blocks routing until its reset
+or a newer successful observation shows capacity.
 
 ## Auth
 

@@ -1,6 +1,6 @@
 # AIRelays
 
-AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes. The default runtime uses an AIRelays-owned ChatGPT subscription login and balances requests across multiple of your own OpenAI accounts by default. A Claude runtime uses the local `claude` CLI for explicit `claude:*` text models. AIRelays protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default and can run all enabled providers in open local relay mode. A cross-platform desktop app (macOS, Windows, Linux) wraps the same relay with a system tray and dashboard.
+AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes. The default runtime uses an AIRelays-owned ChatGPT subscription login and balances requests across multiple of your own OpenAI accounts by default. The Claude runtime balances your own subscriptions through isolated local `claude` CLI profiles for explicit `claude:*` text models. AIRelays protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default and can run all enabled providers in open local relay mode. A cross-platform desktop app (macOS, Windows, Linux) wraps the same relay with a system tray and dashboard.
 
 ## Key Docs
 
@@ -33,6 +33,8 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - `airelays status` / `airelays doctor` / `airelays models` / `airelays logs`
 - `airelays token show` / `airelays token rotate`
 - `airelays claude set-token` / `airelays claude logout`
+- `airelays claude login` (additive) / `airelays claude accounts`
+- `airelays claude login --replace ACCOUNT` / `airelays claude logout ACCOUNT`
 - `claude auth login --claudeai` / `claude setup-token`
 
 ## Important Notes
@@ -41,6 +43,7 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 - OpenAI runtime: first-class `responses`, `chat.completions`, and `completions`
 - Claude runtime: text `chat.completions` and text `completions` only
+- Claude accounts use isolated `CLAUDE_CONFIG_DIR` profiles; the existing CLI/token remains `default`. Default tokens never override added profiles. Selection honors fresh usage and model eligibility, with failover only before response bytes reach the client.
 - models starting with `claude:` or discovered concrete `claude-*` ids route to the Claude runtime when it is enabled
 - model discovery follows the installed Codex client version and Claude CLI catalog; `GET /v1/models?refresh=true` bypasses provider caches, and Claude alias resolutions appear in `airelays.resolved_model`
 - OpenAI catalogs form a union; balancing, affinity, and failover stay inside the requested model's supporting account subset; `airelays.account_availability` exposes coverage counts and `catalog_visibility` preserves upstream-hidden status

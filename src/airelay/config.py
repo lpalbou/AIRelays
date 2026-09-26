@@ -76,7 +76,7 @@ def _cfg(payload: dict[str, Any], *path: str) -> Any:
     return current
 
 
-def _normalized_balance(value: Any) -> str:
+def _normalized_balance(value: Any, provider: str = "openai") -> str:
     """Balancing strategy, normalized and validated. A typo must fail loudly
     at startup rather than silently selecting a different routing policy."""
     if value is None:
@@ -85,7 +85,7 @@ def _normalized_balance(value: Any) -> str:
     if text in {"balanced", "round_robin", "ordered"}:
         return text
     raise ValueError(
-        f"Invalid [providers.openai] balance value {value!r}: "
+        f"Invalid [providers.{provider}] balance value {value!r}: "
         "use \"balanced\", \"round_robin\", or \"ordered\"."
     )
 
@@ -212,6 +212,8 @@ class Settings:
     claude_bin: str = "claude"
     claude_timeout_seconds: float = 600.0
     claude_max_concurrent_requests: int = 2
+    claude_balance: str = "balanced"
+    claude_account_cooldown_seconds: int = 300
     claude_strip_api_key_env: bool = True
     claude_models: tuple[str, ...] = DEFAULT_CLAUDE_MODELS
 
@@ -459,14 +461,14 @@ class Settings:
                 or _cfg(payload, "providers", "claude", "timeout_seconds"),
                 600.0,
             ),
-            claude_max_concurrent_requests=_int(
+            claude_max_concurrent_requests=max(1, _int(
                 _env(
                     "AIRELAYS_CLAUDE_MAX_CONCURRENT_REQUESTS",
                     "AIRELAY_CLAUDE_MAX_CONCURRENT_REQUESTS",
                 )
                 or _cfg(payload, "providers", "claude", "max_concurrent_requests"),
                 2,
-            ),
+            )),
             claude_strip_api_key_env=_bool(
                 _env(
                     "AIRELAYS_CLAUDE_STRIP_API_KEY_ENV",
@@ -475,6 +477,14 @@ class Settings:
                 or _cfg(payload, "providers", "claude", "strip_api_key_env"),
                 True,
             ),
+            claude_balance=_normalized_balance(
+                _env("AIRELAYS_CLAUDE_BALANCE") or _cfg(payload, "providers", "claude", "balance"),
+                "claude",
+            ),
+            claude_account_cooldown_seconds=max(1, _int(
+                _env("AIRELAYS_CLAUDE_ACCOUNT_COOLDOWN_SECONDS")
+                or _cfg(payload, "providers", "claude", "account_cooldown_seconds"), 300,
+            )),
             claude_models=_str_list(
                 _env("AIRELAYS_CLAUDE_MODELS", "AIRELAY_CLAUDE_MODELS")
                 or _cfg(payload, "providers", "claude", "models"),
@@ -656,6 +666,8 @@ oauth_token_file = "{self.claude_oauth_token_file}"
 bin = "{self.claude_bin}"
 timeout_seconds = {self.claude_timeout_seconds}
 max_concurrent_requests = {self.claude_max_concurrent_requests}
+balance = "{self.claude_balance}"
+account_cooldown_seconds = {self.claude_account_cooldown_seconds}
 strip_api_key_env = {str(self.claude_strip_api_key_env).lower()}
 models = [{", ".join(f'"{model}"' for model in self.claude_models)}]
 """
@@ -706,6 +718,8 @@ models = [{", ".join(f'"{model}"' for model in self.claude_models)}]
                     "bin": self.claude_bin,
                     "timeout_seconds": self.claude_timeout_seconds,
                     "max_concurrent_requests": self.claude_max_concurrent_requests,
+                    "balance": self.claude_balance,
+                    "account_cooldown_seconds": self.claude_account_cooldown_seconds,
                     "strip_api_key_env": self.claude_strip_api_key_env,
                     "models": list(self.claude_models),
                     # Presence + fingerprint only; the token itself must
