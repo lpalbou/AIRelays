@@ -360,6 +360,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#custom-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#openai-runtime" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -875,6 +886,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0006-isolated-claude-subscription-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Isolated Claude Subscription Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -924,6 +963,17 @@
     <span class="md-ellipsis">
       
         Initialize AIRelays
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Configuration
       
     </span>
   </a>
@@ -1058,6 +1108,18 @@ Set <code>AIRELAYS_VERSION=X.Y.Z</code> to pin a release; run it again to upgrad
 <p>Show the current relay token at any time:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>token<span class="w"> </span>show
 </code></pre></div>
+<h2 id="custom-configuration">Custom Configuration<a class="headerlink" href="#custom-configuration" title="Permanent link">&para;</a></h2>
+<p>The CLI and desktop use the same saved accounts and relay configuration by
+default. To use another configuration, pass <code>--config</code> consistently when
+signing in, inspecting accounts, and starting the relay:</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>--config<span class="w"> </span>./relay.toml<span class="w"> </span>init
+airelays<span class="w"> </span>--config<span class="w"> </span>./relay.toml<span class="w"> </span>claude<span class="w"> </span>login
+airelays<span class="w"> </span>--config<span class="w"> </span>./relay.toml<span class="w"> </span>claude<span class="w"> </span>accounts<span class="w"> </span>--json
+airelays<span class="w"> </span>--config<span class="w"> </span>./relay.toml<span class="w"> </span>serve<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+</code></pre></div>
+<p>Shared options such as <code>--config</code> and <code>--data-dir</code> work before or after
+subcommands. A later explicit value takes precedence. See
+<a href="../configuration/">Configuration</a> for paths and environment overrides.</p>
 <h2 id="openai-runtime">OpenAI Runtime<a class="headerlink" href="#openai-runtime" title="Permanent link">&para;</a></h2>
 <p>Log in:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>login
@@ -1098,7 +1160,9 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <p>In this mode AIRelays does not require <code>Authorization</code> on <code>/v1/*</code>. Open local relay mode applies to all enabled providers, including the Claude runtime.</p>
 <h2 id="claude-runtime">Claude Runtime<a class="headerlink" href="#claude-runtime" title="Permanent link">&para;</a></h2>
 <p>Browser-based local Claude login:</p>
-<div class="highlight"><pre><span></span><code>claude<span class="w"> </span>auth<span class="w"> </span>login<span class="w"> </span>--claudeai
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>claude<span class="w"> </span>login
+airelays<span class="w"> </span>claude<span class="w"> </span>login<span class="w">       </span><span class="c1"># optional: add another of your own accounts</span>
+airelays<span class="w"> </span>claude<span class="w"> </span>accounts
 </code></pre></div>
 <p>Headless Claude login — <code>claude setup-token</code> needs a browser, so run it on
 any machine that has one, then carry the token to the server:</p>
@@ -1111,11 +1175,22 @@ airelays<span class="w"> </span>claude<span class="w"> </span>set-token<span cla
 </code></pre></div>
 <p>Exporting <code>CLAUDE_CODE_OAUTH_TOKEN</code> also works, but it does not survive
 service managers (systemd, docker) or reboots.</p>
-<p>Sign Claude out completely (removes the stored token and runs
-<code>claude auth logout</code>, which signs out every tool using the <code>claude</code> CLI on
-this machine):</p>
-<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>claude<span class="w"> </span><span class="nb">logout</span>
+<p>Browser sign-in adds an isolated profile. Claude Code owns its credentials
+and refreshes them automatically. Existing CLI sign-in and the headless token
+remain available as the <code>default</code> account; a headless token does not override
+browser-added accounts. The desktop offers <strong>Add account</strong> in the Anthropic card.</p>
+<p>Manage one account using its email or id from <code>airelays claude accounts</code>:</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>claude<span class="w"> </span>login<span class="w"> </span>--replace<span class="w"> </span>ACCOUNT
+airelays<span class="w"> </span>claude<span class="w"> </span><span class="nb">logout</span><span class="w"> </span>ACCOUNT
 </code></pre></div>
+<p>Renewal requires the same account and pauses that profile until sign-in
+succeeds. <code>--replace default</code> renews into a new isolated profile, preserving
+the existing CLI sign-in and headless token. Duplicate subscriptions receive
+only one share of traffic.</p>
+<p>Signing out an isolated profile leaves other accounts signed in. Signing out
+<code>default</code> also signs out other tools using that CLI profile. Use <code>--all</code> only
+to sign out all enrolled accounts. The running relay discovers account changes
+automatically and balances requests across eligible accounts with capacity.</p>
 <p>Start AIRelays with the Claude runtime enabled:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>serve<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
@@ -1132,7 +1207,7 @@ this machine):</p>
 <ul>
 <li>local-only</li>
 <li>loopback-only</li>
-<li>bearer-auth-required</li>
+<li>follows the relay's protected or open local authentication mode</li>
 <li>text-only</li>
 <li>stateless</li>
 </ul>

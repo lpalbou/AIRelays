@@ -853,6 +853,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0006-isolated-claude-subscription-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Isolated Claude Subscription Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1023,12 +1051,18 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <h2 id="claude-guardrails">Claude Guardrails<a class="headerlink" href="#claude-guardrails" title="Permanent link">&para;</a></h2>
 <p>When the Claude runtime is enabled:</p>
 <ul>
-<li>bearer auth is required</li>
+<li>the relay's protected or open local auth mode applies</li>
 <li>loopback binding is required</li>
 <li><code>trust_x_forwarded_for</code> is rejected</li>
 <li>the runtime is stateless</li>
 <li>the runtime is local-only</li>
 </ul>
+<p>Claude accounts added through <code>airelays claude login</code> have separate CLI-owned
+credential stores. AIRelays stores identity metadata and usage state beside
+each profile; it does not implement OAuth login or refresh for these profiles.
+An ambient or stored default-account token cannot override their credentials.
+Signing out one isolated profile does not sign out other accounts. The legacy
+<code>default</code> profile is shared with other tools using that CLI sign-in.</p>
 <h2 id="rate-limits">Rate Limits<a class="headerlink" href="#rate-limits" title="Permanent link">&para;</a></h2>
 <p>Default single-process protections:</p>
 <ul>

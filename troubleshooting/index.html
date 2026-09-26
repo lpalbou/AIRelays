@@ -604,6 +604,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-claude-account-needs-to-sign-in-again" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A Claude account needs to sign in again
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#claude-requests-fail-even-though-claude-auth-login-succeeded" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -963,6 +974,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0006-isolated-claude-subscription-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Isolated Claude Subscription Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1067,6 +1106,17 @@
     <span class="md-ellipsis">
       
         Claude runtime is "not ready" under systemd/docker even though claude setup-token worked
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-claude-account-needs-to-sign-in-again" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A Claude account needs to sign in again
       
     </span>
   </a>
@@ -1294,18 +1344,30 @@ completes and eventually times out.</p>
 manager's environment, and it evaporates on reboot. Store the token instead:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>claude<span class="w"> </span>set-token<span class="w">   </span><span class="c1"># paste the token from `claude setup-token`</span>
 </code></pre></div>
-<p>It is written 0600 to <code>~/.airelays/claude-token</code> and injected into every
-<code>claude</code> invocation automatically. <code>airelays status</code> shows the token source
+<p>It is written 0600 to <code>~/.airelays/claude-token</code> and injected into the default
+account's <code>claude</code> invocations. Isolated browser-added profiles use their own
+CLI credentials. <code>airelays status</code> shows the token source
 (<code>file</code>, <code>env</code>, or <code>none</code>) under the Claude provider.</p>
+<h2 id="a-claude-account-needs-to-sign-in-again">A Claude account needs to sign in again<a class="headerlink" href="#a-claude-account-needs-to-sign-in-again" title="Permanent link">&para;</a></h2>
+<p>Use <code>airelays claude accounts</code> to find the account id, then
+<code>airelays claude login --replace ACCOUNT</code>. Choose the same account in the
+browser. A different identity is not eligible for requests through the enrolled
+profile. To add another subscription, use <code>airelays claude login</code> without
+<code>--replace</code>. The desktop offers <strong>Sign in again</strong> on unavailable profile rows.</p>
+<p>Do not move or rename a profile's <code>config/</code> directory: the path identifies its
+macOS Keychain entry. After a machine migration, sign in again on the new host.
+An unavailable usage meter alone does not require signing out; usage requests
+have their own cache and rate limits.</p>
 <h2 id="claude-requests-fail-even-though-claude-auth-login-succeeded">Claude requests fail even though <code>claude auth login</code> succeeded<a class="headerlink" href="#claude-requests-fail-even-though-claude-auth-login-succeeded" title="Permanent link">&para;</a></h2>
-<p>A stored token (from <code>airelays claude set-token</code>) overrides the <code>claude</code>
-CLI's own sign-in for relay requests. If that stored token is stale, relay
-requests keep failing no matter how often you sign in through the CLI.</p>
+<p>A stored token (from <code>airelays claude set-token</code>) overrides the default
+<code>claude</code> CLI profile's sign-in. If it is stale, requests routed through
+<code>default</code> can fail even after signing in through the CLI. Browser-added
+profiles are unaffected.</p>
 <p>Checks and fix:</p>
 <ul>
 <li><code>airelays status</code> shows the Claude token source; <code>file</code> means a stored
   token is in effect</li>
-<li>remove it with <code>airelays claude logout</code> (also signs the CLI out) or, in
+<li>remove it with <code>airelays claude logout default</code> (also signs that CLI profile out) or, in
   the desktop app, open the Claude token dialog and use "Remove stored
   token" (keeps the CLI sign-in)</li>
 <li>verify with a <code>claude:*</code> test request or <code>airelays doctor</code></li>

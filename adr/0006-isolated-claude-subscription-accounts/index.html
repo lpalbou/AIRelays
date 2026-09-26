@@ -10,24 +10,26 @@
       
       
       
-        <link rel="canonical" href="https://www.lpalbou.info/AIRelays/backlog/deprecated/accounts/0017_account_capacity_estimation/">
+        <link rel="canonical" href="https://www.lpalbou.info/AIRelays/adr/0006-isolated-claude-subscription-accounts/">
       
+      
+        <link rel="prev" href="../0005-bounded-traffic-log-retention/">
       
       
       
         
       
       
-      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
-        <title>Deprecated (rejected): Absolute account-capacity estimation from usage history - AIRelays</title>
+        <title>Isolated Claude Subscription Accounts - AIRelays</title>
       
     
     
-      <link rel="stylesheet" href="../../../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -46,7 +48,7 @@
       
     
     
-    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -64,7 +66,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#deprecated-rejected-absolute-account-capacity-estimation-from-usage-history" class="md-skip">
+        <a href="#0006-isolated-claude-subscription-accounts" class="md-skip">
           Skip to content
         </a>
       
@@ -80,7 +82,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../../.." title="AIRelays" class="md-header__button md-logo" aria-label="AIRelays" data-md-component="logo">
+    <a href="../.." title="AIRelays" class="md-header__button md-logo" aria-label="AIRelays" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -100,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Deprecated (rejected): Absolute account-capacity estimation from usage history
+              Isolated Claude Subscription Accounts
             
           </span>
         </div>
@@ -190,7 +192,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../../.." title="AIRelays" class="md-nav__button md-logo" aria-label="AIRelays" data-md-component="logo">
+    <a href="../.." title="AIRelays" class="md-nav__button md-logo" aria-label="AIRelays" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -220,7 +222,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -247,7 +249,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../docs-index/" class="md-nav__link">
+      <a href="../../docs-index/" class="md-nav__link">
         
   
   
@@ -274,7 +276,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../getting-started/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -301,7 +303,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../configuration/" class="md-nav__link">
+      <a href="../../configuration/" class="md-nav__link">
         
   
   
@@ -328,7 +330,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../security/" class="md-nav__link">
+      <a href="../../security/" class="md-nav__link">
         
   
   
@@ -355,7 +357,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../api/" class="md-nav__link">
+      <a href="../../api/" class="md-nav__link">
         
   
   
@@ -382,7 +384,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../architecture/" class="md-nav__link">
+      <a href="../../architecture/" class="md-nav__link">
         
   
   
@@ -409,7 +411,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../subscription-status/" class="md-nav__link">
+      <a href="../../subscription-status/" class="md-nav__link">
         
   
   
@@ -436,7 +438,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../faq/" class="md-nav__link">
+      <a href="../../faq/" class="md-nav__link">
         
   
   
@@ -463,7 +465,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../troubleshooting/" class="md-nav__link">
+      <a href="../../troubleshooting/" class="md-nav__link">
         
   
   
@@ -490,7 +492,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../disclaimer/" class="md-nav__link">
+      <a href="../../disclaimer/" class="md-nav__link">
         
   
   
@@ -514,18 +516,20 @@
       
   
   
+    
   
   
+  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" checked>
         
           
           <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="0">
@@ -546,7 +550,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_12">
             <span class="md-nav__icon md-icon"></span>
             
@@ -564,7 +568,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../adr/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -592,7 +596,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../adr/0001-no-silent-degradation-truncation-or-budget-invention/" class="md-nav__link">
+      <a href="../0001-no-silent-degradation-truncation-or-budget-invention/" class="md-nav__link">
         
   
   
@@ -620,7 +624,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../adr/0002-chatgpt-subscription-backend-compatibility-boundary/" class="md-nav__link">
+      <a href="../0002-chatgpt-subscription-backend-compatibility-boundary/" class="md-nav__link">
         
   
   
@@ -648,7 +652,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../adr/0003-local-config-and-default-deny-relay-security/" class="md-nav__link">
+      <a href="../0003-local-config-and-default-deny-relay-security/" class="md-nav__link">
         
   
   
@@ -676,7 +680,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../adr/0004-provider-runtime-boundary-and-experimental-local-adapters/" class="md-nav__link">
+      <a href="../0004-provider-runtime-boundary-and-experimental-local-adapters/" class="md-nav__link">
         
   
   
@@ -704,7 +708,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../adr/0005-bounded-traffic-log-retention/" class="md-nav__link">
+      <a href="../0005-bounded-traffic-log-retention/" class="md-nav__link">
         
   
   
@@ -729,10 +733,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../../../adr/0006-isolated-claude-subscription-accounts/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Isolated Claude Subscription Accounts
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -748,6 +779,81 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -787,10 +893,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#metadata" class="md-nav__link">
+  <a href="#status" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Metadata
+        Status
       
     </span>
   </a>
@@ -798,10 +904,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#question-investigated" class="md-nav__link">
+  <a href="#context" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Question investigated
+        Context
       
     </span>
   </a>
@@ -809,10 +915,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-the-investigation-established" class="md-nav__link">
+  <a href="#decision" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What the investigation established
+        Decision
       
     </span>
   </a>
@@ -820,10 +926,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#sanctioned-fallback-since-shipped" class="md-nav__link">
+  <a href="#alternatives" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Sanctioned fallback (since shipped)
+        Alternatives
       
     </span>
   </a>
@@ -831,21 +937,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#original-fallback-description" class="md-nav__link">
+  <a href="#consequences" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Original fallback description
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#related" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Related
+        Consequences
       
     </span>
   </a>
@@ -872,43 +967,53 @@
   
 
 
-<h1 id="deprecated-rejected-absolute-account-capacity-estimation-from-usage-history">Deprecated (rejected): Absolute account-capacity estimation from usage history<a class="headerlink" href="#deprecated-rejected-absolute-account-capacity-estimation-from-usage-history" title="Permanent link">&para;</a></h1>
-<h2 id="metadata">Metadata<a class="headerlink" href="#metadata" title="Permanent link">&para;</a></h2>
+<h1 id="0006-isolated-claude-subscription-accounts">0006: Isolated Claude Subscription Accounts<a class="headerlink" href="#0006-isolated-claude-subscription-accounts" title="Permanent link">&para;</a></h1>
+<h2 id="status">Status<a class="headerlink" href="#status" title="Permanent link">&para;</a></h2>
+<p>Accepted, 2026-09-26. Extends <a href="../0004-provider-runtime-boundary-and-experimental-local-adapters/">ADR 0004</a>.</p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>One user may have several Claude subscriptions. Claude Code supports isolated
+configuration directories, including directory-scoped macOS Keychain entries.
+AIRelays needs to select accounts without sharing credentials across requests
+or taking ownership of Anthropic's OAuth flow.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Created: 2026-07-11</li>
-<li>Status: Deprecated (rejected after adversarial investigation; not built)</li>
+<li><code>airelays claude login</code> delegates to the unmodified CLI's subscription
+  login with a unique, stable <code>CLAUDE_CONFIG_DIR</code>.</li>
+<li>Enrollment metadata lives at <code>data_dir/claude/accounts/&lt;id&gt;/account.json</code>.
+  It contains identity and a revision, never OAuth tokens. The adjacent
+  <code>config/</code> directory and its credential store remain owned by Claude Code.</li>
+<li>The existing CLI/token setup is the implicit <code>default</code> account. Global
+  token overrides apply only to it. No existing credential is moved.</li>
+<li>Reauthentication suspends a managed profile until its original identity
+  is verified. Renewing <code>default</code> creates an isolated profile without
+  changing the default CLI sign-in or headless token.</li>
+<li>One Claude account pool selects account-specific CLI runtimes. Model
+  catalogs, usage caches, persisted usage backoff, and concurrency limits
+  are isolated per profile. A duplicate subscription is counted once.</li>
+<li>Selection honors model eligibility and fresh usage, with rotation when
+  quota is unknown. Request failures can fail over only before output reaches
+  the client; invalid request shapes do not trigger account rotation.
+  Known exhausted windows stay blocked until reset even when the meter ages.</li>
+<li>Logout targets one profile through the CLI and removes enrollment only
+  after successful logout. Multiple-account logout needs a target or <code>--all</code>.
+  Profile directories are retained because they may contain CLI-owned state.</li>
 </ul>
-<h2 id="question-investigated">Question investigated<a class="headerlink" href="#question-investigated" title="Permanent link">&para;</a></h2>
-<p>Can an OpenAI account's absolute 5h-window capacity (input/output tokens) be estimated from the relay's own usage history (per-request token accounting correlated with used_percent movement), and should the relay ship such an estimate?</p>
-<h2 id="what-the-investigation-established">What the investigation established<a class="headerlink" href="#what-the-investigation-established" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Window semantics (from live log evidence): the 5h window is a fixed bucket anchored at first use — <code>reset_at</code> freezes at <code>first_use + 18000s</code>, <code>used_percent</code> grows cumulatively, then hard-resets. Pairing snapshots with identical <code>reset_at</code> and differencing percent is therefore well-posed.</li>
-<li>Empirical tokens-per-percent (Jul 11 logs, pairs with identical <code>reset_at</code>, Δpercent ≥ 2, censored at 100%):</li>
-<li>plus account: median ≈ 22k tokens/percent → ≈ 2.2M tokens per 5h window, but cross-pair spread 316–651%</li>
-<li>enterprise account: median ≈ 0.58–0.89M tokens/percent → ≈ 58–89M tokens per 5h window, spread 150–234%</li>
-<li>a cached-discounted basis (cached input at 0.1 weight) consistently reduced spread, consistent with credit-weighted upstream metering</li>
-<li>Why a shipped estimate was rejected:</li>
-<li>The unit is wrong: the upstream quota is credit-denominated with per-model, per-token-class weights spanning ~400x (published Codex rate card), so "capacity in tokens" depends entirely on traffic mix — the observed spreads are structural, not sampling noise.</li>
-<li>Integer percent quantization makes large plans nearly unobservable (~1 point per ~1M tokens → ±25–100% error for a long time).</li>
-<li>Usage outside the relay (same subscription in first-party apps) biases estimates downward by an unknowable amount; window roll effects bias upward.</li>
-<li>ADR 0001 forbids invented token budgets; a point estimate is exactly that, and even an honest range ("30–300M depending on mix") is practically useless.</li>
-<li>Routing must not consume it: balanced routing's percent equalization is already the correct fixed point (it splits traffic proportionally to capacity without knowing it, and all accounts exhaust simultaneously); absolute-remaining routing would front-load the large account and behave worse under estimate error.</li>
-<li>The wham/usage payload exposes no absolute quota anywhere (full field inventory checked), and public plan documentation covers neither the unit nor enterprise org policies.</li>
-</ul>
-<h2 id="sanctioned-fallback-since-shipped">Sanctioned fallback (since shipped)<a class="headerlink" href="#sanctioned-fallback-since-shipped" title="Permanent link">&para;</a></h2>
-<p>The ground-truth reduced form shipped on 2026-07-12 as the Accounts card
-"more" hover: per-model input/output tokens served via the relay in the
-current 5h window plus totals (<code>window_tokens</code> on the account status
-payload; tallied in <code>src/airelay/usage_tally.py</code>). No extrapolation, no
-capacity claims — exactly the boundary this item drew.</p>
-<h2 id="original-fallback-description">Original fallback description<a class="headerlink" href="#original-fallback-description" title="Permanent link">&para;</a></h2>
-<p>If capacity visibility is ever wanted in UI, the honest reduced form is the observed exchange rate composed purely of ground truth — e.g. "this 5h window: 1.9M tokens via relay ≈ 47 points" — with no extrapolation, no persistence, no routing coupling. If the upstream ever exposes credit-denominated usage (the payload's <code>credits</code> block shows the shape exists), read it instead of estimating.</p>
-<h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
-<ul>
-<li>completed/accounts/0016_capacity_aware_balanced_routing.md (percent equalization; why absolute capacity is unnecessary for routing)</li>
-<li>completed/accounts/0013_openai_usage_probe_caching_and_single_flight.md (probe cadence the estimator would have used)</li>
-<li>docs/adr/0001-no-silent-degradation-truncation-or-budget-invention.md</li>
-</ul>
+<h2 id="alternatives">Alternatives<a class="headerlink" href="#alternatives" title="Permanent link">&para;</a></h2>
+<p>A generic pool shared with OpenAI would require changing its HTTP/SSE backend
+contract and auth storage model. Separate provider pools keep those boundaries
+explicit while reusing the existing Claude request adapter.</p>
+<p>One relay process per account would isolate credentials but require another
+routing service and duplicate ports, supervisors, and usage reporting.</p>
+<p>Direct subscription-token inference would remove subprocess overhead but
+depends on an unsupported inference/authentication integration. It is outside
+this decision. Account isolation does not establish provider permission for
+every relay workload; the existing intended-use boundary still applies.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<p>Existing single-account configuration remains usable. Adding profiles is
+reversible through targeted logout, without moving the default CLI credentials.
+Credential-store behavior and usage reporting remain dependent on the installed
+Claude Code version; failed usage probes cannot be treated as zero consumption.
+Claude remains local, stateless, subscription-backed, and without API-key auth.</p>
 
 
 
@@ -964,10 +1069,10 @@ capacity claims — exactly the boundary this item drew.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

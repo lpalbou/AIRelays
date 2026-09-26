@@ -737,6 +737,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/0006-isolated-claude-subscription-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Isolated Claude Subscription Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -785,8 +813,8 @@
 <h1 id="airelays-docs">AIRelays Docs<a class="headerlink" href="#airelays-docs" title="Permanent link">&para;</a></h1>
 <p>AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes.</p>
 <ul>
-<li>OpenAI runtime: first-class ChatGPT subscription path</li>
-<li>Claude runtime: optional local text adapter through the <code>claude</code> CLI</li>
+<li>OpenAI runtime: ChatGPT subscription access with multi-account balancing</li>
+<li>Claude runtime: local text adapter with balancing across isolated <code>claude</code> CLI subscription profiles</li>
 </ul>
 <p>Install the headless relay and CLI (macOS, Linux):</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-headless.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash

@@ -919,6 +919,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0006-isolated-claude-subscription-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Isolated Claude Subscription Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1256,10 +1284,13 @@ upstream policy; only reported windows are returned.</p>
 <li><code>?provider=claude</code> returns Claude subscription usage in the same
   normalized shape (see <a href="../subscription-status/">Subscription Status</a>)</li>
 <li><code>?account=&lt;email-or-prefix&gt;</code> selects one enrolled OpenAI account</li>
+<li><code>?provider=claude&amp;account=&lt;email-or-id&gt;</code> selects one Claude account</li>
 <li><code>?all_accounts=true</code> returns the list shape with one entry per enrolled
   OpenAI account (an entry carries an <code>error</code> instead of a <code>status</code> when
   that account's usage probe fails)</li>
 <li><code>?raw=true</code> includes the raw upstream payload (OpenAI only)</li>
+<li><code>?provider=claude&amp;all_accounts=true</code> returns the same list shape for
+  Claude, keyed by stable account <code>slug</code>; a failed probe affects only its entry</li>
 </ul>
 <p><code>GET /v1/account/rate_limits</code> is an alias.</p>
 <h2 id="post-v1relayaccountsrefresh"><code>POST /v1/relay/accounts/refresh</code><a class="headerlink" href="#post-v1relayaccountsrefresh" title="Permanent link">&para;</a></h2>
@@ -1269,11 +1300,18 @@ usage-limit hold is lifted only when its fresh usage report shows capacity,
 so live traffic can never slip onto a still-exhausted account during the
 re-check. Use it when you know an account has recovered and don't want to
 wait for the scheduled reset. CLI equivalent: <code>airelays accounts refresh</code>.</p>
+<p>With <code>?provider=claude</code>, refreshes Claude account usage while respecting each
+account's cached observations and upstream cooldown. It never bypasses a
+usage-endpoint <code>Retry-After</code>.</p>
 <h2 id="get-v1relaystatus"><code>GET /v1/relay/status</code><a class="headerlink" href="#get-v1relaystatus" title="Permanent link">&para;</a></h2>
 <p>Returns relay diagnostics, provider readiness, provider cache status, and
 <code>requests_total</code> — the count of real (non-monitoring) requests served by
 this process, usable as a lightweight activity signal. OpenAI model-list
 cache diagnostics live under <code>providers.openai.models_cache</code>.</p>
+<p><code>providers.claude.accounts</code> lists Claude profiles with their <code>slug</code>, email,
+readiness, <code>managed_profile</code>, and request cooldown. <code>providers.claude.balance</code>
+reports their selection strategy. Duplicate subscriptions are counted once;
+an account whose identity differs from its enrollment is not eligible.</p>
 <p><code>GET /v1/relay/status?activity_only=true</code> returns only
 <code>{"requests_total": N}</code>. It requires the same authentication as the full
 status, but it does not scan storage or probe providers, is not itself

@@ -842,6 +842,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0006-isolated-claude-subscription-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Isolated Claude Subscription Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1128,6 +1156,8 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <span class="n">bin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"claude"</span>
 <span class="n">timeout_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">600.0</span>
 <span class="n">max_concurrent_requests</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
+<span class="n">balance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"balanced"</span><span class="w">                  </span><span class="c1"># balanced, round_robin, or ordered</span>
+<span class="n">account_cooldown_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">300</span><span class="w">         </span><span class="c1"># fallback when no reset time is reported</span>
 <span class="n">strip_api_key_env</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="n">models</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"claude:sonnet"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:opus"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:haiku"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:fable"</span><span class="p">]</span>
 </code></pre></div>
@@ -1214,7 +1244,17 @@ can select an older catalog.</p>
 <p>enabled by default; set <code>[providers.claude].enabled = false</code> or <code>AIRELAYS_ENABLE_CLAUDE=false</code> to opt out (requests still require the local <code>claude</code> CLI to be installed and signed in)</p>
 </li>
 <li>uses the local <code>claude</code> CLI</li>
-<li>browser login is handled by <code>claude auth login --claudeai</code></li>
+<li><code>airelays claude login</code> adds an isolated account by delegating browser
+  authentication to <code>claude auth login --claudeai</code>; credentials remain CLI-owned</li>
+<li>each account has its own <code>CLAUDE_CONFIG_DIR</code>, usage cache, model catalog,
+  and <code>max_concurrent_requests</code> limit</li>
+<li><code>balance</code> defaults to <code>balanced</code>: available execution slots first, then
+  lowest fresh weekly usage; <code>round_robin</code> rotates and <code>ordered</code> selects
+  the first eligible profile in stable account-id order</li>
+<li><code>AIRELAYS_CLAUDE_BALANCE</code> and <code>AIRELAYS_CLAUDE_ACCOUNT_COOLDOWN_SECONDS</code>
+  override the corresponding Claude configuration values</li>
+<li>the default CLI sign-in remains available; stored tokens and ambient
+  <code>CLAUDE_CODE_OAUTH_TOKEN</code> apply only to this default account</li>
 <li>headless login is handled by <code>claude setup-token</code> plus <code>CLAUDE_CODE_OAUTH_TOKEN</code></li>
 <li>follows the relay's protected or open local auth mode</li>
 <li>requires loopback binding</li>

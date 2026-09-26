@@ -468,10 +468,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#account-pool-lifecycle" class="md-nav__link">
+  <a href="#openai-account-pool-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Account Pool Lifecycle
+        OpenAI Account Pool Lifecycle
       
     </span>
   </a>
@@ -958,6 +958,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0006-isolated-claude-subscription-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Isolated Claude Subscription Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1014,10 +1042,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#account-pool-lifecycle" class="md-nav__link">
+  <a href="#openai-account-pool-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Account Pool Lifecycle
+        OpenAI Account Pool Lifecycle
       
     </span>
   </a>
@@ -1199,7 +1227,8 @@
 <ul>
 <li>The default runtime uses the ChatGPT Codex subscription backend and
   balances requests across every enrolled OpenAI account with capacity.</li>
-<li>The Claude runtime uses isolated local <code>claude -p</code> subprocesses.</li>
+<li>The Claude account pool selects an isolated CLI profile for each local
+  <code>claude -p</code> subprocess. Claude Code owns authentication and token refresh.</li>
 </ul>
 <div class="highlight"><pre><span></span><code>flowchart LR
     Client["OpenAI-compatible client"] --&gt;|"bearer token"| Edge
@@ -1208,7 +1237,8 @@
         Edge["FastAPI edge\nauth · rate limits · traffic log"] --&gt; Registry["Provider registry\nmodel id → runtime"]
         Registry --&gt;|"other model ids"| Retry["Retry layer\nexponential backoff\npre-first-byte only"]
         Retry --&gt; Pool["OpenAI account pool\nbalanced selection · benching · failover"]
-        Registry --&gt;|"claude:* model ids"| ClaudeRT["Claude runtime\nvalidation · text transcript"]
+        Registry --&gt;|"claude:* model ids"| ClaudePool["Claude account pool\ncapacity · cooldown · failover"]
+        ClaudePool --&gt; ClaudeRT["Claude runtime per account\nvalidation · isolated environment"]
         Pool --&gt; B1["Backend adapter\naccount 1"]
         Pool --&gt; B2["Backend adapter\naccount N"]
     end
@@ -1216,7 +1246,7 @@
     B1 --&gt; Upstream["ChatGPT subscription backend"]
     B2 --&gt; Upstream
     ClaudeRT --&gt; CLI["local claude CLI\n(claude -p subprocess)"]
-    CLI --&gt; Anthropic["Claude subscription"]
+    CLI --&gt; Anthropic["Selected Claude subscription"]
 </code></pre></div>
 <h2 id="request-flow">Request Flow<a class="headerlink" href="#request-flow" title="Permanent link">&para;</a></h2>
 <ol>
@@ -1236,7 +1266,18 @@
 <li>The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope; failures return OpenAI-shaped error JSON with the upstream's own reason, and failures after streaming started surface in-band.</li>
 <li>AIRelays logs the request, runtime selection, account selection, retries, and result.</li>
 </ol>
-<h2 id="account-pool-lifecycle">Account Pool Lifecycle<a class="headerlink" href="#account-pool-lifecycle" title="Permanent link">&para;</a></h2>
+<p>Claude selection uses available account slots, fresh weekly usage, and known
+model-specific limits. Without fresh usage, eligible accounts rotate. A CLI
+authentication, quota, or transient failure puts the account into cooldown;
+the pool can try another eligible account before any response bytes are sent.
+Claude remains stateless: there is no cross-request conversation affinity.</p>
+<p><code>airelay.claude_auth</code> owns enrollment metadata under
+<code>data_dir/claude/accounts/&lt;id&gt;/account.json</code>. Each adjacent <code>config/</code> directory
+is owned by Claude Code and stays at a stable path because macOS credentials
+are scoped to it. <code>airelay.claude_accounts</code> owns selection and failover;
+<code>ClaudeCliRuntime</code> owns per-profile execution, model discovery, and usage
+backoff. See <a href="../adr/0006-isolated-claude-subscription-accounts/">the profile decision</a>.</p>
+<h2 id="openai-account-pool-lifecycle">OpenAI Account Pool Lifecycle<a class="headerlink" href="#openai-account-pool-lifecycle" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>stateDiagram-v2
     [*] --&gt; Probing: relay starts (2+ accounts)
     Probing --&gt; Serving: usage + model catalogs fetched

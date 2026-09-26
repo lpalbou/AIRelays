@@ -820,6 +820,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0006-isolated-claude-subscription-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Isolated Claude Subscription Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -965,21 +993,29 @@ Fable, Sonnet, or Opus when the subscription reports them. The modern
 buckets remain supported. A Fable cap at 100% does not mean the whole
 Claude allowance is exhausted. The desktop names the exhausted scope
 instead of presenting all Claude models as unavailable.</p>
+<p>Add <code>&amp;all_accounts=true</code> for a per-account list, or <code>&amp;account=&lt;email-or-id&gt;</code>
+for one account. Each list entry contains <code>slug</code>, <code>email</code>, and either <code>status</code>
+or <code>error</code>. The desktop shows a separate set of bars for each Claude account.</p>
 <p><code>spend</code> and <code>extra_usage</code> preserve usage-credit status, disabled reasons,
-and reported amounts. The desktop <strong>more</strong> details format money only with
+and reported amounts. Hover over or activate <strong>?</strong> beside an account name
+in the OpenAI or Anthropic section to open details; press <strong>Escape</strong> to close.
+These details format money only with
 its declared currency and decimal scale (<code>amount_minor</code> / <code>exponent</code> in
 <code>spend</code>, or <code>decimal_places</code> in <code>extra_usage</code>). A missing balance or limit
 is not inferred from zero spend. Notes:</p>
 <ul>
 <li>requires the Claude runtime to be enabled</li>
-<li>credentials resolve from the stored token file
-  (<code>airelays claude set-token</code>) first, then the <code>claude</code> CLI's own
-  credential store</li>
+<li>browser-added accounts read only their own CLI profile's credential store;
+  on macOS this includes the Keychain entry scoped to <code>CLAUDE_CONFIG_DIR</code></li>
+<li>the default account uses the stored token file first, then
+  <code>CLAUDE_CODE_OAUTH_TOKEN</code>, then its CLI credential store</li>
 <li>the upstream source is the same usage surface Claude Code's <code>/usage</code>
   command reads; it is not a publicly documented API, so AIRelays caches it
   for five minutes and degrades gracefully if it becomes unavailable</li>
 <li>upstream rate-limit cooldowns and minimum probe spacing survive restarts;
   refreshing the desktop does not bypass these protections</li>
+<li>usage caches and persisted cooldowns are separate for each profile;
+  an unavailable usage meter does not imply unavailable inference</li>
 </ul>
 <h2 id="freshness">Freshness<a class="headerlink" href="#freshness" title="Permanent link">&para;</a></h2>
 <p><code>captured_at</code> records the successful fetch time, not each cache read.
@@ -988,7 +1024,10 @@ countdowns use absolute reset timestamps. Missing percentages, or windows
 whose reset has passed without fresh evidence, display <strong>awaiting fresh
 data</strong>, not zero usage. Claude snapshots served after a failed refresh
 carry <code>stale</code>, <code>stale_reason</code>, and their last-good time. Neither catalog
-membership nor a quota snapshot guarantees the next request will succeed.</p>
+membership nor a quota snapshot guarantees the next request will succeed.
+For Claude routing, capacity observations older than fifteen minutes do not
+rank accounts; a known exhausted window still blocks routing until its reset
+or a newer successful observation shows capacity.</p>
 <h2 id="auth">Auth<a class="headerlink" href="#auth" title="Permanent link">&para;</a></h2>
 <p>Default protected mode requires the relay bearer token, as shown above.
 Open local relay mode (<code>--no-auth</code>) accepts the same requests without the

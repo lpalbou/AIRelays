@@ -632,10 +632,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#why-do-token-limit-parameters-return-422-on-the-openai-runtime" class="md-nav__link">
+  <a href="#why-does-the-dashboard-disappear-when-i-click-another-window" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why do token-limit parameters return 422 on the OpenAI runtime?
+        Why does the dashboard disappear when I click another window?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#are-output-token-limits-enforced" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Are output-token limits enforced?
       
     </span>
   </a>
@@ -930,6 +941,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0006-isolated-claude-subscription-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Isolated Claude Subscription Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1096,10 +1135,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#why-do-token-limit-parameters-return-422-on-the-openai-runtime" class="md-nav__link">
+  <a href="#why-does-the-dashboard-disappear-when-i-click-another-window" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why do token-limit parameters return 422 on the OpenAI runtime?
+        Why does the dashboard disappear when I click another window?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#are-output-token-limits-enforced" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Are output-token limits enforced?
       
     </span>
   </a>
@@ -1170,26 +1220,33 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <li>local <code>claude</code> CLI only</li>
 <li>text <code>chat.completions</code></li>
 <li>text <code>completions</code></li>
-<li>bearer-auth-required</li>
+<li>follows the relay's protected or open local authentication mode</li>
 <li>loopback-only</li>
 <li>stateless</li>
 </ul>
 <h2 id="how-do-i-log-in-to-the-claude-runtime">How do I log in to the Claude runtime?<a class="headerlink" href="#how-do-i-log-in-to-the-claude-runtime" title="Permanent link">&para;</a></h2>
-<p>Use the local Claude CLI:</p>
+<p>Use the local Claude CLI through AIRelays:</p>
 <ul>
-<li>browser login: <code>claude auth login --claudeai</code></li>
+<li>browser login: <code>airelays claude login</code>; repeat to add another of your accounts</li>
 <li>headless login: <code>claude setup-token</code> on a browser-equipped machine, then
   <code>airelays claude set-token</code> on the relay machine (stores the token in a
   0600 file that survives service managers and reboots)</li>
 </ul>
-<p>Sign out with <code>airelays claude logout</code>. Note that this signs the <code>claude</code>
-CLI out machine-wide, so other tools using it (including Claude Code) are
-signed out too. The desktop app offers the same sign-in and sign-out flows
-from the Accounts card.</p>
+<p>List accounts with <code>airelays claude accounts</code>, renew one with
+<code>airelays claude login --replace ACCOUNT</code>, and sign out one with
+<code>airelays claude logout ACCOUNT</code>. The desktop offers <strong>Add account</strong> and
+per-account sign-out. Browser-added accounts use isolated profiles; signing
+out one leaves the others intact. Signing out the legacy <code>default</code> account
+also signs out other tools using that CLI profile.</p>
+<p>Claude requests balance across eligible accounts with capacity. The relay
+uses fresh weekly usage when available, rotates when usage is unknown, and
+can fail over before response bytes reach the client. Subscription tokens
+remain subscription tokens; adding accounts does not enable API-key auth.</p>
 <h2 id="can-i-see-my-claude-subscription-usage">Can I see my Claude subscription usage?<a class="headerlink" href="#can-i-see-my-claude-subscription-usage" title="Permanent link">&para;</a></h2>
 <p>Yes: <code>GET /v1/subscription/status?provider=claude</code> returns the 5-hour and
 weekly windows in the same normalized shape as OpenAI usage. The desktop
-app shows both providers' usage bars in the Accounts card. See
+app shows per-account usage in the OpenAI and Anthropic cards. Use <strong>?</strong> beside
+an account name for details. See
 <a href="../subscription-status/">Subscription Status</a>.</p>
 <h2 id="is-using-my-subscription-through-airelays-allowed-by-the-providers">Is using my subscription through AIRelays allowed by the providers?<a class="headerlink" href="#is-using-my-subscription-through-airelays-allowed-by-the-providers" title="Permanent link">&para;</a></h2>
 <p>AIRelays does not certify that your use is permitted. Personal, local, or
@@ -1218,8 +1275,17 @@ CLI again. A <code>configured</code> label means the catalog did not confirm tha
 selector, so AIRelays does not claim a concrete resolution for it.</p>
 <h2 id="does-airelays-support-gemini">Does AIRelays support Gemini?<a class="headerlink" href="#does-airelays-support-gemini" title="Permanent link">&para;</a></h2>
 <p>No.</p>
-<h2 id="why-do-token-limit-parameters-return-422-on-the-openai-runtime">Why do token-limit parameters return <code>422</code> on the OpenAI runtime?<a class="headerlink" href="#why-do-token-limit-parameters-return-422-on-the-openai-runtime" title="Permanent link">&para;</a></h2>
-<p>The verified OpenAI subscription backend does not currently accept those fields on AIRelays’ OpenAI-shaped text-generation routes, so AIRelays rejects them explicitly.</p>
+<h2 id="why-does-the-dashboard-disappear-when-i-click-another-window">Why does the dashboard disappear when I click another window?<a class="headerlink" href="#why-does-the-dashboard-disappear-when-i-click-another-window" title="Permanent link">&para;</a></h2>
+<p>The dashboard hides when it loses focus; the relay keeps running and unsaved
+edits remain in the window. On macOS and Windows, left-click the tray icon to
+reopen it, or right-click for the menu. <strong>Open Dashboard</strong> is available in the
+tray menu on all platforms. In Overview, <strong>Connect Your App</strong> contains both
+connection details and the authentication/network access controls.</p>
+<h2 id="are-output-token-limits-enforced">Are output-token limits enforced?<a class="headerlink" href="#are-output-token-limits-enforced" title="Permanent link">&para;</a></h2>
+<p>No. AIRelays strips unsupported output-token limits such as <code>max_tokens</code>,
+<code>max_completion_tokens</code>, and <code>max_output_tokens</code> on both runtimes and reports
+them through the <code>x-airelays-ignored-parameters</code> response header. It does not
+silently truncate generated output. See <a href="../api/">API Notes</a>.</p>
 <h2 id="why-did-i-get-401-and-then-429">Why did I get <code>401</code> and then <code>429</code>?<a class="headerlink" href="#why-did-i-get-401-and-then-429" title="Permanent link">&para;</a></h2>
 <p>The relay token was missing or wrong, and repeated bad attempts triggered the temporary IP block.</p>
 
