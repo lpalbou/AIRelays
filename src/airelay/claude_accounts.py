@@ -101,8 +101,14 @@ class ClaudeAccountPool:
             if identity and identity in seen:
                 if slug == "default":
                     continue
-                status["duplicate_of"] = seen[identity]
                 status["ready_for_requests"] = False
+                if seen[identity] == "default":
+                    # Sorted after a ready default, so this profile already
+                    # failed on its own (signed out, wrong account). It is a
+                    # profile to renew, not a second copy of the subscription.
+                    status["served_by"] = "default"
+                else:
+                    status["duplicate_of"] = seen[identity]
             elif identity:
                 seen[identity] = slug
             remaining = max(0, math.ceil(account.blocked_until - time.time()))

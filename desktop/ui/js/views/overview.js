@@ -1629,9 +1629,15 @@ function claudeBlock(claude, paused, claudeUsage, count) {
         ? "This account is paused until sign-in completes. Sign in again with the original account to resume."
         : claude.duplicate_of
           ? "This subscription is already enrolled in another profile and is counted once."
-          : claudeUsage?.error
-            ? `Usage unavailable — ${claudeUsage.error}`
-            : "Not signed in — use Sign in above.";
+          : claude.managed_profile && claude.logged_in === false
+            ? "This profile is no longer signed in. Sign in again with this account to resume it."
+            : claudeUsage?.error
+              ? `Usage unavailable — ${claudeUsage.error}`
+              : "Not signed in — use Sign in above.";
+    // Without this, two rows with one email read as a duplicated account.
+    if (claude.served_by === "default") {
+      note.textContent += " Until then, this subscription is served by the default Claude Code sign-in.";
+    }
     block.appendChild(note);
     if (claude.slug && !claude.duplicate_of) {
       const renew = document.createElement("button");

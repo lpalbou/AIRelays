@@ -694,7 +694,11 @@ class ClaudeCliRuntime:
         probe = self._cached_probe()
         ready = bool(probe.get("installed") and probe.get("logged_in"))
         expected = account_identity(self.profile.identity)
-        mismatch = bool(expected and account_identity(probe) != expected)
+        # A signed-out profile has no identity to compare. It needs a new
+        # sign-in; reporting it as holding another account is false.
+        actual = account_identity(probe) if probe.get("logged_in") else None
+        mismatch = bool(expected and actual and actual != expected)
+        verified = not expected or actual == expected
         return {
             "slug": self.profile.slug,
             "managed_profile": self.profile.managed,
@@ -702,7 +706,7 @@ class ClaudeCliRuntime:
             "local_only": True,
             "requires_relay_bearer_auth": self._settings.require_bearer_auth,
             "stateless_only": True,
-            "ready_for_requests": ready and not mismatch and not self.profile.identity.get("reauth_required"),
+            "ready_for_requests": ready and verified and not self.profile.identity.get("reauth_required"),
             "reauth_required": bool(self.profile.identity.get("reauth_required")),
             "identity_mismatch": mismatch,
             "cli_installed": probe.get("installed", False),

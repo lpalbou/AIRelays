@@ -388,6 +388,30 @@ def test_signed_out_managed_duplicate_does_not_hide_ready_default(settings, monk
     assert not next(row for row in rows if row["slug"] == profile.slug)["ready_for_requests"]
 
 
+def test_signed_out_profile_is_neither_a_mismatch_nor_a_duplicate(settings, monkeypatch):
+    profile = add(settings, "same@example.com")
+    pool = ClaudeAccountPool(settings)
+    monkeypatch.setattr(ClaudeCliRuntime, "_cached_probe", lambda self: (
+        {"installed": True, "logged_in": False} if self.profile.managed
+        else {"installed": True, "logged_in": True, "email": "same@example.com"}
+    ))
+    rows = pool.status()["accounts"]
+    assert [row["slug"] for row in rows] == ["default", profile.slug]
+    stale = rows[1]
+    assert stale["ready_for_requests"] is False
+    assert stale["identity_mismatch"] is False
+    assert "duplicate_of" not in stale
+    assert stale["served_by"] == "default"
+
+
+def test_signed_in_profile_with_unreadable_identity_stays_unroutable(pool, monkeypatch):
+    account = accounts(pool)[0]
+    monkeypatch.setattr(account.runtime, "_cached_probe", lambda: {"installed": True, "logged_in": True})
+    status = account.runtime.status()
+    assert status["identity_mismatch"] is False
+    assert status["ready_for_requests"] is False
+
+
 def test_reauth_suspends_routing_until_successful_enrollment(pool):
     account = accounts(pool)[0]
     profile = account.runtime.profile
