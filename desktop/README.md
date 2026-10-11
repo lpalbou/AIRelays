@@ -29,6 +29,12 @@ In Overview, **Connect Your App** combines the endpoint and relay key with
 immediately and restart a running relay; the card explains open-mode risks
 and when network access pauses Claude.
 
+The Anthropic card's **Sign in** / **Add account** menu offers **In a
+browser** (a new AIRelays-owned Claude Code profile) or **With a token** (a
+`claude setup-token` token; inference-only, so its row explains that Claude
+reports no usage for setup tokens instead of showing bars). AIRelays never uses your personal Claude
+Code sign-in, and sign-out on a row affects only that AIRelays account.
+
 - `src-tauri/` — Rust core: tray, relay supervision, config rendering,
   status polling, and the command layer the dashboard calls.
 - `ui/` — the dashboard (vanilla HTML/CSS/JS, no build step): Overview,
@@ -99,6 +105,9 @@ CI builds all three platforms from `.github/workflows/desktop.yml` on
   menu and **Open Dashboard**. On Linux, use **Open Dashboard** in the tray
   menu. Automatic hiding is disabled if tray initialization fails.
 - On macOS, opening the already-running app also reopens its dashboard.
+- macOS: the app runs the relay in your login session, which Claude Code
+  needs for keychain access. A relay started over SSH or as a LaunchDaemon
+  cannot use the Claude profiles' keychain entries.
 - Linux: GNOME needs the AppIndicator extension to show tray icons; the deb
   declares `libayatana-appindicator3-1` and `xdg-utils` as dependencies.
 - Windows: the relay tree is supervised through a Job Object, so stopping

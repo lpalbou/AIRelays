@@ -13,6 +13,7 @@ from airelay.providers import ClaudeCliRuntime, ProviderError, ProviderRegistry
 
 
 discover_claude_models = ClaudeCliRuntime._discover_models
+control_request = ClaudeCliRuntime._control_request
 
 
 def settings(tmp_path, **kwargs):
@@ -203,6 +204,8 @@ async def test_claude_initialize_protocol_is_bounded_and_reaps_process(tmp_path,
     class Process:
         returncode = None
         killed = False
+        closed = False
+        terminated = False
         waited = False
 
         def __init__(self):
@@ -223,8 +226,16 @@ async def test_claude_initialize_protocol_is_bounded_and_reaps_process(tmp_path,
             if outcome == "malformed":
                 return b"not json\n"
             return json.dumps({"type": "control_response", "response": {
-                "request_id": "models", "subtype": "success", "response": {"models": [{"value": "fable"}]},
+                "request_id": "airelays", "subtype": "success", "response": {"models": [{"value": "fable"}]},
             }}).encode() + b"\n"
+
+        def close(self):
+            # A control session exits cleanly once stdin closes.
+            self.closed = True
+            self.returncode = 0
+
+        def terminate(self):
+            self.terminated = True
 
         def kill(self):
             self.killed = True
@@ -239,14 +250,17 @@ async def test_claude_initialize_protocol_is_bounded_and_reaps_process(tmp_path,
         return process
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(ClaudeCliRuntime, "_control_request", control_request)
     if outcome == "success":
         assert await discover_claude_models(runtime) == [{"value": "fable"}]
     else:
-        error = {"timeout": TimeoutError, "cancel": asyncio.CancelledError, "malformed": ValueError}[outcome]
+        error = {"timeout": (TimeoutError, ProviderError), "cancel": asyncio.CancelledError,
+                 "malformed": ProviderError}[outcome]
         with pytest.raises(error):
             await discover_claude_models(runtime)
-    assert process.killed and process.waited
-    assert writes == [{"type": "control_request", "request_id": "models", "request": {"subtype": "initialize"}}]
+    # Ended gracefully: stdin closed (never SIGKILL first) and reaped.
+    assert process.closed and process.waited and not process.killed
+    assert writes == [{"type": "control_request", "request_id": "airelays", "request": {"subtype": "initialize"}}]
     assert "--no-session-persistence" in spawned["command"]
     assert "--strict-mcp-config" in spawned["command"]
     assert spawned["command"][spawned["command"].index("--tools") + 1] == ""

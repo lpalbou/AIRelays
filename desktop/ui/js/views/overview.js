@@ -181,7 +181,7 @@ function template() {
           <button class="btn btn-small split-btn-toggle" id="ov-login-claude-menu" aria-label="Choose Claude sign-in method" aria-haspopup="true">${icon("chevronDown", 12)}</button>
           <div class="split-menu" id="ov-claude-menu" hidden role="menu">
             <button role="menuitem" data-method="browser">In a browser (this machine)</button>
-            <button role="menuitem" data-method="token">Set default account token…</button>
+            <button role="menuitem" data-method="token">With a token…</button>
           </div>
         </div>
       </div>
@@ -274,7 +274,7 @@ function template() {
     </dialog>
 
     <dialog id="ov-claude-token-dialog">
-      <h3>Set default Claude account token</h3>
+      <h3>Claude setup token</h3>
       <p class="dialog-text">
         On any machine with a browser, run <code>claude setup-token</code>
         in a terminal, approve the sign-in, then paste the token it prints.
@@ -285,9 +285,9 @@ function template() {
                placeholder="sk-ant-oat…" />
       </div>
       <p class="dialog-text" style="margin-top:10px; font-size:12px">
-        This replaces the default account's token. Accounts added with
-        browser sign-in keep their own credentials. Removing the token
-        restores the default CLI sign-in.
+        AIRelays keeps this token for itself; it is inference-only, so Claude
+        reports no usage for it. Browser sign-ins and your own Claude Code
+        are unaffected.
       </p>
       <div class="row" style="margin-top:14px">
         <button class="btn btn-ghost" id="ov-claude-token-clear">Remove stored token</button>
@@ -434,7 +434,7 @@ function bindActions(ctx) {
     el("ov-claude-token-dialog").close();
     toast(
       existed ? "Stored token removed" : "No stored token",
-      existed ? "The relay now uses the claude CLI's own sign-in." : "Nothing to remove.",
+      existed ? "Claude requests use your AIRelays browser sign-ins only." : "Nothing to remove.",
       existed ? "success" : "info"
     );
   });
@@ -648,9 +648,11 @@ function openClaudeLogoutDialog(account, count) {
   const routing = count > 1
     ? "Claude requests will use your remaining accounts. "
     : "Claude requests will fail until you sign in again. ";
-  root.querySelector("#ov-logout-text").textContent = account.managed_profile
-    ? routing + "This signs out only this AIRelays profile. Your other Claude sign-ins and Anthropic account are unaffected."
-    : routing + "This removes the default sign-in and stored token. Other tools using this default Claude Code sign-in are also signed out.";
+  // AIRelays owns its Claude accounts (ADR 0007): sign-out never reaches
+  // the user's own Claude Code.
+  root.querySelector("#ov-logout-text").textContent = account.managed_profile === false
+    ? routing + "This deletes the stored setup token. Claude Code is unaffected."
+    : routing + "This signs out only this AIRelays profile. Claude Code and your other sign-ins are unaffected.";
   root.querySelector("#ov-logout-dialog").showModal();
 }
 
@@ -1490,7 +1492,9 @@ function renderAccounts(state) {
   for (const account of claudeAccounts.length ? claudeAccounts : [{}]) {
     const entry = claudeUsage?.accounts?.find((item) => item.slug === account.slug);
     const usage = Array.isArray(claudeUsage?.accounts)
-      ? (entry?.status ?? (entry?.error ? {error: entry.error} : null))
+      ? (entry?.status
+        ?? (entry?.error ? {error: entry.error} : null)
+        ?? (entry?.usage_unsupported ? {unsupported: entry.usage_unsupported} : null))
       : claudeUsage;
     claudeContainer.appendChild(claudeBlock(account, claudePaused, usage, claudeAccounts.length));
   }
@@ -1534,7 +1538,8 @@ function claudeBlock(claude, paused, claudeUsage, count) {
 
   const emailEl = document.createElement("span");
   emailEl.className = "account-email";
-  emailEl.textContent = claude.email ?? claudeUsage?.account?.email ?? "Not signed in";
+  const setupToken = claude.managed_profile === false && Boolean(claude.slug);
+  emailEl.textContent = claude.email ?? claudeUsage?.account?.email ?? (setupToken ? "Setup token" : "Not signed in");
   if (claude.cli_version) {
     emailEl.title = `Served by the local claude CLI ${claude.cli_version}`;
   }
@@ -1629,21 +1634,21 @@ function claudeBlock(claude, paused, claudeUsage, count) {
         ? "This account is paused until sign-in completes. Sign in again with the original account to resume."
         : claude.duplicate_of
           ? "This subscription is already enrolled in another profile and is counted once."
-          : claude.managed_profile && claude.logged_in === false
-            ? "This profile is no longer signed in. Sign in again with this account to resume it."
-            : claudeUsage?.error
-              ? `Usage unavailable — ${claudeUsage.error}`
-              : "Not signed in — use Sign in above.";
-    // Without this, two rows with one email read as a duplicated account.
-    if (claude.served_by === "default") {
-      note.textContent += " Until then, this subscription is served by the default Claude Code sign-in.";
-    }
+          : setupToken
+            ? "The stored setup token is not accepted. Replace it with a new one from `claude setup-token`."
+            : claude.managed_profile && claude.logged_in === false
+              ? "This profile is no longer signed in. Sign in again with this account to resume it."
+              : claudeUsage?.error
+                ? `Usage unavailable — ${claudeUsage.error}`
+                : "No Claude account is connected to AIRelays. Sign in above — AIRelays keeps its own sign-ins, separate from Claude Code.";
     block.appendChild(note);
     if (claude.slug && !claude.duplicate_of) {
       const renew = document.createElement("button");
       renew.className = "btn btn-small";
-      renew.textContent = "Sign in again";
-      renew.addEventListener("click", () => startClaudeSignIn(claude.slug, claude.email));
+      renew.textContent = setupToken ? "Replace token" : "Sign in again";
+      renew.addEventListener("click", () => setupToken
+        ? el("ov-claude-token-dialog").showModal()
+        : startClaudeSignIn(claude.slug, claude.email));
       block.appendChild(renew);
     }
     return block;
@@ -1654,9 +1659,10 @@ function claudeBlock(claude, paused, claudeUsage, count) {
     for (const [label, window] of usageWindows(claudeUsage)) {
       block.appendChild(usageWindowRow(label, window));
     }
-    // Stale snapshot: show the bars (better than nothing) but say they are
-    // cached, and why a fresh read isn't possible yet.
+    // Stale snapshot: dimmed bars (old numbers must never read as current)
+    // plus their age and why a live reading isn't available yet.
     if (claudeUsage.stale) {
+      block.classList.add("usage-stale");
       const note = document.createElement("div");
       note.className = "account-note";
       const age = claudeUsage.as_of_epoch
@@ -1666,24 +1672,24 @@ function claudeBlock(claude, paused, claudeUsage, count) {
         ? formatDuration(claudeUsage.retry_after_seconds)
         : null;
       let why;
-      if (claudeUsage.stale_reason === "credential_rejected_file") {
-        why = "stored token rejected — replace it with a new token or remove it";
-      } else if (claudeUsage.stale_reason === "credential_rejected") {
-        why = "updates on Claude's next served request";
+      if (claudeUsage.stale_reason === "cli_unsupported") {
+        why = "update Claude Code to see live usage";
+      } else if (claudeUsage.stale_reason === "nonessential_traffic_disabled") {
+        why = "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC stops Claude Code from fetching usage";
       } else if (retry) {
-        why = `refreshes in ~${retry} (rate-limited upstream)`;
+        why = `Claude did not return live usage; retrying in ~${retry}`;
       } else {
         why = "refreshes shortly";
       }
-      note.textContent = `Cached usage${age ? ` from ${age} ago` : ""} — ${why}.`;
+      note.textContent = `Usage from ${age ? `${age} ago` : "an earlier reading"} — ${why}.`;
       block.appendChild(note);
     }
-  } else if (claudeUsage?.error) {
+  } else if (claudeUsage?.error || claudeUsage?.unsupported) {
     // No usable snapshot: explain why the bars are missing instead of
     // leaving the row silently blank.
     const note = document.createElement("div");
     note.className = "account-note";
-    note.textContent = claudeUsage.error;
+    note.textContent = claudeUsage.error ?? claudeUsage.unsupported;
     block.appendChild(note);
   }
   return block;

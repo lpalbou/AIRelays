@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.16.0
+
+### Changed
+
+- Claude routes only through accounts AIRelays owns: profiles added with
+  `airelays claude login` (desktop **Sign in** / **Add account** → "In a
+  browser") and an optional setup token stored with `airelays claude set-token`
+  ("With a token"), shown as `default`. The personal Claude Code sign-in
+  (`~/.claude`), an inherited `CLAUDE_CONFIG_DIR`, and an inherited
+  `CLAUDE_CODE_OAUTH_TOKEN` are no longer used; `airelays doctor` reports an
+  ignored `CLAUDE_CODE_OAUTH_TOKEN`.
+- The setup-token account runs in its own relay-owned Claude Code
+  configuration (`<data_dir>/claude/token/config`) and is inference-only:
+  Claude reports no usage or email for setup tokens, so it has no usage bars
+  and is not deduplicated against browser accounts.
+- `airelays claude logout ACCOUNT` signs out only that AIRelays profile;
+  `airelays claude logout default` only deletes the stored setup token.
+- With no Claude account connected, `claude:*` requests return 503
+  `provider_auth_error` and `/v1/models` lists no Claude models.
+- Claude usage comes from Claude Code's SDK `get_usage` control request inside
+  each profile (no prompt, inference, or quota). AIRelays no longer reads Claude
+  credentials or calls the usage endpoint directly. Readings refresh at startup
+  and every five minutes, which also keeps idle profiles signed in. Requires a
+  Claude Code version with `get_usage` (verified with 2.1.292+); older versions
+  report `cli_unsupported` without affecting requests.
+- A failed reading keeps the last good one, marked stale with its age and a
+  `stale_reason` (`usage_unavailable`, `nonessential_traffic_disabled`,
+  `cli_unsupported`, `cli_failed`). Failures back off 5 → 10 → 20 → 40 → 60
+  minutes, persisted across restarts. Stale readings never unblock or rank an
+  account.
+- API: Claude `all_accounts=true` entries for the setup-token account carry
+  `usage_unsupported` instead of `status`, and `account=default` returns 422
+  `unsupported_for_provider`. In relay status, `oauth_token_source` is
+  `profile` or `file` (no longer `env`), `managed_profile` is `false` for the
+  setup-token account, and `served_by` is removed.
+- Claude Code processes run with an explicit environment, their profile's
+  `CLAUDE_CONFIG_DIR`, and a relay-owned working directory, and are ended
+  gracefully (stdin closed or SIGTERM before SIGKILL) so an in-progress token
+  refresh can finish.
+
+### Fixed
+
+- Claude usage meters no longer freeze for accounts that serve no requests.
+  Stale readings appear dimmed in the desktop, with their age and the reason a
+  live reading is unavailable.
+- A signed-out Claude profile is reported as needing sign-in, not as signed in
+  to a different account.
+- A subscription no longer disappears when the personal Claude Code login
+  switches accounts.
+- Signing out in AIRelays no longer signs out Claude Code.
+- Stale scoped (per-model) Claude limits are no longer shown as current.
+
+### Compatibility
+
+- Breaking: installs whose only Claude account was the personal Claude Code
+  sign-in, an inherited `CLAUDE_CONFIG_DIR`, or an exported
+  `CLAUDE_CODE_OAUTH_TOKEN` must connect an account once with
+  `airelays claude login` (desktop **Sign in**), or `airelays claude set-token`
+  for a setup token. Refresh tokens rotate, so AIRelays cannot copy the
+  personal sign-in. Profiles already enrolled keep working unchanged.
+
 ## 0.15.0
 
 ### Added

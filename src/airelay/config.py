@@ -542,9 +542,9 @@ class Settings:
         return token
 
     def resolve_claude_oauth_token(self) -> str | None:
-        """Token stored via `airelays claude set-token`; env keeps working
-        as a fallback for existing setups, but the file wins because it is
-        explicit configuration."""
+        """Token stored via `airelays claude set-token`. An inherited
+        CLAUDE_CODE_OAUTH_TOKEN is ignored: it may belong to the user's own
+        Claude Code (ADR 0007)."""
         if self.claude_oauth_token_file.exists():
             token = self.claude_oauth_token_file.read_text(encoding="utf-8").strip()
             if token:
@@ -558,11 +558,7 @@ class Settings:
         os.chmod(self.claude_oauth_token_file, 0o600)
 
     def claude_oauth_token_source(self) -> str:
-        if self.resolve_claude_oauth_token():
-            return "file"
-        if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
-            return "env"
-        return "none"
+        return "file" if self.resolve_claude_oauth_token() else "none"
 
     def write_bearer_token(self, token: str) -> None:
         self.ensure_directories()

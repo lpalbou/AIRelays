@@ -3,13 +3,11 @@ from __future__ import annotations
 import asyncio
 import difflib
 import errno
-import hashlib
 import json
 import math
 import os
 import re
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -17,15 +15,12 @@ import uuid
 from contextlib import aclosing
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, AsyncIterator
-
-import httpx
 
 from airelay.auth import AuthManager
 from airelay.backend import ChatGptCodexBackend
 from airelay.config import Settings
-from airelay.claude_auth import ClaudeProfile, account_identity
+from airelay.claude_auth import ClaudeProfile, account_identity, token_profile
 from airelay.traffic import TrafficLogger, snapshot_body
 from airelay.transforms import chat_completion_chunk, completion_chunk
 
@@ -496,13 +491,22 @@ def _stderr_message(stderr: bytes, returncode: int) -> str:
     return text or f"claude exited with code {returncode}"
 
 
-CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-# The usage endpoint's budget is tiny (observed lockouts of an hour or
-# more). Five minutes keeps the meter useful while treating every upstream
-# call as precious; attempts are additionally spaced a minute apart no
-# matter how they end.
+# Usage comes from Claude Code's own `get_usage` control request (ADR 0007):
+# the CLI refreshes the profile's OAuth token while answering, so the
+# background refresh also keeps idle profiles signed in.
 CLAUDE_USAGE_CACHE_SECONDS = 300.0
-CLAUDE_USAGE_MIN_ATTEMPT_INTERVAL = 60.0
+# Failed refreshes back off (persisted): a short-lived CLI forgets an
+# upstream 429 when it exits, so the relay must remember it instead.
+CLAUDE_USAGE_BACKOFF_SECONDS = (300, 600, 1200, 2400, 3600)
+# A reading without `limits` is fresh only if its breakdown is this recent;
+# the CLI's seeded fallback carries a snapshot up to an hour old.
+CLAUDE_USAGE_FRESH_SECONDS = 120.0
+CLAUDE_CONTROL_TIMEOUT_SECONDS = 30.0
+CLAUDE_EXIT_GRACE_SECONDS = 10.0
+CLAUDE_TOKEN_USAGE_UNSUPPORTED = (
+    "Claude doesn't report usage for setup tokens; requests are unaffected. "
+    "Add a browser sign-in with `airelays claude login` to see usage."
+)
 CLAUDE_FIVE_HOUR_SECONDS = 5 * 3600
 CLAUDE_SEVEN_DAY_SECONDS = 7 * 86400
 
@@ -512,7 +516,10 @@ class ClaudeCliRuntime:
                  *, profile: ClaudeProfile | None = None) -> None:
         self._settings = settings
         self._traffic = traffic
-        self.profile = profile or ClaudeProfile("default")
+        # Without a profile, the runtime serves the stored setup token.
+        self.profile = profile or token_profile(settings)
+        if not self.profile.managed:
+            self.profile.config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._semaphore = asyncio.Semaphore(settings.claude_max_concurrent_requests)
         self._models = self._build_models(settings.claude_models)
         self._models_fetched_at: float | None = None
@@ -528,39 +535,21 @@ class ClaudeCliRuntime:
         self._probe_cached_at: float = 0.0
         self._probe_refreshing = False
         self._probe_lock = threading.Lock()
-        # The usage endpoint is undocumented and rate-limited; cache briefly.
-        self._usage_cache: dict[str, Any] | None = None
-        self._usage_cache_at: float = 0.0
-        # Last successful payload, kept indefinitely: when the upstream
-        # rate-limits us (429 with retry-after up to an hour), serving
-        # honest stale data beats serving nothing.
+        # Last live reading, kept (and persisted) so a failed refresh shows
+        # honest, dated numbers instead of nothing.
         self._usage_last_good: dict[str, Any] | None = None
         self._usage_last_good_epoch: float = 0.0
-        # Monotonic deadline from the last 429's retry-after; until it
-        # passes, no request is sent upstream (poking a rate-limited
-        # endpoint extends the lockout).
-        self._usage_blocked_until: float = 0.0
-        # Single-flight: concurrent callers at cache expiry must not each
-        # poke the aggressively rate-limited endpoint.
-        self._usage_fetch_lock = asyncio.Lock()
-        # Fingerprint of a token the upstream rejected (401/403). Claude
-        # Code rotates its access token; retrying a dead one both fails and
-        # burns the rate budget. Blocked until the resolved token CHANGES.
-        self._usage_rejected_fingerprint: str | None = None
-        # Source of the rejected token ("file" is static and needs user
-        # action; CLI sources self-heal on rotation) — drives the message.
-        self._usage_rejected_source: str | None = None
-        # Attempt spacing across all outcome classes.
-        self._usage_last_attempt_at: float = -CLAUDE_USAGE_MIN_ATTEMPT_INTERVAL
-        # Guardrail state survives restarts: the block window and the last
-        # good snapshot are persisted, so restarting the relay can never
-        # turn into a fresh poke at a locked-out endpoint (the exact
-        # hammering pattern that earns hour-long lockouts).
-        self._usage_state_path = (
-            self.profile.root / "usage-state.json" if self.profile.root is not None
-            else settings.data_dir / "claude-usage-state.json"
-        )
-        self._load_usage_state()
+        # Wall-clock backoff after failed refreshes; survives restarts.
+        self._usage_failures = 0
+        self._usage_retry_at = 0.0
+        self._usage_stale_reason: str | None = None
+        self._usage_error: str | None = None
+        # Single flight, shielded from callers: a disconnecting client must
+        # not cancel a CLI that may be rotating the profile's token.
+        self._usage_task: asyncio.Task[None] | None = None
+        self._usage_state_path = self.profile.root / "usage-state.json"
+        if self.profile.managed:
+            self._load_usage_state()
 
     def _build_models(self, configured: tuple[str, ...]) -> dict[str, ProviderModel]:
         records: dict[str, ProviderModel] = {}
@@ -644,41 +633,66 @@ class ClaudeCliRuntime:
         return list(catalog.values())
 
     async def _initialize_models(self, selector: str) -> list[dict[str, Any]]:
-        request = ClaudeTextRequest(f"claude:{selector}", selector, None, "", False)
-        command = self._build_command(request, stream=True) + ["--input-format", "stream-json"]
         # The SDK initialize control request returns the CLI's own picker
         # catalog and alias resolutions without submitting a user prompt.
-        with tempfile.TemporaryDirectory(prefix="airelays-models-") as workdir:
-            process = await asyncio.create_subprocess_exec(
-                *command, cwd=workdir, env=self._subprocess_env(),
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL, limit=1024 * 1024,
-            )
+        payload = await self._control_request(
+            {"subtype": "initialize"}, model=selector,
+            timeout=min(10.0, self._settings.claude_timeout_seconds),
+        )
+        if isinstance(payload.get("models"), list):
+            return payload["models"]
+        raise ProviderError(503, "Claude CLI did not return a model catalog.")
+
+    async def _control_request(self, request: dict[str, Any], *, model: str | None = None,
+                               timeout: float) -> dict[str, Any]:
+        """One SDK control request in a short-lived CLI session: no prompt,
+        no inference. Raises ProviderError with code `cli_unsupported` when
+        the installed CLI does not know the request."""
+        command = [self._settings.claude_bin, "-p"]
+        if model:
+            command.extend(["--model", model])
+        command.extend([
+            "--tools", "", "--setting-sources", "", "--strict-mcp-config",
+            "--disable-slash-commands", "--no-session-persistence",
+            "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        ])
+        with tempfile.TemporaryDirectory(prefix="airelays-claude-control-") as workdir:
             try:
-                async with asyncio.timeout(min(10.0, self._settings.claude_timeout_seconds)):
+                process = await asyncio.create_subprocess_exec(
+                    *command, cwd=workdir, env=self._subprocess_env(),
+                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL, limit=1024 * 1024,
+                )
+            except OSError as exc:
+                raise ProviderError(503, f"Cannot launch the Claude CLI: {exc}", code="provider_unavailable") from exc
+            try:
+                async with asyncio.timeout(timeout):
                     assert process.stdin is not None and process.stdout is not None
-                    message = {"type": "control_request", "request_id": "models", "request": {"subtype": "initialize"}}
+                    message = {"type": "control_request", "request_id": "airelays", "request": request}
                     process.stdin.write((json.dumps(message) + "\n").encode())
                     await process.stdin.drain()
                     while line := await process.stdout.readline():
-                        item = json.loads(line)
+                        try:
+                            item = json.loads(line)
+                        except json.JSONDecodeError as exc:
+                            raise ProviderError(502, "Claude CLI returned malformed output.",
+                                                code="provider_failure") from exc
                         if not isinstance(item, dict) or item.get("type") != "control_response":
                             continue
                         response = item.get("response")
-                        if not isinstance(response, dict) or response.get("request_id") != "models":
+                        if not isinstance(response, dict) or response.get("request_id") != "airelays":
                             continue
+                        if response.get("subtype") == "error":
+                            detail = str(response.get("error") or "Claude CLI rejected the request.")
+                            unsupported = "unsupported control request" in detail.lower()
+                            raise ProviderError(502, detail, code="cli_unsupported" if unsupported else "provider_failure")
                         payload = response.get("response")
-                        if isinstance(payload, dict) and isinstance(payload.get("models"), list):
-                            return payload["models"]
-                        break
-                    raise ProviderError(503, "Claude CLI did not return a model catalog.")
+                        return payload if isinstance(payload, dict) else {}
+                raise ProviderError(502, "Claude CLI exited without answering.", code="provider_failure")
+            except TimeoutError as exc:
+                raise ProviderError(504, "Claude CLI did not answer in time.", code="provider_timeout") from exc
             finally:
-                if process.returncode is None:
-                    try:
-                        process.kill()
-                    except ProcessLookupError:
-                        pass
-                await process.wait()
+                await _end_process(process, close_stdin=True)
 
     def resolve_model(self, model_id: str) -> ResolvedModel | None:
         record = self._models.get(model_id)
@@ -720,11 +734,13 @@ class ClaudeCliRuntime:
             "subscription_type": probe.get("subscription_type") or self.profile.identity.get("subscription_type"),
             "models": [record.id for record in self._models.values()],
             "models_discovery_error": self._models_error,
-            "oauth_token_source": "profile" if self.profile.managed else self._settings.claude_oauth_token_source(),
+            "oauth_token_source": "profile" if self.profile.managed else "file",
             "notes": [
                 "Use `airelays claude login` to add an isolated subscription account.",
                 "For headless environments, run `claude setup-token` on a machine with a "
                 "browser, then store the token with `airelays claude set-token`.",
+            ] if self.profile.managed else [
+                "Setup token: inference-only; Claude reports no usage or email for it.",
             ],
         }
 
@@ -1137,17 +1153,14 @@ class ClaudeCliRuntime:
                         timeout=self._settings.claude_timeout_seconds,
                     )
                 except asyncio.TimeoutError as exc:
-                    process.kill()
-                    await process.wait()
+                    await _end_process(process)
                     raise ProviderError(
                         504,
                         "Claude CLI timed out while generating a response.",
                         code="provider_timeout",
                     ) from exc
                 except BaseException:
-                    if process.returncode is None:
-                        process.kill()
-                    await process.wait()
+                    await _end_process(process)
                     raise
         self._log_result(request_id, stdout)
         if process.returncode != 0:
@@ -1259,12 +1272,7 @@ class ClaudeCliRuntime:
                         code="provider_timeout",
                     ) from exc
                 finally:
-                    if process.returncode is None:
-                        try:
-                            process.kill()
-                        except ProcessLookupError:
-                            pass
-                    await process.wait()
+                    await _end_process(process)
                     await stderr_task
 
     def _build_command(self, request: ClaudeTextRequest, *, stream: bool) -> list[str]:
@@ -1313,20 +1321,17 @@ class ClaudeCliRuntime:
             "http_proxy",
             "https_proxy",
             "no_proxy",
-            "CLAUDE_CONFIG_DIR",
-            "CLAUDE_CODE_OAUTH_TOKEN",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
         )
         env = {name: value for name, value in os.environ.items() if name in allowed}
-        # A stored token file beats ambient env: it is the only mechanism
-        # that survives service managers (systemd, launchd, docker) where
-        # shell exports never reach the relay process.
-        stored_token = None if self.profile.managed else self._settings.resolve_claude_oauth_token()
-        if stored_token:
-            env["CLAUDE_CODE_OAUTH_TOKEN"] = stored_token
-        if self.profile.config_dir is not None:
-            env["CLAUDE_CONFIG_DIR"] = str(self.profile.config_dir)
-            env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+        # Every process names its relay-owned profile. An inherited
+        # CLAUDE_CONFIG_DIR or CLAUDE_CODE_OAUTH_TOKEN would route through
+        # the user's own Claude Code sign-in (ADR 0007).
+        env["CLAUDE_CONFIG_DIR"] = str(self.profile.config_dir)
+        if not self.profile.managed:
+            token = self._settings.resolve_claude_oauth_token()
+            if token:
+                env["CLAUDE_CODE_OAUTH_TOKEN"] = token
         if self._settings.claude_strip_api_key_env:
             for name in (
                 "ANTHROPIC_API_KEY",
@@ -1376,170 +1381,87 @@ class ClaudeCliRuntime:
     async def get_subscription_status(self, request_id: str) -> dict[str, Any]:
         """Subscription usage normalized to the exact shape the OpenAI
         runtime produces, so every consumer renders both providers with one
-        code path. Source: the endpoint Claude Code's own `/usage` command
-        calls (undocumented; degraded gracefully when it changes)."""
+        code path. Source: Claude Code's `get_usage` control request, run in
+        this profile; AIRelays never reads Claude credentials (ADR 0007)."""
         del request_id
-        now = time.monotonic()
-        if self._usage_cache is not None and now - self._usage_cache_at < CLAUDE_USAGE_CACHE_SECONDS:
-            snapshot = json.loads(json.dumps(self._usage_cache))
-            _refresh_stale_windows(snapshot)
-            return snapshot
-        # Inside a rate-limit window: never poke the upstream again (that
-        # can extend the lockout). Serve honest stale data when we have it.
-        if now < self._usage_blocked_until:
-            return self._stale_or_usage_error(now, "rate_limited")
-        async with self._usage_fetch_lock:
-            # Re-check after acquiring: a concurrent caller may have just
-            # refilled the cache or hit a 429 while this one waited.
-            now = time.monotonic()
-            if (
-                self._usage_cache is not None
-                and now - self._usage_cache_at < CLAUDE_USAGE_CACHE_SECONDS
-            ):
-                snapshot = json.loads(json.dumps(self._usage_cache))
-                _refresh_stale_windows(snapshot)
-                return snapshot
-            if now < self._usage_blocked_until:
-                return self._stale_or_usage_error(now, "rate_limited")
-            return await self._fetch_usage()
+        if not self.profile.managed:
+            raise ProviderError(422, CLAUDE_TOKEN_USAGE_UNSUPPORTED, code="unsupported_for_provider")
+        now = time.time()
+        if self._usage_last_good is not None and now - self._usage_last_good_epoch < CLAUDE_USAGE_CACHE_SECONDS:
+            return self._usage_snapshot()
+        if now >= self._usage_retry_at:
+            if self._usage_task is None or self._usage_task.done():
+                self._usage_task = asyncio.create_task(self._refresh_usage())
+            await asyncio.shield(self._usage_task)
+            if self._usage_stale_reason is None and self._usage_last_good is not None:
+                return self._usage_snapshot()
+        return self._stale_usage()
 
-    async def _fetch_usage(self) -> dict[str, Any]:
-        # Token resolution can shell out to the macOS keychain — never on
-        # the event loop.
-        token, source = await asyncio.to_thread(self._resolve_usage_token)
-        now = time.monotonic()
-        if not token:
-            if source == "expired":
-                # Signed in, but the access token lapsed between rotations.
-                # The CLI mints a fresh one on its next served request; this
-                # is not a sign-in problem, so never say "sign in".
-                return self._stale_or_usage_error(now, "credential_rejected")
-            raise ProviderError(
-                503,
-                "No Claude sign-in found. Sign in with `claude auth login`, "
-                "or store a token with `airelays claude set-token`.",
-                code="provider_unavailable",
-            )
-        # A token the upstream already rejected stays rejected: retrying it
-        # burns rate budget for a guaranteed failure. A CLI-owned token
-        # clears itself the moment the CLI rotates it (its next real
-        # request, including relay-served ones); a stored-file token is
-        # static, so recovery there needs the user to replace/remove it.
-        if _token_fingerprint(token) == self._usage_rejected_fingerprint:
-            return self._stale_or_usage_error(now, "credential_rejected", source=source)
-        # Attempt spacing: whatever the outcome class (network error, 5xx),
-        # never hit the upstream more than once a minute.
-        if now - self._usage_last_attempt_at < CLAUDE_USAGE_MIN_ATTEMPT_INTERVAL:
-            return self._stale_or_usage_error(now, "cooling_down")
-        self._usage_last_attempt_at = now
-        self._save_usage_state()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "anthropic-beta": "oauth-2025-04-20",
-            # Without a claude-code User-Agent the endpoint answers from an
-            # aggressively rate-limited bucket (persistent 429s).
-            "User-Agent": f"claude-code/{(self._last_probe or {}).get('version') or '2.0.0'}",
-            "Accept": "application/json",
-        }
+    async def _refresh_usage(self) -> None:
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.get(CLAUDE_USAGE_URL, headers=headers)
-        except httpx.HTTPError as exc:
-            raise ProviderError(
-                502,
-                f"The Claude usage endpoint is unreachable: {exc}",
-                code="provider_failure",
-            ) from exc
-        if response.status_code == 429:
-            # Fresh monotonic: the timestamps above predate the keychain
-            # shell-out and the HTTP round-trip (up to ~25s), which would
-            # under-wait the window and re-poke a still-limited endpoint.
-            arrived = time.monotonic()
-            self._usage_blocked_until = arrived + _retry_after_seconds(
-                response.headers.get("retry-after")
+            answer = await self._control_request(
+                {"subtype": "get_usage", "skip_behaviors": True}, timeout=CLAUDE_CONTROL_TIMEOUT_SECONDS,
             )
+        except ProviderError as error:
+            if error.code == "cli_unsupported":
+                self._usage_failed("cli_unsupported", "This Claude Code version can't report usage; update Claude Code.")
+            else:
+                self._usage_failed("cli_failed", f"Claude Code could not report usage: {error.detail}")
+            return
+        limits = answer.get("rate_limits")
+        if answer.get("rate_limits_available") is True and _fresh_usage(limits):
+            self._usage_last_good = self._normalize_usage(limits)
+            self._usage_last_good_epoch = time.time()
+            self._usage_failures = 0
+            self._usage_retry_at = 0.0
+            self._usage_stale_reason = None
+            self._usage_error = None
             self._save_usage_state()
-            return self._stale_or_usage_error(arrived, "rate_limited")
-        if response.status_code in (401, 403):
-            self._usage_rejected_fingerprint = _token_fingerprint(token)
-            self._usage_rejected_source = source
-            self._save_usage_state()
-            return self._stale_or_usage_error(time.monotonic(), "credential_rejected", source=source)
-        if response.status_code >= 400:
-            raise ProviderError(
-                502,
-                f"The Claude usage endpoint answered {response.status_code}.",
-                code="provider_failure",
-            )
-        try:
-            payload = response.json()
-        except json.JSONDecodeError as exc:
-            raise ProviderError(
-                502, "The Claude usage endpoint returned a non-JSON payload.", code="provider_failure"
-            ) from exc
-        normalized = self._normalize_usage(payload if isinstance(payload, dict) else {})
-        self._usage_cache = normalized
-        self._usage_cache_at = time.monotonic()
-        self._usage_last_good = normalized
-        self._usage_last_good_epoch = time.time()
-        self._usage_blocked_until = 0.0
-        self._usage_rejected_fingerprint = None
-        self._usage_rejected_source = None
+        elif os.environ.get("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"):
+            self._usage_failed("nonessential_traffic_disabled",
+                               "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set, so Claude Code doesn't fetch usage.")
+        elif answer.get("rate_limits_available") is False:
+            self._usage_failed("usage_unavailable", "Claude doesn't report usage for this sign-in.")
+        else:
+            self._usage_failed("usage_unavailable", "Claude did not return live usage.")
+
+    def _usage_failed(self, reason: str, message: str) -> None:
+        self._usage_failures += 1
+        delay = CLAUDE_USAGE_BACKOFF_SECONDS[min(self._usage_failures, len(CLAUDE_USAGE_BACKOFF_SECONDS)) - 1]
+        self._usage_retry_at = time.time() + delay
+        self._usage_stale_reason = reason
+        self._usage_error = message
         self._save_usage_state()
-        return json.loads(json.dumps(normalized))
 
-    def _stale_or_usage_error(
-        self, now: float, reason: str, source: str | None = None
-    ) -> dict[str, Any]:
-        """Usage is temporarily unobtainable (rate-limited, dead credential
-        awaiting rotation, or attempt spacing): the last good snapshot
-        annotated as stale, or an explicit error when none exists yet.
-        Callers can rely on `stale`/`stale_reason`/`as_of_epoch`/
-        `retry_after_seconds` to present the state honestly."""
-        retry_after = max(0, int(self._usage_blocked_until - now))
-        # A stored-file token is static: CLI rotation can't fix it, so the
-        # recovery guidance differs from a CLI-owned credential.
-        file_sourced = source == "file"
-        if self._usage_last_good is not None:
-            stale = json.loads(json.dumps(self._usage_last_good))
-            _refresh_stale_windows(stale)
-            stale["stale"] = True
-            stale["stale_reason"] = reason
-            stale["as_of_epoch"] = int(self._usage_last_good_epoch)
-            if reason == "credential_rejected" and file_sourced:
-                stale["stale_reason"] = "credential_rejected_file"
-            if reason == "rate_limited" and retry_after:
-                stale["retry_after_seconds"] = retry_after
-            return stale
-        if reason == "credential_rejected":
-            if file_sourced:
-                raise ProviderError(
-                    503,
-                    "The stored Claude token was rejected. Replace it with "
-                    "`airelays claude set-token`, or remove it to fall back to "
-                    "the claude CLI's own sign-in. Requests are unaffected.",
-                    code="provider_rate_limited",
-                )
+    def _usage_snapshot(self) -> dict[str, Any]:
+        snapshot = json.loads(json.dumps(self._usage_last_good))
+        _refresh_stale_windows(snapshot)
+        return snapshot
+
+    def _stale_usage(self) -> dict[str, Any]:
+        """The last live reading, dated and explained; an error when there
+        has never been one. Callers rely on `stale`/`stale_reason`/
+        `as_of_epoch`/`retry_after_seconds` to present it honestly."""
+        retry_after = max(0, math.ceil(self._usage_retry_at - time.time()))
+        message = self._usage_error or "Claude did not return live usage."
+        if self._usage_last_good is None:
+            minutes = max(1, math.ceil(retry_after / 60))
             raise ProviderError(
-                503,
-                "Claude's usage credential renews automatically on the claude "
-                "CLI's next request; usage will appear then. Requests are "
-                "unaffected.",
-                code="provider_rate_limited",
+                503, f"{message} Retrying in ~{minutes}m; requests are unaffected.",
+                code="provider_rate_limited", retry_after_seconds=retry_after or None,
             )
-        minutes = max(1, retry_after // 60)
-        raise ProviderError(
-            503,
-            f"Claude rate-limits its usage endpoint; retrying in ~{minutes}m. "
-            "Requests are unaffected.",
-            code="provider_rate_limited",
-        )
+        stale = self._usage_snapshot()
+        stale["stale"] = True
+        stale["stale_reason"] = self._usage_stale_reason or "usage_unavailable"
+        stale["stale_message"] = message
+        stale["as_of_epoch"] = int(self._usage_last_good_epoch)
+        if retry_after:
+            stale["retry_after_seconds"] = retry_after
+        return stale
 
-    # ----- usage guardrail persistence -----
-    # The block window, rejected-token fingerprint, and last snapshot are
-    # persisted so a relay restart can never turn into a fresh poke at a
-    # locked-out endpoint (restart-loops were exactly how the hour-long
-    # lockouts were earned).
+    # ----- usage state persistence -----
+    # The last reading and the backoff survive restarts, so a restart loop
+    # can never turn into a burst of usage requests.
 
     def _load_usage_state(self) -> None:
         try:
@@ -1548,107 +1470,43 @@ class ClaudeCliRuntime:
             return
         if not isinstance(state, dict):
             return
-        blocked_epoch = state.get("blocked_until_epoch")
-        if isinstance(blocked_epoch, (int, float)):
-            remaining = blocked_epoch - time.time()
-            if remaining > 0:
-                self._usage_blocked_until = time.monotonic() + min(remaining, 7200)
-        fingerprint = state.get("rejected_fingerprint")
-        if isinstance(fingerprint, str) and fingerprint:
-            self._usage_rejected_fingerprint = fingerprint
-        rejected_source = state.get("rejected_source")
-        if isinstance(rejected_source, str) and rejected_source:
-            self._usage_rejected_source = rejected_source
-        attempt_epoch = state.get("last_attempt_epoch")
-        if isinstance(attempt_epoch, (int, float)):
-            elapsed = time.time() - attempt_epoch
-            if 0 <= elapsed < CLAUDE_USAGE_MIN_ATTEMPT_INTERVAL:
-                # Map remaining wall-clock spacing onto monotonic so a
-                # restart loop can't poke once per restart.
-                self._usage_last_attempt_at = time.monotonic() - elapsed
+        now = time.time()
+        retry_at = state.get("retry_at_epoch")
+        failures = state.get("failures")
+        if isinstance(retry_at, (int, float)) and retry_at > now and isinstance(failures, int) and failures > 0:
+            # Clamped: a clock jump must not silence the meter for days.
+            self._usage_retry_at = min(float(retry_at), now + CLAUDE_USAGE_BACKOFF_SECONDS[-1])
+            self._usage_failures = failures
+            reason, error = state.get("stale_reason"), state.get("error")
+            self._usage_stale_reason = reason if isinstance(reason, str) else None
+            self._usage_error = error if isinstance(error, str) else None
         last_good = state.get("last_good")
         last_good_epoch = state.get("last_good_epoch")
         if isinstance(last_good, dict) and isinstance(last_good_epoch, (int, float)):
             # Snapshots older than a day describe windows that have long
             # since rolled over; showing them helps nobody.
-            if time.time() - last_good_epoch < 86400:
+            if now - last_good_epoch < 86400:
                 self._usage_last_good = last_good
                 self._usage_last_good_epoch = float(last_good_epoch)
 
     def _save_usage_state(self) -> None:
-        mono = time.monotonic()
-        remaining = max(0.0, self._usage_blocked_until - mono)
-        attempt_ago = max(0.0, mono - self._usage_last_attempt_at)
         state = {
-            "blocked_until_epoch": time.time() + remaining if remaining else 0,
-            "rejected_fingerprint": self._usage_rejected_fingerprint,
-            "rejected_source": self._usage_rejected_source,
-            "last_attempt_epoch": time.time() - attempt_ago,
+            "failures": self._usage_failures,
+            "retry_at_epoch": self._usage_retry_at,
+            "stale_reason": self._usage_stale_reason,
+            "error": self._usage_error,
             "last_good": self._usage_last_good,
             "last_good_epoch": self._usage_last_good_epoch,
         }
         try:
             self._usage_state_path.parent.mkdir(parents=True, exist_ok=True)
-            # Atomic replace: a second relay sharing data_dir must never read
-            # a half-written state file (a torn read would fail open and poke
-            # a locked endpoint).
+            # Atomic replace: a second relay sharing data_dir must never
+            # read a half-written state file.
             tmp = self._usage_state_path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(state, ensure_ascii=True), encoding="utf-8")
             os.replace(tmp, self._usage_state_path)
         except OSError:
-            pass  # best-effort: guardrails still hold for this process
-
-    def _resolve_usage_token(self) -> tuple[str | None, str]:
-        """OAuth access token for the usage endpoint plus its source, in the
-        same precedence the request path uses: stored file, then the
-        `CLAUDE_CODE_OAUTH_TOKEN` env var, then the claude CLI's own stores
-        (macOS keychain, ~/.claude/.credentials.json).
-
-        Returns ``(token, source)``. When no usable token is found the source
-        is ``"expired"`` if a CLI-owned credential exists but its access
-        token has lapsed between rotations (renews on the CLI's next
-        request), or ``"none"`` if there is genuinely no sign-in."""
-        stored = None if self.profile.managed else self._settings.resolve_claude_oauth_token()
-        if stored:
-            return stored, "file"
-        env_token = None if self.profile.managed else os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
-        if env_token:
-            return env_token, "env"
-        saw_expired = False
-        config_dir = self.profile.config_dir
-        configured = os.environ.get("CLAUDE_CONFIG_DIR")
-        if config_dir is None and configured:
-            config_dir = Path(configured).expanduser().resolve()
-        service = "Claude Code-credentials"
-        if config_dir is not None:
-            service += "-" + hashlib.sha256(str(config_dir).encode()).hexdigest()[:8]
-        if sys.platform == "darwin":
-            try:
-                probe = subprocess.run(
-                    ["security", "find-generic-password", "-s", service, "-w"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=10,
-                )
-                if probe.returncode == 0:
-                    payload = json.loads(probe.stdout.strip())
-                    token = _fresh_oauth_access_token(payload)
-                    if token:
-                        return token, "keychain"
-                    saw_expired = saw_expired or _has_oauth_access_token(payload)
-            except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
-                pass
-        credentials = (config_dir or Path.home() / ".claude") / ".credentials.json"
-        try:
-            payload = json.loads(credentials.read_text(encoding="utf-8"))
-            token = _fresh_oauth_access_token(payload)
-            if token:
-                return token, "credentials"
-            saw_expired = saw_expired or _has_oauth_access_token(payload)
-        except (OSError, json.JSONDecodeError):
-            pass
-        return None, ("expired" if saw_expired else "none")
+            pass  # best-effort: the in-memory backoff still holds
 
     def _normalize_usage(self, payload: dict[str, Any]) -> dict[str, Any]:
         probe = self._last_probe or {}
@@ -1767,6 +1625,7 @@ class ClaudeCliRuntime:
         process = subprocess.run(
             [self._settings.claude_bin, "--version"],
             capture_output=True,
+            cwd=self.profile.root,
             env=self._subprocess_env(),
             check=False,
             text=True,
@@ -1781,6 +1640,7 @@ class ClaudeCliRuntime:
         process = subprocess.run(
             [self._settings.claude_bin, "auth", "status", "--json"],
             capture_output=True,
+            cwd=self.profile.root,
             env=self._subprocess_env(),
             check=False,
             text=True,
@@ -1863,51 +1723,47 @@ def _refresh_stale_windows(snapshot: dict[str, Any]) -> None:
     )
 
 
-def _token_fingerprint(token: str) -> str:
-    """Stable non-reversible identity for a credential, safe to persist."""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
-
-
-def _retry_after_seconds(header: str | None) -> int:
-    """Upstream retry-after header → a sane wait. Missing or malformed
-    values default to the endpoint's observed window (1h); the clamp keeps
-    a hostile or buggy header (including inf/overflow) from wedging usage
-    reporting for days or turning it into a hammer."""
+def _fresh_usage(limits: Any) -> bool:
+    """Whether a `get_usage` reading is live. When the usage endpoint fails,
+    the CLI answers from a persisted snapshot up to an hour old, without
+    `limits` and without saying so; only live readings carry `limits`. A
+    recent breakdown covers plans whose payload has no `limits`."""
+    if not isinstance(limits, dict):
+        return False
+    if isinstance(limits.get("limits"), list) and limits["limits"]:
+        return True
+    breakdown = limits.get("seven_day_breakdown")
+    as_of = breakdown.get("as_of") if isinstance(breakdown, dict) else None
     try:
-        seconds = int(float(header)) if header else 3600
-    except (ValueError, OverflowError):
-        seconds = 3600
-    return max(60, min(seconds, 7200))
+        age = time.time() - datetime.fromisoformat(str(as_of).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return False
+    return abs(age) < CLAUDE_USAGE_FRESH_SECONDS
 
 
-def _has_oauth_access_token(payload: Any) -> bool:
-    """True when a claude CLI credential payload carries an access token at
-    all — used to tell "signed in but token lapsed between rotations" from
-    "no sign-in", which need different messages."""
-    return bool(
-        isinstance(payload, dict)
-        and isinstance(payload.get("claudeAiOauth"), dict)
-        and payload["claudeAiOauth"].get("accessToken")
-    )
-
-
-def _fresh_oauth_access_token(payload: Any) -> str | None:
-    """Access token from a claude CLI credential payload, skipping tokens
-    the payload itself declares expired (they only earn a confusing 401
-    from the usage endpoint; the CLI refreshes them on its next own run)."""
-    if not isinstance(payload, dict):
-        return None
-    oauth = payload.get("claudeAiOauth")
-    if not isinstance(oauth, dict):
-        return None
-    token = oauth.get("accessToken")
-    if not token:
-        return None
-    expires_at_ms = oauth.get("expiresAt")
-    if isinstance(expires_at_ms, (int, float)) and expires_at_ms > 0:
-        if expires_at_ms / 1000.0 <= datetime.now(timezone.utc).timestamp():
-            return None
-    return str(token)
+async def _end_process(process: asyncio.subprocess.Process, *, close_stdin: bool = False) -> None:
+    """End a Claude CLI process without SIGKILL first. A CLI killed between
+    refreshing its OAuth token and persisting it leaves the profile with a
+    dead refresh token. Control sessions exit cleanly once stdin closes;
+    inference runs get SIGTERM, which lets the CLI finish writing."""
+    if close_stdin and process.returncode is None and process.stdin is not None:
+        process.stdin.close()
+        try:
+            await asyncio.wait_for(process.wait(), CLAUDE_EXIT_GRACE_SECONDS)
+        except TimeoutError:
+            pass
+    if process.returncode is None:
+        try:
+            process.terminate()
+            await asyncio.wait_for(process.wait(), CLAUDE_EXIT_GRACE_SECONDS)
+        except ProcessLookupError:
+            pass
+        except TimeoutError:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+    await process.wait()
 
 
 def _window_at_limit(window: dict[str, Any] | None) -> bool:

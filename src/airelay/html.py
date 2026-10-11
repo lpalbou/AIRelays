@@ -39,20 +39,20 @@ def render_home(
         claude_setup_copy = ""
         if claude_enabled:
             claude_setup_copy = (
-                "<li><code>claude auth login --claudeai</code> prepares the local Claude runtime</li>"
-                "<li><code>claude setup-token</code> enables headless Claude CLI auth via "
-                "<code>CLAUDE_CODE_OAUTH_TOKEN</code></li>"
+                "<li><code>airelays claude login</code> adds a Claude account to AIRelays</li>"
+                "<li><code>airelays claude set-token</code> stores a <code>claude setup-token</code> "
+                "token for headless use</li>"
             )
         if not relay_token_ready:
             next_step = "airelays init"
         elif provider_ready:
             next_step = f"airelays serve --host {host} --port {port}"
         elif openai_enabled and claude_enabled:
-            next_step = "airelays login or claude auth login --claudeai"
+            next_step = "airelays login or airelays claude login"
         elif openai_enabled:
             next_step = "airelays login"
         else:
-            next_step = "claude auth login --claudeai"
+            next_step = "airelays claude login"
         client_credential_copy = (
             "Use the AIRelays bearer token as the client credential so standard "
             "OpenAI-compatible SDKs send <code>Authorization: Bearer ...</code>. "

@@ -66,12 +66,25 @@ When the Claude runtime is enabled:
 - the runtime is stateless
 - the runtime is local-only
 
-Claude accounts added through `airelays claude login` have separate CLI-owned
-credential stores. AIRelays stores identity metadata and usage state beside
-each profile; it does not implement OAuth login or refresh for these profiles.
-An ambient or stored default-account token cannot override their credentials.
-Signing out one isolated profile does not sign out other accounts. The legacy
-`default` profile is shared with other tools using that CLI sign-in.
+AIRelays uses only Claude accounts it owns: profiles added through
+`airelays claude login`, each with its own CLI-owned credential store, and an
+optional setup token stored 0600 by `airelays claude set-token`. The personal
+Claude Code sign-in, an inherited `CLAUDE_CONFIG_DIR`, and an inherited
+`CLAUDE_CODE_OAUTH_TOKEN` are never used. AIRelays stores identity metadata
+and usage state beside each profile. It never reads Claude credentials
+(no keychain or credential-file reads) and does not implement OAuth login or
+refresh; usage comes from Claude Code's `get_usage` request inside each
+profile. Signing out runs `claude auth logout` only inside that relay-owned
+profile, or deletes the stored setup token; it never signs out the personal
+Claude Code or other accounts.
+
+Every Claude Code process runs with an explicit environment, its profile's
+`CLAUDE_CONFIG_DIR`, and a relay-owned working directory. Processes are ended
+gracefully (stdin closed or SIGTERM before SIGKILL) so a token refresh in
+progress can finish. Claude Code still derives a few files from the home
+directory (for example device keys) regardless of `CLAUDE_CONFIG_DIR`. On
+macOS, run the relay in your login session, not over SSH or as a
+LaunchDaemon, so Claude Code can use the keychain.
 
 ## Rate Limits
 

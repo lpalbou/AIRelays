@@ -124,13 +124,19 @@ In this mode AIRelays does not require `Authorization` on `/v1/*`. Open local re
 
 ## Claude Runtime
 
-Browser-based local Claude login:
+AIRelays uses only Claude accounts it owns. Add one with a browser sign-in:
 
 ```bash
 airelays claude login
 airelays claude login       # optional: add another of your own accounts
 airelays claude accounts
 ```
+
+Each sign-in creates a separate Claude Code profile under
+`~/.airelays/claude/accounts/<id>/`. Claude Code owns its credentials and
+refreshes them. The desktop offers **Sign in** / **Add account** →
+"In a browser" in the Anthropic card. Usage bars need a Claude Code version
+that supports `get_usage` (verified with 2.1.292+); requests work without it.
 
 Headless Claude login — `claude setup-token` needs a browser, so run it on
 any machine that has one, then carry the token to the server:
@@ -144,13 +150,15 @@ airelays init
 airelays claude set-token   # paste the token; stored 0600, survives restarts
 ```
 
-Exporting `CLAUDE_CODE_OAUTH_TOKEN` also works, but it does not survive
-service managers (systemd, docker) or reboots.
+The token is stored in `~/.airelays/claude-token` and appears as the account
+`default` (desktop: "With a token"). It is inference-only: Claude reports no
+usage or email for setup tokens, so it has no usage bar and cannot be
+deduplicated against browser accounts.
 
-Browser sign-in adds an isolated profile. Claude Code owns its credentials
-and refreshes them automatically. Existing CLI sign-in and the headless token
-remain available as the `default` account; a headless token does not override
-browser-added accounts. The desktop offers **Add account** in the Anthropic card.
+Your personal Claude Code sign-in (`~/.claude`), an inherited
+`CLAUDE_CONFIG_DIR`, and an exported `CLAUDE_CODE_OAUTH_TOKEN` are never
+used; `airelays doctor` reports an ignored `CLAUDE_CODE_OAUTH_TOKEN`. Until an
+account is connected, `claude:*` requests return `503 provider_auth_error`.
 
 Manage one account using its email or id from `airelays claude accounts`:
 
@@ -160,14 +168,14 @@ airelays claude logout ACCOUNT
 ```
 
 Renewal requires the same account and pauses that profile until sign-in
-succeeds. `--replace default` renews into a new isolated profile, preserving
-the existing CLI sign-in and headless token. Duplicate subscriptions receive
-only one share of traffic.
+succeeds. To renew the setup token, run `airelays claude set-token` again.
+Duplicate browser subscriptions receive only one share of traffic.
 
-Signing out an isolated profile leaves other accounts signed in. Signing out
-`default` also signs out other tools using that CLI profile. Use `--all` only
-to sign out all enrolled accounts. The running relay discovers account changes
-automatically and balances requests across eligible accounts with capacity.
+Signing out runs `claude auth logout` inside that AIRelays profile only;
+`airelays claude logout default` only deletes the stored setup token. Neither
+touches your personal Claude Code sign-in. Use `--all` only to sign out all
+AIRelays accounts. The running relay discovers account changes automatically
+and balances requests across eligible accounts with capacity.
 
 Start AIRelays with the Claude runtime enabled:
 

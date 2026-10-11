@@ -490,7 +490,7 @@ def test_cli_init_claude_only_skips_openai_login_hint(
     payload = json.loads(capsys.readouterr().out)
 
     assert "airelays login" not in payload["next_steps"]
-    assert "claude auth login --claudeai" in payload["next_steps"]
+    assert "airelays claude login" in payload["next_steps"]
 
 
 def test_cli_token_show_displays_existing_token_and_supports_json(

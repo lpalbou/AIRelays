@@ -6,8 +6,9 @@ AIRelays is an OpenAI-shaped edge over provider-specific local runtimes.
 
 - The default runtime uses the ChatGPT Codex subscription backend and
   balances requests across every enrolled OpenAI account with capacity.
-- The Claude account pool selects an isolated CLI profile for each local
-  `claude -p` subprocess. Claude Code owns authentication and token refresh.
+- The Claude account pool selects an AIRelays-owned CLI profile for each
+  local `claude -p` subprocess. Claude Code owns authentication and token
+  refresh; the personal Claude Code sign-in is never used.
 
 ```mermaid
 flowchart LR
@@ -56,9 +57,39 @@ Claude remains stateless: there is no cross-request conversation affinity.
 `airelay.claude_auth` owns enrollment metadata under
 `data_dir/claude/accounts/<id>/account.json`. Each adjacent `config/` directory
 is owned by Claude Code and stays at a stable path because macOS credentials
-are scoped to it. `airelay.claude_accounts` owns selection and failover;
-`ClaudeCliRuntime` owns per-profile execution, model discovery, and usage
-backoff. See [the profile decision](adr/0006-isolated-claude-subscription-accounts.md).
+are scoped to it. The optional setup token (`data_dir/claude-token`) is the
+inference-only account `default`, run from its own relay-owned
+`data_dir/claude/token/config`. The ambient Claude Code sign-in, an inherited
+`CLAUDE_CONFIG_DIR`, and `CLAUDE_CODE_OAUTH_TOKEN` are not accounts.
+`airelay.claude_accounts` owns selection and failover; `ClaudeCliRuntime` owns
+per-profile execution, model discovery, and usage backoff.
+
+Usage readings come from the profile's own CLI through the Claude Code SDK
+`get_usage` control request, at startup and every five minutes; AIRelays never
+reads Claude credentials. Claude Code renews the profile's token while
+answering, which keeps idle profiles signed in. A reading without live data
+keeps the last good one, marked stale, and failures back off up to 60 minutes,
+persisted across restarts. Every Claude Code process gets an explicit
+environment, its profile's `CLAUDE_CONFIG_DIR`, and a relay-owned working
+directory, and is ended gracefully (stdin closed or SIGTERM before SIGKILL).
+See [the profile decision](adr/0006-isolated-claude-subscription-accounts.md)
+and [relay-owned accounts](adr/0007-relay-owned-claude-accounts.md).
+
+```mermaid
+flowchart LR
+    Pool["Claude account pool\nselection · cooldown · failover"]
+    Pool --> Profile["Browser profile runtime\nCLAUDE_CONFIG_DIR: claude/accounts/ID/config"]
+    Pool --> Token["Setup-token runtime (default)\nCLAUDE_CONFIG_DIR: claude/token/config"]
+    Profile -->|"claude -p (requests)"| CLI1["claude CLI\nprofile credentials"]
+    Refresh["Usage refresh\nstartup · every 5 min"] -->|"get_usage control request\n(no prompt)"| CLI1
+    CLI1 -->|"renews OAuth token\nlive limits"| Refresh
+    Token -->|"claude -p (requests)"| CLI2["claude CLI\ninference only"]
+    CLI1 --> Anthropic["Claude subscription"]
+    CLI2 --> Anthropic
+```
+
+The personal Claude Code sign-in (`~/.claude`) is not part of this picture:
+AIRelays never reads it, routes through it, or signs it out.
 
 ## OpenAI Account Pool Lifecycle
 

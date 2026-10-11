@@ -696,8 +696,9 @@ pub async fn run_login(app: AppHandle, provider: String, account: Option<String>
 
 /// Stores a Claude Code OAuth token (from `claude setup-token` run on any
 /// browser-equipped machine) in the same 0600 file the CLI's
-/// `airelays claude set-token` writes; it applies to the default account
-/// without overriding credentials in browser-added profiles.
+/// `airelays claude set-token` writes. It becomes the relay-owned
+/// setup-token account (`default`); browser-added profiles keep their own
+/// credentials.
 #[tauri::command]
 pub async fn set_claude_token(app: AppHandle, token: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -729,9 +730,8 @@ pub async fn set_claude_token(app: AppHandle, token: String) -> Result<(), Strin
     .map_err(|error| error.to_string())?
 }
 
-/// Removes the stored Claude token. Needed because a stale stored token
-/// overrides the default CLI profile's own login — without
-/// this, a bad token can permanently mask a valid browser sign-in.
+/// Removes the stored Claude token, which signs out the setup-token
+/// account. Claude Code's own sign-in is never touched (ADR 0007).
 #[tauri::command]
 pub async fn clear_claude_token(app: AppHandle) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -743,7 +743,7 @@ pub async fn clear_claude_token(app: AppHandle) -> Result<bool, String> {
             let state = app.state::<AppState>();
             state.supervisor.log(
                 "claude-login",
-                "Stored Claude token removed; the relay now uses the claude CLI's own sign-in.",
+                "Stored Claude token removed; the setup-token account is signed out.",
                 false,
             );
         }

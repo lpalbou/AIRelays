@@ -5,8 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from airelay.claude_auth import new_profile
 from airelay.providers import ClaudeCliRuntime, ProviderError, ProviderRegistry
 from airelay.config import Settings
+
+# Captured before conftest stubs it out for every other test.
+REAL_CONTROL_REQUEST = ClaudeCliRuntime._control_request
 
 
 def make_settings(tmp_path, **overrides) -> Settings:
@@ -825,33 +829,30 @@ async def test_openai_model_admission_invalidates_cache_when_account_pool_change
     assert pool.refresh_calls >= 2
 
 
-def test_subprocess_env_injects_stored_claude_token(tmp_path, monkeypatch) -> None:
-    """A token stored via `airelays claude set-token` must reach every
-    spawned claude child, and must beat any ambient environment value —
-    explicit configuration over invisible shell state."""
+def test_subprocess_env_names_relay_profile_and_ignores_ambient_claude_state(tmp_path, monkeypatch) -> None:
+    """ADR 0007: every spawned claude child runs in a relay-owned profile.
+    The user's own CLAUDE_CONFIG_DIR / CLAUDE_CODE_OAUTH_TOKEN never leak in;
+    only the stored setup token reaches the setup-token account."""
     settings = make_settings(tmp_path)
     settings.claude_oauth_token_file = tmp_path / "data" / "claude-token"
-    settings.write_claude_oauth_token("file-token")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "personal-claude"))
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "ambient-token")
 
-    runtime = ClaudeCliRuntime(settings)
-    env = runtime._subprocess_env()
-    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "file-token"
+    token_runtime = ClaudeCliRuntime(settings)
+    env = token_runtime._subprocess_env()
+    assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "data" / "claude" / "token" / "config")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert settings.claude_oauth_token_source() == "none"
 
-    token_mode = settings.claude_oauth_token_file.stat().st_mode & 0o777
-    assert token_mode == 0o600
+    settings.write_claude_oauth_token("file-token")
+    assert token_runtime._subprocess_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "file-token"
+    assert settings.claude_oauth_token_file.stat().st_mode & 0o777 == 0o600
     assert settings.claude_oauth_token_source() == "file"
 
-
-def test_subprocess_env_falls_back_to_ambient_token(tmp_path, monkeypatch) -> None:
-    settings = make_settings(tmp_path)
-    settings.claude_oauth_token_file = tmp_path / "data" / "claude-token"
-    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "ambient-token")
-
-    runtime = ClaudeCliRuntime(settings)
-    env = runtime._subprocess_env()
-    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "ambient-token"
-    assert settings.claude_oauth_token_source() == "env"
+    managed = ClaudeCliRuntime(settings, profile=new_profile(settings))
+    env = managed._subprocess_env()
+    assert env["CLAUDE_CONFIG_DIR"] == str(managed.profile.config_dir)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
 
 
 def test_claude_usage_normalizes_to_openai_shape(tmp_path) -> None:
@@ -930,223 +931,238 @@ def test_claude_unknown_percent_is_not_zero(tmp_path, percent):
     assert window["remaining_percent"] is None
 
 
+def usage_answer(percent=10.0, *, live=True, as_of=None, available=True):
+    """A `get_usage` control response. Live readings carry `limits`; the
+    CLI's seeded fallback strips them and keeps an old breakdown."""
+    limits = {"five_hour": {"utilization": percent, "resets_at": "2099-01-01T00:00:00+00:00"},
+              "seven_day": {"utilization": 40, "resets_at": "2099-01-03T00:00:00+00:00"}}
+    if live:
+        limits["limits"] = [{"kind": "session", "group": "session", "percent": percent},
+                            {"kind": "weekly_all", "group": "weekly", "percent": 40}]
+    if as_of is not None:
+        limits["seven_day_breakdown"] = {"as_of": as_of}
+    return {"rate_limits_available": available, "rate_limits": limits if available else None}
+
+
+def managed_runtime(tmp_path, answers, calls=None):
+    settings = make_settings(tmp_path)
+    runtime = ClaudeCliRuntime(settings, profile=new_profile(settings))
+
+    async def control(request, **kwargs):
+        assert request == {"subtype": "get_usage", "skip_behaviors": True}
+        if calls is not None:
+            calls.append(request)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    runtime._control_request = control
+    return runtime
+
+
+def expire_cache(runtime) -> None:
+    import time as _time
+
+    runtime._usage_last_good_epoch = _time.time() - 301
+    runtime._usage_retry_at = 0.0
+
+
 @pytest.mark.asyncio
 async def test_claude_fresh_cache_rederives_resets_and_keeps_scopes_independent(tmp_path):
     import time
-    runtime = ClaudeCliRuntime(make_settings(tmp_path))
-    runtime._usage_cache = runtime._normalize_usage({
+    runtime = managed_runtime(tmp_path, [])
+    runtime._usage_last_good = runtime._normalize_usage({
         "five_hour": {"utilization": 100, "resets_at": "2000-01-01T00:00:00Z"},
         "seven_day_fable": {"utilization": 100, "resets_at": "2099-01-01T00:00:00Z"},
     })
-    runtime._usage_cache_at = time.monotonic()
+    runtime._usage_last_good_epoch = time.time()
     snapshot = await runtime.get_subscription_status("req")
     assert snapshot["rate_limit_reached_type"] is None
     assert snapshot["rate_limits"]["default"]["primary_window"]["used_percent"] is None
     assert snapshot["rate_limits"]["additional"][0]["rate_limit"]["limit_reached"] is True
-    assert runtime._usage_cache["rate_limit_reached_type"] == "five_hour"
-    assert snapshot["captured_at"] == runtime._usage_cache["captured_at"]
+    assert runtime._usage_last_good["rate_limit_reached_type"] == "five_hour"
+    assert snapshot["captured_at"] == runtime._usage_last_good["captured_at"]
 
 
-def test_claude_usage_serves_stale_snapshot_during_rate_limit(tmp_path) -> None:
-    """A 429 from the undocumented usage endpoint must not blank the UI:
-    the last good snapshot is served, annotated as stale with the retry
-    horizon, and no further upstream request is made inside the window."""
+@pytest.mark.asyncio
+async def test_claude_usage_reads_live_get_usage_and_caches(tmp_path) -> None:
+    calls = []
+    runtime = managed_runtime(tmp_path, [usage_answer(10.0)], calls)
+    payload = await runtime.get_subscription_status("req-1")
+    assert "stale" not in payload
+    assert payload["rate_limits"]["default"]["primary_window"]["used_percent"] == 10
+    assert payload["rate_limits"]["default"]["secondary_window"]["used_percent"] == 40
+    await runtime.get_subscription_status("req-2")
+    assert len(calls) == 1  # fresh reading served from cache
+
+
+@pytest.mark.asyncio
+async def test_claude_usage_seeded_snapshot_is_stale_and_backs_off(tmp_path) -> None:
+    """The CLI's fallback (no `limits`, hour-old breakdown) must never pass
+    for live data: the last live reading is served, dated and explained,
+    and the CLI is not asked again until the backoff passes."""
     import time as _time
 
-    runtime = ClaudeCliRuntime(make_settings(tmp_path))
-    runtime._usage_last_good = {"account": {"email": "a@b.c"}, "rate_limits": {"default": None, "additional": []}}
-    runtime._usage_last_good_epoch = _time.time() - 120
-    runtime._usage_blocked_until = _time.monotonic() + 1800
+    calls = []
+    runtime = managed_runtime(tmp_path, [
+        usage_answer(10.0),
+        usage_answer(99.0, live=False, as_of="2026-01-01T00:00:00+00:00"),
+        usage_answer(20.0),
+    ], calls)
+    await runtime.get_subscription_status("live")
+    good_epoch = runtime._usage_last_good_epoch
+    expire_cache(runtime)
+    runtime._usage_last_good_epoch = good_epoch - 301
 
-    stale = runtime._stale_or_usage_error(_time.monotonic(), "rate_limited")
-
-    assert stale["stale"] is True
-    assert stale["stale_reason"] == "rate_limited"
-    assert 0 < stale["retry_after_seconds"] <= 1800
-    assert stale["account"]["email"] == "a@b.c"
-    # The stored snapshot itself must stay unannotated (deep-copied).
+    stale = await runtime.get_subscription_status("seeded")
+    assert stale["stale"] is True and stale["stale_reason"] == "usage_unavailable"
+    assert stale["rate_limits"]["default"]["primary_window"]["used_percent"] == 10  # never the seeded 99
+    assert stale["as_of_epoch"] == int(good_epoch - 301)
+    assert 290 <= stale["retry_after_seconds"] <= 300
     assert "stale" not in runtime._usage_last_good
 
+    await runtime.get_subscription_status("inside-backoff")
+    assert len(calls) == 2
 
-def test_claude_usage_raises_actionable_error_without_snapshot(tmp_path) -> None:
-    import time as _time
-
-    import pytest as _pytest
-
-    runtime = ClaudeCliRuntime(make_settings(tmp_path))
-    runtime._usage_blocked_until = _time.monotonic() + 3600
-
-    with _pytest.raises(ProviderError) as excinfo:
-        runtime._stale_or_usage_error(_time.monotonic(), "rate_limited")
-
-    assert excinfo.value.status_code == 503
-    assert "rate-limit" in str(excinfo.value).lower()
-    assert excinfo.value.code == "provider_rate_limited"
-
-
-def test_retry_after_seconds_clamps_and_defaults() -> None:
-    from airelay.providers import _retry_after_seconds
-
-    assert _retry_after_seconds(None) == 3600
-    assert _retry_after_seconds("garbage") == 3600
-    assert _retry_after_seconds("120") == 120
-    assert _retry_after_seconds("5") == 60          # floor: no hammering
-    assert _retry_after_seconds("999999") == 7200   # ceiling: no multi-day wedge
+    runtime._usage_retry_at = _time.time() - 1
+    payload = await runtime.get_subscription_status("recovered")
+    assert "stale" not in payload and payload["rate_limits"]["default"]["primary_window"]["used_percent"] == 20
+    assert runtime._usage_failures == 0 and len(calls) == 3
 
 
 @pytest.mark.asyncio
-async def test_claude_usage_429_blocks_upstream_until_window_passes(tmp_path, monkeypatch) -> None:
-    """End-to-end orchestration: a 429 sets the block from retry-after, no
-    request is sent inside the window, and the first call after the window
-    succeeds and clears the block."""
-    import time as _time
+async def test_claude_usage_without_limits_is_fresh_only_with_recent_breakdown(tmp_path) -> None:
+    from datetime import datetime, timezone
 
-    import httpx as _httpx
-
-    calls = {"count": 0}
-    responses = [
-        _httpx.Response(429, headers={"retry-after": "120"}, json={"error": "rate_limit"}),
-        _httpx.Response(200, json={"five_hour": {"utilization": 10.0, "resets_at": "2099-01-01T00:00:00+00:00"}}),
-    ]
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def get(self, url, headers=None):
-            response = responses[min(calls["count"], len(responses) - 1)]
-            calls["count"] += 1
-            return response
-
-    monkeypatch.setattr("airelay.providers.httpx.AsyncClient", FakeClient)
-    runtime = ClaudeCliRuntime(make_settings(tmp_path))
-    monkeypatch.setattr(runtime, "_resolve_usage_token", lambda: ("tok", "keychain"))
-
-    # 1) First call hits upstream, gets 429, no snapshot yet → clear error.
-    with pytest.raises(ProviderError) as excinfo:
-        await runtime.get_subscription_status("req-1")
-    assert excinfo.value.code == "provider_rate_limited"
-    assert calls["count"] == 1
-    assert runtime._usage_blocked_until > _time.monotonic()
-
-    # 2) Inside the window: no upstream request at all.
-    with pytest.raises(ProviderError):
-        await runtime.get_subscription_status("req-2")
-    assert calls["count"] == 1
-
-    # 3) Window passed (and attempt spacing elapsed): fetch succeeds,
-    # block clears, payload is fresh.
-    runtime._usage_blocked_until = _time.monotonic() - 1
-    runtime._usage_last_attempt_at = _time.monotonic() - 3600
-    payload = await runtime.get_subscription_status("req-3")
-    assert calls["count"] == 2
+    now = datetime.now(timezone.utc).isoformat()
+    runtime = managed_runtime(tmp_path, [usage_answer(15.0, live=False, as_of=now)])
+    payload = await runtime.get_subscription_status("req")
     assert "stale" not in payload
-    assert payload["rate_limits"]["default"]["primary_window"]["used_percent"] == 10.0
-    assert runtime._usage_blocked_until == 0.0
-
-    # 4) Fresh cache: still no extra upstream call.
-    await runtime.get_subscription_status("req-4")
-    assert calls["count"] == 2
+    assert payload["rate_limits"]["default"]["primary_window"]["used_percent"] == 15
 
 
 @pytest.mark.asyncio
-async def test_claude_usage_never_retries_a_rejected_token(tmp_path, monkeypatch) -> None:
-    """A 401 marks the token dead: no upstream retry with the same token
-    (even after the attempt-spacing interval), automatic recovery when the
-    resolved token changes, and the guardrail survives a restart."""
+async def test_claude_usage_failures_back_off_exponentially_and_persist(tmp_path) -> None:
     import time as _time
 
-    import httpx as _httpx
+    calls = []
+    runtime = managed_runtime(tmp_path, [usage_answer(available=False)] * 3, calls)
+    delays = []
+    for attempt in range(3):
+        with pytest.raises(ProviderError) as excinfo:
+            await runtime.get_subscription_status(f"req-{attempt}")
+        assert excinfo.value.code == "provider_rate_limited"
+        assert "doesn't report usage" in excinfo.value.detail
+        delays.append(round(runtime._usage_retry_at - _time.time(), -1))
+        runtime._usage_retry_at = _time.time() - 1 if attempt < 2 else runtime._usage_retry_at
+    assert delays == [300, 600, 1200]
+    assert len(calls) == 3
 
-    calls = {"count": 0}
-    responses = [
-        _httpx.Response(401, json={"error": "auth"}),
-        _httpx.Response(200, json={"five_hour": {"utilization": 5.0, "resets_at": "2099-01-01T00:00:00+00:00"}}),
-    ]
+    # A restart keeps the backoff: no CLI session inside the window.
+    restarted = ClaudeCliRuntime(runtime._settings, profile=runtime.profile)
+    restarted._control_request = runtime._control_request
+    with pytest.raises(ProviderError):
+        await restarted.get_subscription_status("after-restart")
+    assert len(calls) == 3 and restarted._usage_failures == 3
 
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def get(self, url, headers=None):
-            response = responses[min(calls["count"], len(responses) - 1)]
-            calls["count"] += 1
-            return response
-
-    monkeypatch.setattr("airelay.providers.httpx.AsyncClient", FakeClient)
-    settings = make_settings(tmp_path)
-    runtime = ClaudeCliRuntime(settings)
-    token = {"value": "dead-token"}
-    monkeypatch.setattr(runtime, "_resolve_usage_token", lambda: (token["value"], "keychain"))
-
-    # 1) 401 → actionable error, token fingerprinted as rejected.
+@pytest.mark.asyncio
+async def test_claude_usage_explains_unsupported_cli_and_disabled_traffic(tmp_path, monkeypatch) -> None:
+    runtime = managed_runtime(tmp_path, [
+        ProviderError(502, "Unsupported control request subtype: get_usage", code="cli_unsupported"),
+        usage_answer(live=False, as_of="2026-01-01T00:00:00+00:00"),
+    ])
     with pytest.raises(ProviderError) as excinfo:
-        await runtime.get_subscription_status("req-1")
-    assert "renews automatically" in str(excinfo.value)
-    assert calls["count"] == 1
+        await runtime.get_subscription_status("old-cli")
+    assert "update Claude Code" in excinfo.value.detail
+    assert runtime._usage_stale_reason == "cli_unsupported"
 
-    # 2) Same token, attempt spacing elapsed → still no upstream call.
-    runtime._usage_last_attempt_at = _time.monotonic() - 3600
-    with pytest.raises(ProviderError):
-        await runtime.get_subscription_status("req-2")
-    assert calls["count"] == 1
-
-    # 3) Restart: guardrail persists via the state file.
-    restarted = ClaudeCliRuntime(settings)
-    monkeypatch.setattr(restarted, "_resolve_usage_token", lambda: (token["value"], "keychain"))
-    with pytest.raises(ProviderError):
-        await restarted.get_subscription_status("req-3")
-    assert calls["count"] == 1
-
-    # 4) Token rotates → fetch allowed again, succeeds, block cleared.
-    token["value"] = "fresh-token"
-    restarted._usage_last_attempt_at = _time.monotonic() - 3600
-    payload = await restarted.get_subscription_status("req-4")
-    assert calls["count"] == 2
-    assert payload["rate_limits"]["default"]["primary_window"]["used_percent"] == 5.0
-    assert restarted._usage_rejected_fingerprint is None
+    runtime._usage_retry_at = 0.0
+    monkeypatch.setenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+    with pytest.raises(ProviderError) as excinfo:
+        await runtime.get_subscription_status("no-traffic")
+    assert "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" in excinfo.value.detail
+    assert runtime._usage_stale_reason == "nonessential_traffic_disabled"
 
 
-def test_resolve_usage_token_reports_expired_vs_absent(tmp_path, monkeypatch) -> None:
-    """A lapsed-but-present CLI credential is 'expired' (renews itself), not
-    'none' (needs sign-in) — the distinction the incident hinged on."""
+@pytest.mark.asyncio
+async def test_claude_usage_refresh_survives_caller_cancellation(tmp_path) -> None:
+    """A disconnecting client must not cancel a CLI that may be rotating
+    the profile's OAuth token."""
+    import asyncio
+
+    release = asyncio.Event()
+    runtime = managed_runtime(tmp_path, [])
+
+    async def slow_control(request, **kwargs):
+        await release.wait()
+        return usage_answer(30.0)
+
+    runtime._control_request = slow_control
+    caller = asyncio.create_task(runtime.get_subscription_status("client"))
+    await asyncio.sleep(0)
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    release.set()
+    await runtime._usage_task
+    assert runtime._usage_last_good["rate_limits"]["default"]["primary_window"]["used_percent"] == 30
+
+
+@pytest.mark.asyncio
+async def test_setup_token_account_reports_no_usage(tmp_path) -> None:
     runtime = ClaudeCliRuntime(make_settings(tmp_path))
-    monkeypatch.setattr(
-        type(runtime._settings), "resolve_claude_oauth_token", lambda self: None
-    )
-    import json as _json
+    with pytest.raises(ProviderError) as excinfo:
+        await runtime.get_subscription_status("req")
+    assert excinfo.value.status_code == 422
+    assert "setup tokens" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_control_request_reads_answer_and_ends_cli_gracefully(tmp_path) -> None:
+    """A real child process: the request goes in on stdin, the matching
+    control_response comes back, and the CLI is allowed to exit on its own
+    (stdin closed), never killed while it may be persisting a token."""
     import sys as _sys
 
-    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
-    monkeypatch.setattr(_sys, "platform", "linux")  # skip keychain probe
+    marker = tmp_path / "clean-exit"
+    script = tmp_path / "fake-claude"
+    script.write_text(f"#!{_sys.executable}\n" + f'''
+import json, os, sys
+request = json.loads(sys.stdin.readline())
+assert os.environ["CLAUDE_CONFIG_DIR"].endswith("/config")
+print(json.dumps({{"type": "system"}}), flush=True)
+print(json.dumps({{"type": "control_response", "response": {{"subtype": "success",
+      "request_id": request["request_id"], "response": {{"echo": request["request"]}}}}}}), flush=True)
+sys.stdin.read()
+open({str(marker)!r}, "w").write("ok")
+''')
+    script.chmod(0o700)
+    settings = make_settings(tmp_path, claude_bin=str(script))
+    runtime = ClaudeCliRuntime(settings, profile=new_profile(settings))
+    answer = await REAL_CONTROL_REQUEST(runtime, {"subtype": "get_usage"}, timeout=10)
+    assert answer == {"echo": {"subtype": "get_usage"}}
+    assert marker.read_text() == "ok"
 
-    creds = tmp_path / ".claude" / ".credentials.json"
-    creds.parent.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr("airelay.providers.Path.home", staticmethod(lambda: tmp_path))
 
-    creds.write_text(_json.dumps({"claudeAiOauth": {"accessToken": "x", "expiresAt": 1}}), encoding="utf-8")
-    token, source = runtime._resolve_usage_token()
-    assert token is None and source == "expired"
+@pytest.mark.asyncio
+async def test_control_request_maps_unknown_subtype_to_cli_unsupported(tmp_path) -> None:
+    import sys as _sys
 
-    creds.write_text(_json.dumps({}), encoding="utf-8")
-    token, source = runtime._resolve_usage_token()
-    assert token is None and source == "none"
-
-    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "env-tok")
-    token, source = runtime._resolve_usage_token()
-    assert token == "env-tok" and source == "env"
+    script = tmp_path / "old-claude"
+    script.write_text(f"#!{_sys.executable}\n" + '''
+import json, sys
+request = json.loads(sys.stdin.readline())
+print(json.dumps({"type": "control_response", "response": {"subtype": "error",
+      "request_id": request["request_id"], "error": "Unsupported control request subtype: get_usage"}}), flush=True)
+''')
+    script.chmod(0o700)
+    settings = make_settings(tmp_path, claude_bin=str(script))
+    runtime = ClaudeCliRuntime(settings, profile=new_profile(settings))
+    with pytest.raises(ProviderError) as excinfo:
+        await REAL_CONTROL_REQUEST(runtime, {"subtype": "get_usage"}, timeout=10)
+    assert excinfo.value.code == "cli_unsupported"
 
 
 def test_refresh_stale_windows_clears_rolled_over_state() -> None:

@@ -3,7 +3,7 @@
 `AIRelays` is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 - The default runtime uses an AIRelays-owned ChatGPT subscription login.
-- The Claude runtime balances your own subscription accounts through isolated local `claude` CLI profiles, while retaining your existing CLI sign-in.
+- The Claude runtime balances your own subscription accounts through AIRelays-owned local `claude` CLI profiles; your personal Claude Code sign-in is never used or changed.
 - AIRelays protects the relay with its own bearer token by default.
 - Traffic is logged to JSONL files with automatic rotation and retention (7 days, 1 GiB total by default).
 
@@ -77,7 +77,7 @@ SHA-256 digest, install without sudo or admin rights, and start the app:
 
 The app is self-contained: it embeds its own Python and relay, so it needs
 neither Python nor Node. Run the same command again to update. Set
-`AIRELAYS_VERSION=0.15.0` (or `$env:AIRELAYS_VERSION` on Windows) with any
+`AIRELAYS_VERSION=0.16.0` (or `$env:AIRELAYS_VERSION` on Windows) with any
 installer to pin a release, and `AIRELAYS_NO_LAUNCH=1` to skip starting the
 app. You can also download the DMG, AppImage, deb, or setup `.exe` from the
 Releases page directly; the builds are not notarized or code-signed, see
@@ -171,12 +171,17 @@ airelays claude set-token   # paste the token; stored 0600, survives restarts
 airelays serve --port 8080
 ```
 
-`airelays claude set-token` stores the token in `~/.airelays/claude-token`
-and passes it to the local `claude` CLI automatically — unlike a shell
-`export`, it keeps working under systemd, launchd, and docker. Exporting
-`CLAUDE_CODE_OAUTH_TOKEN` still works as a fallback for the default account.
-Stored and environment tokens apply only to that account; browser-added
-accounts use their own Claude Code profiles.
+AIRelays uses only Claude accounts it owns. Each `airelays claude login`
+creates a separate Claude Code profile under `~/.airelays/claude/accounts/`.
+`airelays claude set-token` stores an optional setup token 0600 in
+`~/.airelays/claude-token` — unlike a shell `export`, it keeps working under
+systemd, launchd, and docker — and runs it as the account `default` in its
+own relay-owned Claude Code configuration. Your personal Claude Code sign-in
+(`~/.claude`, whatever `claude auth login` or `/login` selected), an
+inherited `CLAUDE_CONFIG_DIR`, and an exported `CLAUDE_CODE_OAUTH_TOKEN` are
+never used, so switching or signing out Claude Code never affects the relay.
+Until an account is connected, `claude:*` requests return
+`503 provider_auth_error` and `/v1/models` lists no Claude models.
 
 ```bash
 airelays claude accounts                     # list account ids and sign-ins
@@ -185,19 +190,32 @@ airelays claude login --replace ACCOUNT      # renew one sign-in
 airelays claude logout ACCOUNT               # sign out just this account
 ```
 
-The desktop Anthropic card offers **Add account**, separate usage bars, and
-sign-out on each row. Accounts join and leave routing without a relay restart.
+The desktop Anthropic card offers **Sign in** / **Add account** ("In a
+browser" or "With a token"), separate usage bars, and sign-out on each row.
+Accounts join and leave routing without a relay restart.
 The default `balanced` strategy prefers available execution slots and the
 lowest reported weekly usage among eligible accounts. Without fresh usage
 information, accounts take turns. Exhausted short or model-specific windows
 are skipped; account failures can fail over only before response bytes are sent.
 Set `[providers.claude].balance` to `round_robin` or `ordered` to change selection.
 
-Your existing CLI login remains the `default` account. Signing out `default`
-also signs out other tools using that CLI profile and removes the stored relay
-token. Signing out a browser-added account affects only its isolated profile.
-With multiple accounts, `airelays claude logout` requires an account or `--all`.
-An exported token must also be removed from the relay environment to stop its use.
+Usage bars come from Claude Code itself: every five minutes the relay asks
+each profile's CLI for its usage (`get_usage`, no prompt or quota), which also
+keeps idle profiles signed in. This needs a Claude Code version with
+`get_usage` (verified with 2.1.292+). The setup-token account is
+inference-only: Claude reports no usage or email for setup tokens, so it has
+no bar. See [Subscription Status](docs/subscription-status.md).
+
+Signing out affects only AIRelays: `airelays claude logout ACCOUNT` signs out
+that relay-owned profile and stops routing to it, and
+`airelays claude logout default` deletes the stored setup token. Your personal
+Claude Code sign-in is untouched. With multiple accounts,
+`airelays claude logout` requires an account or `--all`.
+
+Upgrading from 0.15.0 or earlier: if Claude only worked through your personal
+Claude Code sign-in, a custom `CLAUDE_CONFIG_DIR`, or an exported
+`CLAUDE_CODE_OAUTH_TOKEN`, connect it once with `airelays claude login` (or
+`airelays claude set-token`). Profiles already enrolled keep working.
 
 When the Claude runtime is enabled, AIRelays keeps the same auth behavior as the rest of the relay. The default protected mode requires the AIRelays bearer token; `--no-auth` starts an open local relay. Claude remains restricted to loopback binding.
 
@@ -491,6 +509,7 @@ Important toggles:
 - data dir: `~/.airelays`
 - logs: `~/.airelays/logs`
 - relay token: `~/.airelays/relay-token`
+- Claude accounts: `~/.airelays/claude/accounts/<id>/`; setup token: `~/.airelays/claude-token`
 - earlier singular AIRelay paths remain compatible for local upgrades
 
 ## More Docs

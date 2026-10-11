@@ -1,6 +1,6 @@
 # AIRelays
 
-> AIRelays is a local OpenAI-compatible HTTP server backed by your own subscription logins, with account balancing for OpenAI and Claude. Claude uses isolated local CLI profiles. It ships as a CLI/server package and as a cross-platform desktop tray app.
+> AIRelays is a local OpenAI-compatible HTTP server backed by your own subscription logins, with account balancing for OpenAI and Claude. Claude uses AIRelays-owned local CLI profiles, never your personal Claude Code sign-in. It ships as a CLI/server package and as a cross-platform desktop tray app.
 
 ## Document Index
 
@@ -23,7 +23,7 @@
 AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 - The default runtime uses an AIRelays-owned ChatGPT subscription login.
-- The Claude runtime uses isolated local `claude` CLI profiles and retains the existing default CLI/token sign-in.
+- The Claude runtime uses AIRelays-owned local `claude` CLI profiles; the personal Claude Code sign-in is never used or changed.
 - AIRelays protects the relay with its own bearer token by default; open local relay mode (`--no-auth`) disables only the client-token gate.
 - Traffic logs rotate hourly and at a size limit. By default, AIRelays keeps
   up to 7 days and 1024 MiB of managed traffic logs.
@@ -87,7 +87,9 @@ airelays claude login       # repeat to add another account
 airelays serve --port 8080
 ```
 
-Claude headless: run `claude setup-token` on any browser-equipped machine, then `airelays claude set-token` on the relay machine (stores the default account token in a 0600 file that survives service managers and reboots). This token does not override browser-added profiles. List accounts with `airelays claude accounts`, renew one with `airelays claude login --replace ACCOUNT`, and sign out one with `airelays claude logout ACCOUNT`. Renewal suspends a managed profile until its original identity is verified; renewing `default` creates a new isolated profile and keeps the existing credentials. Signing out `default` also affects other tools using that CLI profile. Multiple-account logout requires a target or `--all`.
+Claude headless: run `claude setup-token` on any browser-equipped machine, then `airelays claude set-token` on the relay machine (stores the token 0600 in `~/.airelays/claude-token`, overridable with `AIRELAYS_CLAUDE_OAUTH_TOKEN_FILE` or `[providers.claude].oauth_token_file`; it survives service managers and reboots). The token is the account `default`, runs in its own relay-owned `~/.airelays/claude/token/config`, and is inference-only: Claude reports no usage or email for setup tokens, so it has no meter and is not deduplicated. List accounts with `airelays claude accounts`, renew one with `airelays claude login --replace ACCOUNT`, and sign out one with `airelays claude logout ACCOUNT`. Renewal suspends a managed profile until its original identity is verified; renew the setup token with `airelays claude set-token`. Signing out runs `claude auth logout` only inside that AIRelays profile; `airelays claude logout default` only deletes the stored token. Multiple-account logout requires a target or `--all`.
+
+AIRelays never uses the personal Claude Code sign-in (`~/.claude`), an inherited `CLAUDE_CONFIG_DIR`, or an inherited `CLAUDE_CODE_OAUTH_TOKEN` (`airelays doctor` reports the latter as ignored), and never signs Claude Code out. With no account connected, `claude:*` requests return 503 `provider_auth_error` ("No Claude account is connected to AIRelays. Run `airelays claude login` or `airelays claude set-token`.") and `/v1/models` lists no Claude models. Upgrades from 0.15.0 or earlier that relied on those must connect an account once; refresh tokens rotate, so the personal sign-in cannot be copied. Already-enrolled profiles keep working.
 
 ## Multiple Claude Accounts
 
@@ -95,11 +97,18 @@ Claude headless: run `claude setup-token` on any browser-equipped machine, then 
 unique `CLAUDE_CONFIG_DIR`. Credentials and refresh remain CLI-owned. Metadata
 lives under `data_dir/claude/accounts/<id>/account.json`, with a stable adjacent
 `config/` directory. Do not move profile directories: macOS Keychain entries
-are scoped to their paths. See docs/adr/0006-isolated-claude-subscription-accounts.md.
+are scoped to their paths. See docs/adr/0006-isolated-claude-subscription-accounts.md
+and docs/adr/0007-relay-owned-claude-accounts.md. Every Claude Code process runs
+with an explicit environment, its profile's `CLAUDE_CONFIG_DIR`, and a relay-owned
+working directory, and is ended gracefully (stdin closed or SIGTERM before
+SIGKILL). On macOS, run the relay in the login session (not over SSH or as a
+LaunchDaemon) so Claude Code can use the keychain.
 
-The desktop provides Add account, per-account usage, renewal, and sign-out.
-Accounts join and leave routing without restart. Duplicate subscriptions count
-once; a profile signed in to a different identity is not eligible for routing.
+The desktop provides Sign in / Add account ("In a browser" or "With a token"),
+per-account usage, renewal, and sign-out. Accounts join and leave routing
+without restart. A second ready profile of the same subscription carries
+`duplicate_of` and counts once; a profile signed in to a different identity is
+not eligible for routing.
 `[providers.claude].balance` defaults to `balanced`: prefer available execution
 slots, then lowest fresh weekly usage. Without fresh usage, accounts take turns.
 `round_robin` and `ordered` are alternatives. `max_concurrent_requests` applies
@@ -109,14 +118,18 @@ account failures fail over only before response bytes reach the client.
 transient failures use a short cooldown. CLI profiles remain stateless for relay
 requests, without conversation affinity.
 
-Claude usage accepts `?provider=claude&all_accounts=true` for per-account
-`{slug, email, status}` or `{slug, email, error}` entries, and
-`?provider=claude&account=<email-or-id>` for one account. Usage caches, credential
-resolution, and persisted usage-endpoint cooldowns are profile-specific.
-`POST /v1/relay/accounts/refresh?provider=claude` respects upstream backoff.
-`providers.claude.accounts` in relay status exposes profile readiness and request
-cooldowns. Environment overrides are `AIRELAYS_CLAUDE_BALANCE` and
-`AIRELAYS_CLAUDE_ACCOUNT_COOLDOWN_SECONDS`.
+Claude usage accepts `?provider=claude&all_accounts=true`, returning
+`{"object": "subscription_status_list", "provider": "claude", "accounts": [...]}`
+with `{slug, email}` plus one of `status`, `error`, or `usage_unsupported` (the
+setup-token account), and `?provider=claude&account=<email-or-id>` for one
+account (`account=default` returns 422 `unsupported_for_provider`). Usage state
+and persisted backoff are profile-specific.
+`POST /v1/relay/accounts/refresh?provider=claude` respects that backoff.
+`providers.claude.accounts` in relay status exposes readiness, request
+cooldowns, `managed_profile` (`false` for the setup-token account), and
+`oauth_token_source` (`profile` or `file`).
+Environment overrides are `AIRELAYS_CLAUDE_BALANCE`,
+`AIRELAYS_CLAUDE_ACCOUNT_COOLDOWN_SECONDS`, and `AIRELAYS_CLAUDE_OAUTH_TOKEN_FILE`.
 
 ## Client Configuration
 
@@ -173,12 +186,22 @@ breakdown only covers responses observed through this relay.
 Snapshots retain their fetch timestamp on cache reads. The Overview reloads
 usage every five minutes and derives countdowns from absolute reset times.
 Unknown or expired percentages display as awaiting fresh data, not zero.
-Claude's five-minute cache and persisted upstream cooldowns protect its
-usage endpoint; stale fallbacks explicitly report their age and reason.
-Claude capacity observations older than fifteen minutes do not rank accounts;
+Claude usage comes from Claude Code itself: each profile's CLI answers the SDK
+`get_usage` control request (no prompt, inference, or quota; experimental in
+Claude Code, verified with 2.1.292+) at startup and every five minutes, which
+also keeps idle profiles signed in. The relay never reads Claude credentials or
+calls the usage endpoint directly. A reading is fresh only when Claude returns
+live data; otherwise the last good reading is shown stale with its age and a
+`stale_reason`: `usage_unavailable` (no live data, e.g. upstream rate limit),
+`nonessential_traffic_disabled` (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` set
+in the relay's environment), `cli_unsupported` (update Claude Code; requests
+are unaffected), or `cli_failed`. Failures back off 5 → 10 → 20 → 40 → 60
+minutes, persisted across restarts. Without any good reading, the API returns
+an error message instead of numbers. Stale readings never unblock or rank an
+account, observations older than fifteen minutes do not rank accounts, and
 known exhausted windows remain blocked until reset or newer capacity evidence.
 
-`GET /v1/subscription/status` returns per-window `used_percent`, `window_label` ("5h", "weekly", derived from each window's duration), and reset times in one shape for both providers, plus credits, spend control, and any named extra quotas (for example code review) the plan reports. Which windows appear is plan-dependent upstream policy; only reported windows are returned. OpenAI reads the subscription usage surface; query one account (`?account=`) or all (`?all_accounts=true`, always the list shape — an account whose probe fails carries a per-account `error` instead of a `status`). Claude (`?provider=claude`) returns the 5-hour and weekly windows plus per-model weekly caps when reported; its upstream source is not a publicly documented API, so the relay caches it briefly and degrades gracefully. In the desktop app, an OpenAI account whose stored sign-in was invalidated upstream shows a "Sign-in expired" badge with a one-click "Sign in again" repair that refreshes the account slot in place.
+`GET /v1/subscription/status` returns per-window `used_percent`, `window_label` ("5h", "weekly", derived from each window's duration), and reset times in one shape for both providers, plus credits, spend control, and any named extra quotas (for example code review) the plan reports. Which windows appear is plan-dependent upstream policy; only reported windows are returned. OpenAI reads the subscription usage surface; query one account (`?account=`) or all (`?all_accounts=true`, always the list shape — an account whose probe fails carries a per-account `error` instead of a `status`). Claude (`?provider=claude`) returns the 5-hour and weekly windows plus per-model weekly caps when reported, as read by Claude Code; the setup-token account reports no usage. In the desktop app, an OpenAI account whose stored sign-in was invalidated upstream shows a "Sign-in expired" badge with a one-click "Sign in again" repair that refreshes the account slot in place.
 
 ## Security Defaults
 
@@ -189,7 +212,7 @@ known exhausted windows remain blocked until reset or newer capacity evidence.
 
 ## Configuration
 
-Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/config.toml` → defaults. Notable keys: `[server] host/port`, `[security] require_bearer_auth`, `[logging] stream_lines`, `retention_days`, `max_total_mb`, and `max_file_mb`, `[providers.openai] enabled/balance/account_cooldown_seconds/retry_attempts/retry_backoff_seconds`, `[providers.claude] enabled/bin/models`. Saved log-directory retention policy overrides the three logging defaults. See docs/configuration.md for the full file shape and limits.
+Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/config.toml` → defaults. Notable keys: `[server] host/port`, `[security] require_bearer_auth`, `[logging] stream_lines`, `retention_days`, `max_total_mb`, and `max_file_mb`, `[providers.openai] enabled/balance/account_cooldown_seconds/retry_attempts/retry_backoff_seconds`, `[providers.claude] enabled/bin/models/balance/oauth_token_file`. Saved log-directory retention policy overrides the three logging defaults. See docs/configuration.md for the full file shape and limits.
 
 ## Diagnostics
 
@@ -203,7 +226,7 @@ Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/
 ## Paths
 
 - config: `~/.config/airelays/config.toml`
-- data: `~/.airelays` (logs, relay token, per-account auth slots, stored Claude token)
+- data: `~/.airelays` (logs, relay token, per-account auth slots, Claude profiles under `claude/accounts/<id>/`, Claude setup token in `claude-token`)
 
 ## Troubleshooting Pointers
 
@@ -211,5 +234,7 @@ Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/
 - 422 on token-limit fields: the subscription backend does not accept them; remove the fields
 - browser login URL only works on the relay's own machine; use `airelays login --device` on servers
 - Claude not ready in network mode: the runtime is loopback-only; switch to loopback binding
+- Claude 503 `provider_auth_error`: no AIRelays Claude account is connected; run `airelays claude login` or `airelays claude set-token` (the personal Claude Code sign-in and exported tokens are ignored)
+- Claude usage stale: check `stale_reason`; update Claude Code for `cli_unsupported`, unset `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` for `nonessential_traffic_disabled`
 - macOS "AIRelays is damaged" after a browser download: `xattr -dr com.apple.quarantine /Applications/AIRelays.app` (the one-line installer avoids this); Linux AppImage FUSE error: install libfuse2 or set `APPIMAGE_EXTRACT_AND_RUN=1`
 - see docs/troubleshooting.md for full workflows

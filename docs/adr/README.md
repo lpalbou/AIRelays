@@ -6,3 +6,4 @@
 - [0004: Provider Runtime Boundary And Experimental Local Adapters](0004-provider-runtime-boundary-and-experimental-local-adapters.md)
 - [0005: Bounded Traffic-Log Retention](0005-bounded-traffic-log-retention.md)
 - [0006: Isolated Claude Subscription Accounts](0006-isolated-claude-subscription-accounts.md)
+- [0007: Relay-Owned Claude Accounts](0007-relay-owned-claude-accounts.md)

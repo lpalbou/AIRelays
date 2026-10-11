@@ -79,6 +79,9 @@ def make_settings(tmp_path, **overrides) -> Settings:
         data_dir=tmp_path / "data",
         logs_dir=tmp_path / "logs",
         bearer_token_file=tmp_path / "data" / "relay-token",
+        claude_oauth_token_file=tmp_path / "data" / "claude-token",
+        # Never a real, signed-in CLI.
+        claude_bin=str(tmp_path / "no-claude-cli"),
         require_bearer_auth=False,
         enable_claude=False,
         # Failure-path tests assert the terminal outcome; automatic retry
@@ -87,6 +90,10 @@ def make_settings(tmp_path, **overrides) -> Settings:
     )
     for key, value in overrides.items():
         setattr(settings, key, value)
+    if settings.enable_claude:
+        # Claude routes only through relay-owned accounts (ADR 0007); a
+        # stored setup token gives the test relay one.
+        settings.write_claude_oauth_token("test-setup-token")
     return settings
 
 

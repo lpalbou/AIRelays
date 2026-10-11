@@ -103,19 +103,28 @@ Two fixes:
   first, then open the printed URL in your local browser. The tunnel can be
   opened even after `airelays login` has started waiting.
 
-## Claude runtime is "not ready" under systemd/docker even though `claude setup-token` worked
+## `503 No Claude account is connected to AIRelays`
 
-A shell `export CLAUDE_CODE_OAUTH_TOKEN=...` never reaches a service
-manager's environment, and it evaporates on reboot. Store the token instead:
+AIRelays uses only Claude accounts it owns. Your personal Claude Code sign-in
+(`claude auth login` or `/login`), an inherited `CLAUDE_CONFIG_DIR`, and an
+exported `CLAUDE_CODE_OAUTH_TOKEN` are ignored, so signing in to Claude Code
+does not connect the relay. Until an account is connected, `claude:*`
+requests return `503 provider_auth_error` and `/v1/models` lists no Claude
+models.
 
-```bash
-airelays claude set-token   # paste the token from `claude setup-token`
-```
+- run `airelays claude login` (desktop: **Sign in** → "In a browser") once
+  per subscription
+- on a headless host or under systemd/docker, run `claude setup-token` on any
+  machine with a browser, then `airelays claude set-token` (desktop: "With a
+  token"); the token is stored 0600 in `~/.airelays/claude-token`
+- `airelays doctor` reports a `CLAUDE_CODE_OAUTH_TOKEN` set in the relay's
+  environment; AIRelays ignores it
 
-It is written 0600 to `~/.airelays/claude-token` and injected into the default
-account's `claude` invocations. Isolated browser-added profiles use their own
-CLI credentials. `airelays status` shows the token source
-(`file`, `env`, or `none`) under the Claude provider.
+After upgrading from 0.15.0 or earlier, installs that relied on the personal
+sign-in or an exported token need this once. Claude Code refresh tokens
+rotate, so AIRelays cannot copy the personal sign-in. Profiles already
+enrolled keep working, and switching or signing out Claude Code does not
+affect the relay.
 
 ## A Claude account needs to sign in again
 
@@ -124,27 +133,33 @@ Use `airelays claude accounts` to find the account id, then
 browser. A different identity is not eligible for requests through the enrolled
 profile. To add another subscription, use `airelays claude login` without
 `--replace`. The desktop offers **Sign in again** on unavailable profile rows.
+For the setup-token account (`default`), run `claude setup-token` and
+`airelays claude set-token` again.
 
 Do not move or rename a profile's `config/` directory: the path identifies its
 macOS Keychain entry. After a machine migration, sign in again on the new host.
-An unavailable usage meter alone does not require signing out; usage requests
-have their own cache and rate limits.
+On macOS, run the relay in your login session (the desktop app does), not over
+SSH or as a LaunchDaemon, so Claude Code can use the keychain. An unavailable
+usage meter alone does not require signing out.
 
-## Claude requests fail even though `claude auth login` succeeded
+## A Claude usage bar is stale or missing
 
-A stored token (from `airelays claude set-token`) overrides the default
-`claude` CLI profile's sign-in. If it is stale, requests routed through
-`default` can fail even after signing in through the CLI. Browser-added
-profiles are unaffected.
+Usage comes from each profile's Claude Code (`get_usage`). A stale bar shows
+the last good reading with its age; the reason is `stale_reason` in
+`GET /v1/subscription/status?provider=claude&all_accounts=true`:
 
-Checks and fix:
+- `usage_unavailable`: Claude returned no live data (for example, the upstream
+  rate-limited its usage endpoint). Retries back off from 5 to 60 minutes;
+  requests are unaffected
+- `nonessential_traffic_disabled`: remove
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` from the relay's environment
+- `cli_unsupported`: update Claude Code (verified with 2.1.292+)
+- `cli_failed`: check that the configured `claude` binary runs; see
+  `airelays doctor`
 
-- `airelays status` shows the Claude token source; `file` means a stored
-  token is in effect
-- remove it with `airelays claude logout default` (also signs that CLI profile out) or, in
-  the desktop app, open the Claude token dialog and use "Remove stored
-  token" (keeps the CLI sign-in)
-- verify with a `claude:*` test request or `airelays doctor`
+The setup-token account never has a bar (Claude reports no usage for setup
+tokens); add a browser profile with `airelays claude login` for a meter.
+Stale readings never unblock or rank an account.
 
 ## Desktop app shows "Sign-in expired" on an OpenAI account
 

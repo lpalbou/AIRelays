@@ -56,14 +56,26 @@ Use the local Claude CLI through AIRelays:
 - browser login: `airelays claude login`; repeat to add another of your accounts
 - headless login: `claude setup-token` on a browser-equipped machine, then
   `airelays claude set-token` on the relay machine (stores the token in a
-  0600 file that survives service managers and reboots)
+  0600 file that survives service managers and reboots). It appears as the
+  account `default` and is inference-only, without a usage bar
 
 List accounts with `airelays claude accounts`, renew one with
 `airelays claude login --replace ACCOUNT`, and sign out one with
-`airelays claude logout ACCOUNT`. The desktop offers **Add account** and
-per-account sign-out. Browser-added accounts use isolated profiles; signing
-out one leaves the others intact. Signing out the legacy `default` account
-also signs out other tools using that CLI profile.
+`airelays claude logout ACCOUNT`. The desktop offers **Sign in** / **Add
+account** ("In a browser" or "With a token") and per-account sign-out. Each
+browser account is its own AIRelays-owned profile; signing out one leaves the
+others intact. `airelays claude logout default` only deletes the stored token.
+
+## Does AIRelays use my Claude Code sign-in?
+
+No. AIRelays never uses your personal Claude Code sign-in (`~/.claude`), an
+inherited `CLAUDE_CONFIG_DIR`, or an exported `CLAUDE_CODE_OAUTH_TOKEN`, and it
+never signs Claude Code out. Switching or signing out Claude Code does not
+affect the relay. If you upgraded from 0.15.0 or earlier and Claude only
+worked through one of those, connect it once with `airelays claude login` or
+`airelays claude set-token`. AIRelays cannot copy the personal sign-in
+because Claude Code refresh tokens rotate. Profiles already enrolled keep
+working.
 
 Claude requests balance across eligible accounts with capacity. The relay
 uses fresh weekly usage when available, rotates when usage is unknown, and
@@ -75,8 +87,10 @@ remain subscription tokens; adding accounts does not enable API-key auth.
 Yes: `GET /v1/subscription/status?provider=claude` returns the 5-hour and
 weekly windows in the same normalized shape as OpenAI usage. The desktop
 app shows per-account usage in the OpenAI and Anthropic cards. Use **?** beside
-an account name for details. See
-[Subscription Status](subscription-status.md).
+an account name for details. Readings come from each profile's Claude Code
+(`get_usage`, verified with 2.1.292+) every five minutes and are marked stale
+with a reason when Claude returns no live data. Setup-token accounts report
+no usage. See [Subscription Status](subscription-status.md).
 
 ## Is using my subscription through AIRelays allowed by the providers?
 

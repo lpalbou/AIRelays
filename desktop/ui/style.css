@@ -776,6 +776,8 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
 
 .account-block:last-of-type { border-bottom: none; padding-bottom: 0; }
 .account-block.pending { opacity: 0.5; }
+/* Stale Claude usage: old numbers must never read as current. */
+.account-block.usage-stale .usage-bar { opacity: 0.4; }
 
 .account-head {
   display: flex;

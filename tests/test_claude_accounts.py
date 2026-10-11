@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import sys
@@ -33,15 +32,10 @@ def settings(tmp_path):
 def local_only(monkeypatch):
     """Never inspect the developer's real CLI sign-in or query its usage."""
     def probe(self):
-        self._last_probe = {"installed": True, "logged_in": self.profile.managed,
-                            "oauth_token_source": "none", **self.profile.identity}
+        self._last_probe = {"installed": True, "logged_in": True, **self.profile.identity}
         return self._last_probe
 
-    async def no_usage(self):
-        raise ProviderError(503, "Usage unavailable in this test.")
-
     monkeypatch.setattr(ClaudeCliRuntime, "_run_status_command", probe)
-    monkeypatch.setattr(ClaudeCliRuntime, "_fetch_usage", no_usage)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
@@ -97,58 +91,39 @@ def test_profile_credentials_ignore_global_token_and_never_modify_environment(se
     assert ClaudeCliRuntime(settings)._subprocess_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "legacy-secret"
 
 
-def test_usage_credentials_follow_profile_on_linux_and_never_fall_back(settings, monkeypatch):
-    monkeypatch.setattr(sys, "platform", "linux")
-    profile = add(settings, "one@example.com")
-    settings.write_claude_oauth_token("legacy-secret")
+def test_ambient_claude_code_sign_in_is_never_an_account(settings, monkeypatch, tmp_path):
+    """ADR 0007: the user's own Claude Code (or an inherited config dir or
+    token) never becomes a relay account."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "personal"))
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "ambient-secret")
-    runtime = ClaudeCliRuntime(settings, profile=profile)
-    assert runtime._resolve_usage_token() == (None, "none")
-    (profile.config_dir / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "profile-secret"}}))
-    assert runtime._resolve_usage_token() == ("profile-secret", "credentials")
-
-
-def test_usage_keychain_service_is_scoped_and_cannot_read_default(settings, monkeypatch):
-    monkeypatch.setattr(sys, "platform", "darwin")
-    profile = add(settings, "one@example.com")
-    called = []
-    def run(command, **kwargs):
-        called.append(command)
-        return SimpleNamespace(returncode=1, stdout="")
-    monkeypatch.setattr("airelay.providers.subprocess.run", run)
-    runtime = ClaudeCliRuntime(settings, profile=profile)
-    assert runtime._resolve_usage_token() == (None, "none")
-    expected = "Claude Code-credentials-" + hashlib.sha256(str(profile.config_dir).encode()).hexdigest()[:8]
-    assert called == [["security", "find-generic-password", "-s", expected, "-w"]]
-
-
-def test_legacy_config_directory_is_also_honored_by_usage(settings, monkeypatch, tmp_path):
-    monkeypatch.setattr(sys, "platform", "linux")
-    directory = tmp_path / "external-profile"
-    directory.mkdir()
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(directory))
-    (directory / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "external"}}))
-    assert ClaudeCliRuntime(settings)._resolve_usage_token() == ("external", "credentials")
+    pool = ClaudeAccountPool(settings)
+    status = pool.status()
+    assert status["accounts"] == [] and status["ready_for_requests"] is False
+    with pytest.raises(ProviderError) as excinfo:
+        pool.resolve_model("claude:sonnet")
+    assert excinfo.value.status_code == 503 and "No Claude account is connected" in excinfo.value.detail
+    assert pool.resolve_model("gpt-5.5") is None  # other providers still route
+    settings.write_claude_oauth_token("stored")
+    assert [row["slug"] for row in pool.status()["accounts"]] == ["default"]
 
 
 def test_usage_backoff_state_is_separate_per_account(pool):
     first, second = accounts(pool)
-    first.runtime._usage_blocked_until = time.monotonic() + 600
-    first.runtime._save_usage_state()
+    first.runtime._usage_failed("usage_unavailable", "Claude did not return live usage.")
     reloaded = ClaudeAccountPool(pool._settings)
-    assert reloaded._accounts[first.runtime.profile.slug].runtime._usage_blocked_until > time.monotonic()
-    assert reloaded._accounts[second.runtime.profile.slug].runtime._usage_blocked_until == 0
+    assert reloaded._accounts[first.runtime.profile.slug].runtime._usage_retry_at > time.time()
+    assert reloaded._accounts[second.runtime.profile.slug].runtime._usage_retry_at == 0
 
 
 def test_only_completed_signins_are_discovered_and_paths_stay_fixed(settings):
     pending = new_profile(settings)
-    assert len(discover_profiles(settings)) == 1
+    assert discover_profiles(settings) == []
     enroll_profile(pending, {"logged_in": True, "email": "one@example.com"})
-    profile = discover_profiles(settings)[1]
+    profile, = discover_profiles(settings)
     assert profile.config_dir == pending.config_dir
     assert (profile.root / "account.json").stat().st_mode & 0o777 == 0o600
     forget_profile(profile)
-    assert len(discover_profiles(settings)) == 1
+    assert discover_profiles(settings) == []
     assert profile.config_dir.exists()
 
 
@@ -377,31 +352,32 @@ def test_same_subscription_is_not_counted_twice(settings):
     assert sum(bool(row.get("duplicate_of")) for row in rows) == 1
 
 
-def test_signed_out_managed_duplicate_does_not_hide_ready_default(settings, monkeypatch):
-    profile = add(settings, "same@example.com")
-    pool = ClaudeAccountPool(settings)
-    monkeypatch.setattr(ClaudeCliRuntime, "_cached_probe", lambda self: {
-        "installed": True, "logged_in": not self.profile.managed, "email": "same@example.com",
-    })
-    rows = pool.status()["accounts"]
-    assert next(row for row in rows if row["slug"] == "default")["ready_for_requests"]
-    assert not next(row for row in rows if row["slug"] == profile.slug)["ready_for_requests"]
-
-
 def test_signed_out_profile_is_neither_a_mismatch_nor_a_duplicate(settings, monkeypatch):
-    profile = add(settings, "same@example.com")
+    ready = add(settings, "same@example.com")
+    signed_out = add(settings, "same@example.com")
     pool = ClaudeAccountPool(settings)
     monkeypatch.setattr(ClaudeCliRuntime, "_cached_probe", lambda self: (
-        {"installed": True, "logged_in": False} if self.profile.managed
+        {"installed": True, "logged_in": False} if self.profile.slug == signed_out.slug
         else {"installed": True, "logged_in": True, "email": "same@example.com"}
     ))
-    rows = pool.status()["accounts"]
-    assert [row["slug"] for row in rows] == ["default", profile.slug]
-    stale = rows[1]
+    rows = {row["slug"]: row for row in pool.status()["accounts"]}
+    assert rows[ready.slug]["ready_for_requests"] is True
+    stale = rows[signed_out.slug]
     assert stale["ready_for_requests"] is False
     assert stale["identity_mismatch"] is False
-    assert "duplicate_of" not in stale
-    assert stale["served_by"] == "default"
+    assert "duplicate_of" not in stale and "served_by" not in stale
+
+
+def test_browser_profile_wins_over_setup_token_for_one_subscription(settings, monkeypatch):
+    profile = add(settings, "same@example.com")
+    settings.write_claude_oauth_token("stored")
+    monkeypatch.setattr(ClaudeCliRuntime, "_cached_probe", lambda self: {
+        "installed": True, "logged_in": True, "email": "same@example.com",
+    })
+    rows = {row["slug"]: row for row in ClaudeAccountPool(settings).status()["accounts"]}
+    assert rows[profile.slug]["ready_for_requests"] is True
+    assert rows["default"]["ready_for_requests"] is False
+    assert rows["default"]["duplicate_of"] == profile.slug
 
 
 def test_signed_in_profile_with_unreadable_identity_stays_unroutable(pool, monkeypatch):
@@ -540,24 +516,26 @@ def test_wrong_account_during_reauth_stays_unroutable(settings, monkeypatch):
     assert not ClaudeAccountPool(settings).status()["ready_for_requests"]
 
 
-def test_renew_default_uses_new_profile_and_preserves_legacy_token(settings, monkeypatch):
+def test_setup_token_account_is_relay_configuration_only(settings, monkeypatch, capsys):
+    """Browser renewal is for browser profiles; signing out the setup token
+    deletes the stored file and runs no CLI command at all."""
     from airelay import cli
 
     settings.write_claude_oauth_token("legacy-token")
     monkeypatch.setattr(cli, "_base_settings", lambda args: settings)
-    monkeypatch.setattr(ClaudeCliRuntime, "_run_status_command", lambda self: {
-        "installed": True, "logged_in": True, "email": "same@example.com",
-    })
     calls = []
-    def login(command, **kwargs):
-        calls.append(kwargs["env"])
-        return SimpleNamespace(returncode=0)
-    monkeypatch.setattr("subprocess.run", login)
-    cli._run_claude_login(build_parser().parse_args(["claude", "login", "--replace", "default"]))
-    profiles = discover_profiles(settings)
-    assert len(profiles) == 2
-    assert calls[0]["CLAUDE_CONFIG_DIR"] == str(profiles[1].config_dir)
-    assert settings.resolve_claude_oauth_token() == "legacy-token"
+    monkeypatch.setattr("subprocess.run", lambda command, **kwargs: calls.append(command))
+    with pytest.raises(SystemExit, match="set-token"):
+        cli._run_claude_login(build_parser().parse_args(["claude", "login", "--replace", "default"]))
+    cli._run_claude_logout(build_parser().parse_args(["claude", "logout", "default", "--json"]))
+    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1]) == {
+        "slug": "default", "token_removed": True, "cli_signed_out": True, "cli_error": None,
+    }
+    assert calls == [] and settings.resolve_claude_oauth_token() is None
+    assert discover_profiles(settings) == []
+    with pytest.raises(SystemExit, match="No Claude account"):
+        cli._run_claude_logout(build_parser().parse_args(["claude", "logout"]))
+    assert calls == []
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""Selection and failover across one user's isolated Claude Code profiles."""
+"""Selection and failover across the Claude accounts AIRelays owns (ADR 0007)."""
 
 from __future__ import annotations
 
@@ -11,8 +11,14 @@ from typing import Any, AsyncIterator
 
 from airelay.claude_auth import account_identity, discover_profiles
 from airelay.config import Settings
-from airelay.providers import ClaudeCliRuntime, ProviderError, ResolvedModel
+from airelay.providers import CLAUDE_TOKEN_USAGE_UNSUPPORTED, ClaudeCliRuntime, ProviderError, ResolvedModel
 from airelay.traffic import TrafficLogger
+
+
+NO_ACCOUNT = (
+    "No Claude account is connected to AIRelays. Run `airelays claude login` "
+    "or `airelays claude set-token`."
+)
 
 
 @dataclass
@@ -77,9 +83,8 @@ class ClaudeAccountPool:
             current = self._accounts.get(profile.slug)
             if current is None or current.runtime.profile != profile:
                 current = _Account(ClaudeCliRuntime(self._settings, self._traffic, profile=profile))
-                if profile.managed:
-                    current.usage = current.runtime._usage_last_good
-                    current.usage_at = current.runtime._usage_last_good_epoch
+                current.usage = current.runtime._usage_last_good
+                current.usage_at = current.runtime._usage_last_good_epoch
             accounts[profile.slug] = current
         self._accounts = accounts
 
@@ -87,30 +92,22 @@ class ClaudeAccountPool:
         self.refresh_if_changed()
         rows = []
         seen: dict[str, str] = {}
-        # Prefer an explicit profile over the same subscription in the
-        # ambient CLI; never give one subscription two shares of traffic.
         snapshots = [(slug, account, account.runtime.status()) for slug, account in list(self._accounts.items())]
-        # A broken managed duplicate must not hide a healthy default login.
-        ordered = sorted(snapshots, key=lambda item: (not item[2].get("ready_for_requests"), item[0] == "default"))
+        # Ready rows first, browser profiles before the setup token: one
+        # subscription never gets two shares of traffic, and a signed-out
+        # profile is a profile to renew, not a duplicate.
+        ordered = sorted(snapshots, key=lambda item: (not item[2].get("ready_for_requests"),
+                                                      not item[1].runtime.profile.managed))
         for slug, account, status in ordered:
             status["slug"] = slug
             status["managed_profile"] = account.runtime.profile.managed
-            if slug == "default" and not status.get("logged_in") and status.get("oauth_token_source") == "none":
-                continue
             identity = account_identity(status)
-            if identity and identity in seen:
-                if slug == "default":
-                    continue
-                status["ready_for_requests"] = False
-                if seen[identity] == "default":
-                    # Sorted after a ready default, so this profile already
-                    # failed on its own (signed out, wrong account). It is a
-                    # profile to renew, not a second copy of the subscription.
-                    status["served_by"] = "default"
-                else:
+            if identity and status.get("ready_for_requests"):
+                if identity in seen:
+                    status["ready_for_requests"] = False
                     status["duplicate_of"] = seen[identity]
-            elif identity:
-                seen[identity] = slug
+                else:
+                    seen[identity] = slug
             remaining = max(0, math.ceil(account.blocked_until - time.time()))
             status["cooldown_seconds"] = remaining
             status["cooldown_reason"] = account.blocked_reason if remaining else None
@@ -120,9 +117,13 @@ class ClaudeAccountPool:
 
     def status(self) -> dict[str, Any]:
         rows = self._statuses()
-        primary = next((row for row in rows if row.get("ready_for_requests")), rows[0] if rows else {})
-        if not primary:
-            primary = self._accounts["default"].runtime.status()
+        primary = next((row for row in rows if row.get("ready_for_requests")), rows[0] if rows else None)
+        if primary is None:
+            primary = {
+                "enabled": True, "local_only": True, "stateless_only": True,
+                "requires_relay_bearer_auth": self._settings.require_bearer_auth,
+                "logged_in": False, "notes": [NO_ACCOUNT],
+            }
         return {
             **primary,
             "accounts": rows,
@@ -145,6 +146,8 @@ class ClaudeAccountPool:
             model = account.runtime.resolve_model(model_id)
             if model is not None:
                 return model
+        if not self._accounts and model_id.startswith(("claude:", "claude-")):
+            raise ProviderError(503, NO_ACCOUNT, code="provider_auth_error")
         return None
 
     async def refresh_models(self, *, force: bool = False) -> None:
@@ -160,6 +163,8 @@ class ClaudeAccountPool:
                 else:
                     account.runtime._prepare_completion_request(body)
                 return
+        if not self._accounts:
+            raise ProviderError(503, NO_ACCOUNT, code="provider_auth_error")
         raise ProviderError(422, "Unknown Claude model; refresh `/v1/models`.", code="unsupported_for_provider")
 
     def _quota(self, account: _Account, model: str) -> tuple[float, float | None]:
@@ -206,7 +211,8 @@ class ClaudeAccountPool:
         accounts = [account for row in rows if row.get("ready_for_requests")
                     if (account := self._accounts.get(row["slug"])) is not None]
         if not accounts:
-            raise ProviderError(503, "No Claude account is ready. Run `airelays claude login`.", code="provider_auth_error")
+            raise ProviderError(503, "No Claude account is ready. Run `airelays claude login`." if rows else NO_ACCOUNT,
+                                code="provider_auth_error")
         eligible = [a for a in accounts if a.runtime.resolve_model(model)]
         if not eligible:
             raise ProviderError(422, f"No signed-in Claude account advertises `{model}`.", code="unsupported_for_provider")
@@ -348,6 +354,8 @@ class ClaudeAccountPool:
         rows = await asyncio.to_thread(self._statuses)
         async def fetch(row: dict[str, Any]) -> dict[str, Any]:
             result = {"slug": row["slug"], "email": row.get("email")}
+            if not row.get("managed_profile"):
+                return {**result, "usage_unsupported": CLAUDE_TOKEN_USAGE_UNSUPPORTED}
             if not row.get("ready_for_requests"):
                 return {**result, "error": "Account is not ready; sign in again with `airelays claude login --replace ACCOUNT`."}
             try:
@@ -367,9 +375,11 @@ class ClaudeAccountPool:
                 raise ProviderError(404, "Claude account is unknown or ambiguous; use an account id.")
             row = matches[0]
         else:
-            row = next((row for row in rows if row.get("ready_for_requests")), None)
+            ready = [row for row in rows if row.get("ready_for_requests")]
+            row = next((row for row in ready if row.get("managed_profile")), ready[0] if ready else None)
         if row is None or not row.get("ready_for_requests"):
-            raise ProviderError(503, "No Claude sign-in found. Run `airelays claude login`.", code="provider_unavailable")
+            raise ProviderError(503, "No Claude account is ready. Run `airelays claude login`." if rows else NO_ACCOUNT,
+                                code="provider_unavailable")
         account = self._accounts.get(row["slug"])
         if account is None:
             raise ProviderError(404, "Claude account was removed.")
@@ -381,8 +391,8 @@ class ClaudeAccountPool:
         return await self.subscription_statuses(request_id)
 
     async def warm_start(self) -> None:
-        if len(self._accounts) <= 1:
-            return
+        # Every account, every start: reading usage is also what keeps an
+        # idle profile's OAuth token rotated.
         await self.subscription_statuses("startup")
 
     async def usage_refresh_loop(self) -> None:

@@ -48,11 +48,12 @@ def test_accounts_have_distinct_usage_and_add_keeps_existing_accounts(page, dash
     section.screenshot(path=str(tmp_path / "claude-accounts.png"))
 
 
-def test_signout_targets_one_profile_and_preserves_default(page, dashboard_url):
+def test_signout_targets_one_profile_and_preserves_others(page, dashboard_url):
     section = open_dashboard(page, dashboard_url)
     section.get_by_role("button", name="Sign out of Claude account work@claude.ai", exact=True).click()
     dialog = page.locator("#ov-logout-dialog")
     playwright.expect(dialog).to_contain_text("only this AIRelays profile")
+    playwright.expect(dialog).to_contain_text("Claude Code and your other sign-ins are unaffected")
     playwright.expect(dialog).to_contain_text("remaining accounts")
     dialog.get_by_role("button", name="Sign out", exact=True).click()
     playwright.expect(section.locator(".account-block")).to_have_count(1)
@@ -62,25 +63,33 @@ def test_signout_targets_one_profile_and_preserves_default(page, dashboard_url):
     }
 
 
-def test_default_signout_explains_effect_on_other_cli_tools(page, dashboard_url):
-    section = open_dashboard(page, dashboard_url)
-    section.get_by_role("button", name="Sign out of Claude account perso@claude.ai", exact=True).click()
+def test_setup_token_account_is_labelled_and_its_signout_spares_claude_code(page, dashboard_url):
+    section = open_dashboard(page, dashboard_url, {
+        "slug": "default", "email": None, "managed_profile": False, "ready_for_requests": True,
+        "logged_in": True, "oauth_token_source": "file",
+    })
+    token = section.locator(".account-block").filter(has_text="Setup token")
+    playwright.expect(token).to_have_count(1)
+    playwright.expect(token).to_contain_text("Ready")
+    token.get_by_role("button", name="Sign out of Claude account default", exact=True).click()
     dialog = page.locator("#ov-logout-dialog")
-    playwright.expect(dialog).to_contain_text("Other tools using this default Claude Code sign-in are also signed out")
+    playwright.expect(dialog).to_contain_text("deletes the stored setup token")
+    playwright.expect(dialog).to_contain_text("Claude Code is unaffected")
+    playwright.expect(dialog).not_to_contain_text("Other tools")
     dialog.get_by_role("button", name="Cancel", exact=True).click()
     assert page.evaluate("window.claudeCalls") == []
 
 
-def test_signed_out_profile_sharing_the_default_account_explains_itself(page, dashboard_url):
+def test_signed_out_profile_explains_itself_and_renews_in_place(page, dashboard_url):
     section = open_dashboard(page, dashboard_url, {
         "slug": "claude-stale", "email": "perso@claude.ai", "subscription_type": "pro",
         "managed_profile": True, "ready_for_requests": False, "logged_in": False,
-        "identity_mismatch": False, "served_by": "default",
+        "identity_mismatch": False,
     })
     stale = section.locator(".account-block").filter(has_text="no longer signed in")
     playwright.expect(stale).to_have_count(1)
-    playwright.expect(stale).to_contain_text("served by the default Claude Code sign-in")
     playwright.expect(stale).not_to_contain_text("different account")
+    playwright.expect(stale).not_to_contain_text("Claude Code sign-in")
     stale.get_by_role("button", name="Sign in again", exact=True).click()
     page.wait_for_function("window.claudeCalls.length > 0")
     assert page.evaluate("window.claudeCalls[0]") == {

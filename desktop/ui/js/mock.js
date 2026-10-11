@@ -47,7 +47,7 @@ const settings = {
 let managed = true;
 let mockAutostart = false;
 let claudeAccounts = [
-  {slug: "default", email: "perso@claude.ai", subscription_type: "pro", ready_for_requests: true, managed_profile: false},
+  {slug: "claude-perso", email: "perso@claude.ai", subscription_type: "pro", ready_for_requests: true, managed_profile: true},
   {slug: "claude-work", email: "work@claude.ai", subscription_type: "max", ready_for_requests: true, managed_profile: true},
 ];
 
@@ -398,7 +398,7 @@ export async function mockInvoke(command, args = {}) {
       return true;
     case "logout_claude":
       claudeAccounts = claudeAccounts.filter((account) => account.slug !== args.account);
-      return { token_removed: true, cli_signed_out: true, cli_error: null };
+      return { token_removed: args.account === "default", cli_signed_out: true, cli_error: null };
     case "cancel_login":
       return null;
     case "get_models":

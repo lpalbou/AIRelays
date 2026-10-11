@@ -55,3 +55,4 @@ nav:
       - Provider Runtime Boundary: adr/0004-provider-runtime-boundary-and-experimental-local-adapters.md
       - Bounded Traffic-Log Retention: adr/0005-bounded-traffic-log-retention.md
       - Isolated Claude Subscription Accounts: adr/0006-isolated-claude-subscription-accounts.md
+      - Relay-Owned Claude Accounts: adr/0007-relay-owned-claude-accounts.md

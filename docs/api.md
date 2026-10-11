@@ -124,7 +124,7 @@ adaptation records when the request shape itself is repaired:
 Returns an OpenAI-style models list built from the enabled provider runtimes.
 
 - OpenAI models come from the authenticated ChatGPT/Codex upstream catalog. The default client version setting, `auto`, follows the installed `codex --version`, with a tested version floor when the CLI is missing or older. Model names are not hard-coded into automatic discovery.
-- Claude models come from the installed CLI's initialization catalog, including its alias resolutions and per-model reasoning modes. Discovery sends no generation prompt. Both `claude:*` aliases and discovered concrete `claude-*` ids are accepted.
+- Claude models come from the installed CLI's initialization catalog, including its alias resolutions and per-model reasoning modes. Discovery sends no generation prompt. Both `claude:*` aliases and discovered concrete `claude-*` ids are accepted. No Claude models are listed until an AIRelays Claude account is connected.
 - models starting with `claude:` or `claude-` route to the Claude runtime when it is enabled
 - other model ids route to the OpenAI runtime when it is enabled
 - Each model record includes an `airelays` extension block with provider identity, route capabilities, a `reasoning` block (`parameter`, supported `modes`, `default`), and a `structured_output` block (`parameter`, supported `types` for `response_format` on chat completions).
@@ -151,13 +151,23 @@ upstream policy; only reported windows are returned.
 - `?provider=claude` returns Claude subscription usage in the same
   normalized shape (see [Subscription Status](subscription-status.md))
 - `?account=<email-or-prefix>` selects one enrolled OpenAI account
-- `?provider=claude&account=<email-or-id>` selects one Claude account
+- `?provider=claude&account=<email-or-id>` selects one Claude account; the
+  setup-token account (`default`) returns 422 `unsupported_for_provider`
+  because Claude reports no usage for setup tokens
 - `?all_accounts=true` returns the list shape with one entry per enrolled
   OpenAI account (an entry carries an `error` instead of a `status` when
   that account's usage probe fails)
 - `?raw=true` includes the raw upstream payload (OpenAI only)
-- `?provider=claude&all_accounts=true` returns the same list shape for
-  Claude, keyed by stable account `slug`; a failed probe affects only its entry
+- `?provider=claude&all_accounts=true` returns
+  `{"object": "subscription_status_list", "provider": "claude", "accounts": [...]}`,
+  keyed by stable account `slug`. Each entry has `slug`, `email`, and one of
+  `status`, `error`, or `usage_unsupported` (the setup-token account); a
+  failed reading affects only its entry
+- Claude readings come from each profile's Claude Code (`get_usage`). A
+  reading without live data keeps the last good values with `stale: true`, its
+  age, and `stale_reason` (`usage_unavailable`,
+  `nonessential_traffic_disabled`, `cli_unsupported`, `cli_failed`). Without
+  any good reading, the account reports an error message instead of numbers
 
 `GET /v1/account/rate_limits` is an alias.
 
@@ -171,8 +181,7 @@ re-check. Use it when you know an account has recovered and don't want to
 wait for the scheduled reset. CLI equivalent: `airelays accounts refresh`.
 
 With `?provider=claude`, refreshes Claude account usage while respecting each
-account's cached observations and upstream cooldown. It never bypasses a
-usage-endpoint `Retry-After`.
+account's cached readings and persisted backoff.
 
 ## `GET /v1/relay/status`
 
@@ -181,10 +190,13 @@ Returns relay diagnostics, provider readiness, provider cache status, and
 this process, usable as a lightweight activity signal. OpenAI model-list
 cache diagnostics live under `providers.openai.models_cache`.
 
-`providers.claude.accounts` lists Claude profiles with their `slug`, email,
-readiness, `managed_profile`, and request cooldown. `providers.claude.balance`
-reports their selection strategy. Duplicate subscriptions are counted once;
-an account whose identity differs from its enrollment is not eligible.
+`providers.claude.accounts` lists AIRelays-owned Claude accounts with their
+`slug`, email, readiness, `managed_profile`, `oauth_token_source`, and request
+cooldown. `managed_profile` is `false` only for the setup-token account;
+`oauth_token_source` is `profile` or `file`. `providers.claude.balance` reports their selection
+strategy. A second ready profile of the same subscription carries
+`duplicate_of` and is counted once; an account whose identity differs from its
+enrollment is not eligible.
 
 `GET /v1/relay/status?activity_only=true` returns only
 `{"requests_total": N}`. It requires the same authentication as the full
@@ -197,9 +209,11 @@ clients such as the desktop tray can poll it frequently.
 `airelays status` reports local config, relay-token, and provider readiness
 state. `airelays doctor` runs the same local checks and also probes the OpenAI
 upstream `/models` route plus a tiny `/responses` smoke request when the OpenAI
-runtime is enabled and logged in. Use `airelays doctor --skip-response` to skip
-the response smoke request. `airelays models` lists every model id the running
-relay accepts, grouped by provider (`--json` supported).
+runtime is enabled and logged in, and reports a `CLAUDE_CODE_OAUTH_TOKEN` set in
+the relay's environment, which AIRelays ignores. Use
+`airelays doctor --skip-response` to skip the response smoke request.
+`airelays models` lists every model id the running relay accepts, grouped by
+provider (`--json` supported).
 
 ## `POST /v1/responses`
 
@@ -260,6 +274,10 @@ Claude runtime:
 - sampling parameters stripped and disclosed via
   `x-airelays-ignored-parameters` (the `claude` CLI has no sampling
   controls); other unsupported generation controls rejected locally
+- with no AIRelays Claude account connected, `claude:*` requests (here and
+  on `/v1/completions`) return 503 `provider_auth_error`: "No Claude account
+  is connected to AIRelays. Run `airelays claude login` or
+  `airelays claude set-token`."
 
 ## `POST /v1/completions`
 

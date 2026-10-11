@@ -4,6 +4,10 @@
 
 Accepted, 2026-09-26. Extends [ADR 0004](0004-provider-runtime-boundary-and-experimental-local-adapters.md).
 
+Amended 2026-10-10 by [ADR 0007](0007-relay-owned-claude-accounts.md): the ambient
+Claude Code sign-in is no longer an account, the `default` slug now names only
+the stored setup token, and usage comes from Claude Code itself.
+
 ## Context
 
 One user may have several Claude subscriptions. Claude Code supports isolated

@@ -8,7 +8,7 @@ AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provi
 
 - Planned: 0
 - Proposed: 3
-- Completed: 7
+- Completed: 8
 - Deprecated: 1
 - Recurrent: 0
 
@@ -43,6 +43,7 @@ No active planned items.
   - [0013_openai_usage_probe_caching_and_single_flight.md](completed/accounts/0013_openai_usage_probe_caching_and_single_flight.md)
   - [0016_capacity_aware_balanced_routing.md](completed/accounts/0016_capacity_aware_balanced_routing.md)
   - [0019_longest_window_balancing_and_weekly_tally.md](completed/accounts/0019_longest_window_balancing_and_weekly_tally.md)
+  - [0020_relay_owned_claude_accounts.md](completed/accounts/0020_relay_owned_claude_accounts.md)
 
 | ID | Item | Original Path | Final Path | Completed | Outcome | Notes | Validation |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -53,6 +54,7 @@ No active planned items.
 | 0013 | OpenAI usage-probe caching and single-flight | `docs/backlog/proposed/accounts/0013_openai_usage_probe_caching_and_single_flight.md` | `docs/backlog/completed/accounts/0013_openai_usage_probe_caching_and_single_flight.md` | 2026-07-11 | Completed | 60s TTL cache, single-flight lock, force-bypass for manual refresh, 300s background refresher feeding proactive benching. | `pytest -q` (168) incl. cache/coalesce tests |
 | 0016 | Capacity-aware balanced routing | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0016_capacity_aware_balanced_routing.md` | 2026-07-11 | Completed | New "balanced" default routes by remaining short-window quota so plans of different sizes deplete proportionally; round_robin/ordered stay as opt-ins. | `pytest -q` (168); log-verified 199/199 request parity motivating the change; live convergence check after install |
 | 0019 | Longest-window balancing and weekly token tally | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0019_longest_window_balancing_and_weekly_tally.md` | 2026-07-28 | Completed | Windows identified by duration after the upstream payload became plan-dependent; balancing and the "more" token tally key on each account's longest (weekly) window; fabricated idle 5h row removed. | Two-agent adversarial pass; `pytest -q` (208, 15 new); Playwright mock render; live check after install |
+| 0020 | Relay-owned Claude accounts and CLI-sourced usage | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0020_relay_owned_claude_accounts.md` | 2026-10-10 | Completed | Claude routes only through AIRelays-owned profiles and an optional inference-only setup token; the personal Claude Code sign-in is never used or signed out; usage comes from Claude Code's `get_usage` with stale readings marked and excluded from routing (ADR 0007). | `pytest` 417 passed; desktop browser, node and `cargo check` green; live `get_usage` check against a real profile |
 
 ## Deprecated Work
 
