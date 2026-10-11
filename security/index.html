@@ -414,6 +414,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#credential-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credential Storage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#open-local-relay-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -909,6 +920,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0008-uniform-cross-platform-runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uniform Cross-Platform Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -958,6 +997,17 @@
     <span class="md-ellipsis">
       
         Relay Token
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credential-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credential Storage
       
     </span>
   </a>
@@ -1068,6 +1118,25 @@
 <p>Rotate it:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>token<span class="w"> </span>rotate
 </code></pre></div>
+<h2 id="credential-storage">Credential Storage<a class="headerlink" href="#credential-storage" title="Permanent link">&para;</a></h2>
+<p>AIRelays stores its secrets the same way on macOS, Linux and Windows
+(<a href="../adr/0008-uniform-cross-platform-runtime/">ADR 0008</a>):</p>
+<ul>
+<li>OpenAI sign-ins, the relay token and the Claude setup token are files in the
+  data directory. On macOS and Linux the directories AIRelays creates are
+  owner-only (0700) and the files are created owner-only (0600); on Windows
+  they inherit the user profile's permissions, so keep the data directory
+  inside your profile.</li>
+<li>Files are replaced atomically, and a lock file next to each sign-in keeps
+  two AIRelays processes (for example the tray relay and a CLI command) from
+  refreshing the same rotating token at once.</li>
+<li>AIRelays does not use the OS keychain, Credential Manager, or Secret
+  Service. Protection at rest comes from file permissions and disk
+  encryption; enable FileVault, BitLocker, or LUKS if the machine may be lost.</li>
+<li>Claude browser sign-ins stay with Claude Code, which keeps them in the macOS
+  keychain or in each profile's folder on Linux and Windows (see
+  <a href="#claude-guardrails">Claude Guardrails</a>).</li>
+</ul>
 <h2 id="open-local-relay-mode">Open Local Relay Mode<a class="headerlink" href="#open-local-relay-mode" title="Permanent link">&para;</a></h2>
 <p>Open local relay mode applies to all enabled providers, including the Claude runtime.</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init<span class="w"> </span>--no-auth
@@ -1127,7 +1196,7 @@ LaunchDaemon, so Claude Code can use the keychain.</p>
 <li>provider stream lines</li>
 <li>usage summaries</li>
 </ul>
-<p>Request and response contents, including prompts and model outputs, can be written to the local AIRelays log files. Raw bearer tokens are redacted.</p>
+<p>Request and response contents, including prompts and model outputs, can be written to the local AIRelays log files. Raw bearer tokens are redacted. The logs directory is owner-only, like the rest of the data directory.</p>
 <p>Traffic logs default to a 7-day age limit and 1 GiB disk budget, with hourly/
 50 MiB rotation. The oldest whole files are permanently deleted, including
 eligible logs already present when upgrading. Use the tray's retention controls,

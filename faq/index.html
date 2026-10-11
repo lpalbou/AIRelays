@@ -522,6 +522,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#where-does-airelays-keep-my-sign-ins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where does AIRelays keep my sign-ins?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#is-airelays-affiliated-with-any-provider" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1008,6 +1019,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0008-uniform-cross-platform-runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uniform Cross-Platform Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1057,6 +1096,17 @@
     <span class="md-ellipsis">
       
         What token do I give my client?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-does-airelays-keep-my-sign-ins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where does AIRelays keep my sign-ins?
       
     </span>
   </a>
@@ -1242,6 +1292,12 @@
 <p>No. The OpenAI runtime uses an AIRelays-owned ChatGPT subscription login.</p>
 <h2 id="what-token-do-i-give-my-client">What token do I give my client?<a class="headerlink" href="#what-token-do-i-give-my-client" title="Permanent link">&para;</a></h2>
 <p>Use the AIRelays relay token from <code>airelays init</code>, <code>airelays token show</code>, or <code>airelays token rotate</code>.</p>
+<h2 id="where-does-airelays-keep-my-sign-ins">Where does AIRelays keep my sign-ins?<a class="headerlink" href="#where-does-airelays-keep-my-sign-ins" title="Permanent link">&para;</a></h2>
+<p>In owner-only files in the data directory (<code>~/.airelays</code> by default), the same
+way on macOS, Linux and Windows. AIRelays does not use the OS keychain. See
+<a href="../security/#credential-storage">Credential Storage</a>. If you used 0.16.0 or
+earlier, OpenAI accounts that version kept in the keychain need one new
+sign-in; <code>airelays doctor</code> lists them.</p>
 <h2 id="is-airelays-affiliated-with-any-provider">Is AIRelays affiliated with any provider?<a class="headerlink" href="#is-airelays-affiliated-with-any-provider" title="Permanent link">&para;</a></h2>
 <p>No. AIRelays is an independent third-party project.</p>
 <h2 id="how-are-requests-spread-across-my-openai-accounts">How are requests spread across my OpenAI accounts?<a class="headerlink" href="#how-are-requests-spread-across-my-openai-accounts" title="Permanent link">&para;</a></h2>

@@ -781,6 +781,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/0008-uniform-cross-platform-runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uniform Cross-Platform Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -935,31 +963,40 @@
 
 <h1 id="backlog-overview">Backlog Overview<a class="headerlink" href="#backlog-overview" title="Permanent link">&para;</a></h1>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provider-runtime expansion is complete and released: the ChatGPT subscription path is the primary runtime (with balanced multi-account routing) and the Claude runtime is a first-class local adapter as of 0.4.0. Open work is limited to proposed hardening follow-ups.</p>
+<p>AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provider-runtime expansion is complete and released: the ChatGPT subscription path is the primary runtime (with balanced multi-account routing) and the Claude runtime is a first-class local adapter as of 0.4.0. Open work is the cross-platform runtime track (ADR 0008) plus proposed hardening follow-ups.</p>
 <h2 id="counts">Counts<a class="headerlink" href="#counts" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Planned: 0</li>
-<li>Proposed: 3</li>
-<li>Completed: 8</li>
+<li>Planned: 3</li>
+<li>Proposed: 4</li>
+<li>Completed: 9</li>
 <li>Deprecated: 1</li>
 <li>Recurrent: 0</li>
 </ul>
 <h2 id="priority">Priority<a class="headerlink" href="#priority" title="Permanent link">&para;</a></h2>
-<p>No committed planned items. Proposed items 0014 (wall-clock bench expiry) and 0015 (Claude token shape validation) are low-urgency hardening. Proposed item 0018 (metered embeddings capability slice) is a deliberately uncertain product-boundary idea gated on a new ADR amending ADR 0002 — do not implement without promotion.</p>
+<p>Planned track <a href="../planned/platform/">cross-platform runtime</a> (ADR 0008): 0022 relay lifecycle and single-instance tray (P1), then 0023 headless service install and 0024 signed installers (P2). Proposed items 0014 (wall-clock bench expiry) and 0015 (Claude token shape validation) are low-urgency hardening. Proposed item 0018 (metered embeddings capability slice) is a deliberately uncertain product-boundary idea gated on a new ADR amending ADR 0002 — do not implement without promotion.</p>
 <h2 id="planned-tracks">Planned Tracks<a class="headerlink" href="#planned-tracks" title="Permanent link">&para;</a></h2>
-<p>No active planned tracks.</p>
+<ul>
+<li><a href="../planned/platform/">Cross-platform runtime</a></li>
+</ul>
 <h2 id="planned-items">Planned Items<a class="headerlink" href="#planned-items" title="Permanent link">&para;</a></h2>
-<p>No active planned items.</p>
+<ul>
+<li><a href="../planned/platform/0022_relay_lifecycle_and_single_instance_tray/">0022_relay_lifecycle_and_single_instance_tray.md</a></li>
+<li><a href="../planned/platform/0023_headless_service_install/">0023_headless_service_install.md</a></li>
+<li><a href="../planned/platform/0024_signed_installers/">0024_signed_installers.md</a></li>
+</ul>
 <h2 id="proposed-work">Proposed Work<a class="headerlink" href="#proposed-work" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../proposed/accounts/">Multi-account pool</a></li>
 <li><a href="../proposed/accounts/0014_wall_clock_bench_expiry_across_system_sleep/">0014_wall_clock_bench_expiry_across_system_sleep.md</a></li>
+<li><a href="../proposed/accounts/0021_keyring_sign_in_import/">0021_keyring_sign_in_import.md</a> — optional import of keyring-stored OpenAI sign-ins; deferred by the owner (ADR 0008).</li>
 <li><a href="../proposed/providers/">Provider runtimes</a></li>
 <li><a href="../proposed/providers/0015_claude_token_shape_validation_on_set_token/">0015_claude_token_shape_validation_on_set_token.md</a></li>
 <li><a href="../proposed/providers/0018_metered_embeddings_capability_slice/">0018_metered_embeddings_capability_slice.md</a> — single opt-in API key for <code>/v1/embeddings</code> only; both subscriptions verifiably cannot produce embeddings. Value uncertain (possibly reduces to key-management centralization, a double-edged trade); promotion requires a new ADR amending ADR 0002, a demonstrated recurring need, and explicit rejection of the local/direct/sidecar alternatives.</li>
 </ul>
 <h2 id="completed-work">Completed Work<a class="headerlink" href="#completed-work" title="Permanent link">&para;</a></h2>
 <ul>
+<li><a href="../completed/platform/">Cross-platform runtime</a></li>
+<li><a href="../completed/platform/0025_uniform_cross_platform_runtime_first_slice/">0025_uniform_cross_platform_runtime_first_slice.md</a></li>
 <li><a href="../completed/providers/">Provider runtimes</a></li>
 <li><a href="../completed/providers/0001_provider_runtime_registry_for_subscription_relays/">0001_provider_runtime_registry_for_subscription_relays.md</a></li>
 <li><a href="../completed/providers/0010_experimental_claude_subscription_cli_adapter/">0010_experimental_claude_subscription_cli_adapter.md</a></li>
@@ -1064,6 +1101,16 @@
 <td>Completed</td>
 <td>Claude routes only through AIRelays-owned profiles and an optional inference-only setup token; the personal Claude Code sign-in is never used or signed out; usage comes from Claude Code's <code>get_usage</code> with stale readings marked and excluded from routing (ADR 0007).</td>
 <td><code>pytest</code> 417 passed; desktop browser, node and <code>cargo check</code> green; live <code>get_usage</code> check against a real profile</td>
+</tr>
+<tr>
+<td>0025</td>
+<td>Uniform cross-platform runtime, first slice</td>
+<td>(worked directly; recorded post-completion)</td>
+<td><code>docs/backlog/completed/platform/0025_uniform_cross_platform_runtime_first_slice.md</code></td>
+<td>2026-10-11</td>
+<td>Completed</td>
+<td>File-only private credentials with a cross-process refresh lock, one <code>claude</code> launcher, isolated bundled interpreter, valid macOS signing, tests on three OSes (ADR 0008).</td>
+<td>Three per-OS adversarial reviews; <code>pytest</code> 444 passed on 3.11–3.13; <code>cargo test</code>; desktop browser tests; MkDocs/build/twine green</td>
 </tr>
 </tbody>
 </table>

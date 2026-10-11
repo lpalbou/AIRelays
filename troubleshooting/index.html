@@ -582,10 +582,32 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#an-openai-account-is-missing-after-upgrading-to-0161" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An OpenAI account is missing after upgrading to 0.16.1
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#i-opened-the-login-url-on-my-laptop-and-got-a-connection-error-at-localhost1455" class="md-nav__link">
     <span class="md-ellipsis">
       
         I opened the login URL on my laptop and got a connection error at localhost:1455
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#claude-cli-not-found-or-a-cmd-shim-is-refused-windows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Claude CLI not found, or a .cmd shim is refused (Windows)
       
     </span>
   </a>
@@ -1030,6 +1052,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0008-uniform-cross-platform-runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uniform Cross-Platform Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1119,10 +1169,32 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#an-openai-account-is-missing-after-upgrading-to-0161" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An OpenAI account is missing after upgrading to 0.16.1
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#i-opened-the-login-url-on-my-laptop-and-got-a-connection-error-at-localhost1455" class="md-nav__link">
     <span class="md-ellipsis">
       
         I opened the login URL on my laptop and got a connection error at localhost:1455
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#claude-cli-not-found-or-a-cmd-shim-is-refused-windows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Claude CLI not found, or a .cmd shim is refused (Windows)
       
     </span>
   </a>
@@ -1294,7 +1366,8 @@ macOS and Linux.</p>
 </ul>
 <div class="highlight"><pre><span></span><code>xattr<span class="w"> </span>-dr<span class="w"> </span>com.apple.quarantine<span class="w"> </span>/Applications/AIRelays.app
 </code></pre></div>
-<p>Alternatively, Control-click the app in Finder and choose <strong>Open</strong>.
+<p>Alternatively, open <strong>System Settings → Privacy &amp; Security</strong> and choose
+  <strong>Open Anyway</strong> for AIRelays.
 - The installer reports that no desktop installer exists for your system:
   desktop builds cover Apple Silicon Macs, x86_64 Linux, and x64 Windows.
   On other machines, including Intel Macs, use the headless installer
@@ -1352,6 +1425,19 @@ remain available. See <a href="../api/#get-v1models">model discovery</a> and
 <li>on a server or over SSH, run <code>airelays login --device</code></li>
 <li>if the browser flow cannot bind <code>localhost:1455</code>, use <code>airelays login --device</code></li>
 </ul>
+<h2 id="an-openai-account-is-missing-after-upgrading-to-0161">An OpenAI account is missing after upgrading to 0.16.1<a class="headerlink" href="#an-openai-account-is-missing-after-upgrading-to-0161" title="Permanent link">&para;</a></h2>
+<p>AIRelays 0.16.1 and later store OpenAI sign-ins only as owner-only files
+(<a href="../adr/0008-uniform-cross-platform-runtime/">ADR 0008</a>). Sign-ins that 0.16.0
+or earlier kept in the OS keychain, Credential Manager, or Secret Service are
+no longer read.</p>
+<ul>
+<li>run <code>airelays doctor --skip-response</code>; it lists those accounts under
+  <code>openai_keyring_sign_ins</code></li>
+<li>sign in again with <code>airelays login</code> (or <strong>Sign in</strong> in the desktop app),
+  once per account</li>
+<li>you can remove the old <code>AIRelays Auth</code> entries from your OS keychain
+  afterwards</li>
+</ul>
 <h2 id="i-opened-the-login-url-on-my-laptop-and-got-a-connection-error-at-localhost1455">I opened the login URL on my laptop and got a connection error at <code>localhost:1455</code><a class="headerlink" href="#i-opened-the-login-url-on-my-laptop-and-got-a-connection-error-at-localhost1455" title="Permanent link">&para;</a></h2>
 <p>The browser flow's sign-in redirect goes to <code>localhost:1455</code> <strong>on the machine
 running the browser</strong> — pasting the URL into a browser on another computer
@@ -1366,6 +1452,21 @@ completes and eventually times out.</p>
   browser-profile picker):</strong> run <code>ssh -L 1455:localhost:1455 user@server</code>
   first, then open the printed URL in your local browser. The tunnel can be
   opened even after <code>airelays login</code> has started waiting.</li>
+</ul>
+<h2 id="claude-cli-not-found-or-a-cmd-shim-is-refused-windows"><code>Claude CLI not found</code>, or a <code>.cmd</code> shim is refused (Windows)<a class="headerlink" href="#claude-cli-not-found-or-a-cmd-shim-is-refused-windows" title="Permanent link">&para;</a></h2>
+<ul>
+<li>run <code>airelays doctor --skip-response</code>; the Claude check shows which <code>claude</code>
+  the relay found</li>
+<li>AIRelays looks for <code>claude</code> on PATH and in the usual install locations; a
+  <code>claude</code> installed after the tray started is found after a relay restart</li>
+<li>on Windows, install Claude Code with its native installer (<code>claude.exe</code>).
+  npm's <code>claude.cmd</code> shim is refused because cmd.exe would re-parse request
+  text; to use an npm install, set <code>[providers.claude].command</code> to
+  <code>["node", "&lt;path to the package's cli.js&gt;"]</code>; with the desktop app, set
+  the <code>AIRELAYS_CLAUDE_COMMAND</code> environment variable to the same JSON array
+  instead, because the app rewrites <code>config.toml</code></li>
+<li>a <code>413</code> on a Claude request means its system prompt or JSON schema exceeds
+  the OS command-line limit; shorten it</li>
 </ul>
 <h2 id="503-no-claude-account-is-connected-to-airelays"><code>503 No Claude account is connected to AIRelays</code><a class="headerlink" href="#503-no-claude-account-is-connected-to-airelays" title="Permanent link">&para;</a></h2>
 <p>AIRelays uses only Claude accounts it owns. Your personal Claude Code sign-in

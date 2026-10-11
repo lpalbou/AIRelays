@@ -898,6 +898,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0008-uniform-cross-platform-runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uniform Cross-Platform Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1105,7 +1133,9 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <li>config: <code>~/.config/airelays/config.toml</code></li>
 <li>data dir: <code>~/.airelays</code></li>
 <li>logs dir: <code>~/.airelays/logs</code></li>
-<li>auth fallback file: <code>~/.airelays/auth.json</code></li>
+<li>OpenAI sign-ins: <code>~/.airelays/auth.json</code> (first account) and
+  <code>~/.airelays/accounts/&lt;slug&gt;/auth.json</code>, owner-only files (see
+  <a href="../security/#credential-storage">Security</a>)</li>
 <li>relay token file: <code>~/.airelays/relay-token</code></li>
 <li>Claude account profiles: <code>~/.airelays/claude/accounts/&lt;id&gt;/</code> (metadata in
   <code>account.json</code>; the adjacent <code>config/</code> is the profile's <code>CLAUDE_CONFIG_DIR</code>)</li>
@@ -1123,7 +1153,7 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <span class="n">logs_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"~/.airelays/logs"</span>
 
 <span class="k">[auth]</span>
-<span class="n">storage</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"auto"</span>
+<span class="n">storage</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"file"</span>
 <span class="n">browser_open</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
 <span class="n">login_timeout_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">900</span>
 
@@ -1186,6 +1216,7 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <span class="k">[providers.claude]</span>
 <span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
 <span class="n">bin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"claude"</span>
+<span class="n">command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span><span class="w">                          </span><span class="c1"># full argv, wins over `bin` (see below)</span>
 <span class="n">timeout_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">600.0</span>
 <span class="n">max_concurrent_requests</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
 <span class="n">balance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"balanced"</span><span class="w">                  </span><span class="c1"># balanced, round_robin, or ordered</span>
@@ -1201,7 +1232,7 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <li><code>AIRELAYS_PORT</code></li>
 <li><code>AIRELAYS_DATA_DIR</code></li>
 <li><code>AIRELAYS_LOGS_DIR</code></li>
-<li><code>AIRELAYS_AUTH_STORAGE</code></li>
+<li><code>AIRELAYS_CLAUDE_COMMAND</code> (a JSON array, for example <code>["node", "C:/npm/cli.js"]</code>)</li>
 <li><code>AIRELAYS_BROWSER_OPEN</code></li>
 <li><code>AIRELAYS_LOGIN_TIMEOUT_SECONDS</code></li>
 <li><code>AIRELAYS_UPSTREAM_BASE_URL</code></li>
@@ -1251,7 +1282,9 @@ can select an older catalog.</p>
 <p>OpenAI runtime:</p>
 <ul>
 <li>enabled by default</li>
-<li>uses AIRelays-owned auth storage</li>
+<li>stores each sign-in as an owner-only file on every OS; <code>storage</code> only
+  accepts <code>file</code> in practice (<code>auto</code> and <code>keyring</code> are read as <code>file</code>, and
+  <code>airelays doctor</code> flags sign-ins an older version kept in the OS keyring)</li>
 <li><code>airelays login</code> manages its subscription session</li>
 <li>caches successful upstream model-list responses for <code>models_cache_ttl_seconds</code> seconds
   by default</li>
@@ -1296,6 +1329,19 @@ can select an older catalog.</p>
   in the relay's environment are ignored</li>
 <li>every <code>claude</code> process gets an explicit environment, its profile's
   <code>CLAUDE_CONFIG_DIR</code>, and a relay-owned working directory</li>
+<li>finding <code>claude</code>: <code>command</code> (a full argv such as <code>["node", "/path/cli.js"]</code>)
+  wins; otherwise <code>bin</code> is looked up on PATH and in the usual install
+  locations (<code>~/.local/bin</code>, <code>~/.claude/local</code>, Homebrew, Volta, bun, nvm;
+  on Windows <code>%USERPROFILE%\.local\bin</code>, Volta and WinGet). The path is used
+  as found, so Claude Code's auto-updates keep working</li>
+<li>Windows needs a real <code>claude.exe</code>; npm's <code>claude.cmd</code> shim is refused
+  because cmd.exe would re-parse request text. Install Claude Code with its
+  native installer, or set <code>command</code> to run <code>node</code> with the npm package's
+  <code>cli.js</code> (desktop app: <code>AIRELAYS_CLAUDE_COMMAND</code>, since the app rewrites
+  <code>config.toml</code>)</li>
+<li>system prompts are passed through a private file when the CLI supports
+  it; a request whose arguments still exceed the OS command-line limit gets
+  <code>413</code> instead of a launch failure</li>
 <li>usage comes from Claude Code's <code>get_usage</code> (verified with 2.1.292+);
   <code>CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC</code> in the relay's environment stops
   it and marks readings <code>nonessential_traffic_disabled</code></li>
