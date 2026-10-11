@@ -13,3 +13,4 @@ when evidence shows urgency.
 ## Items
 
 - [0014_wall_clock_bench_expiry_across_system_sleep.md](0014_wall_clock_bench_expiry_across_system_sleep.md)
+- [0021_keyring_sign_in_import.md](0021_keyring_sign_in_import.md): optional import of keyring-stored OpenAI sign-ins (deferred; ADR 0008)

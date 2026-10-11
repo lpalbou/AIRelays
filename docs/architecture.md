@@ -126,6 +126,12 @@ they do not establish support on an unknown account.
 - relay token state
 - provider toggles and runtime guardrails
 
+### `airelays.private_io`
+
+- owner-only directories and atomically replaced owner-only files, the same
+  way on every OS (ADR 0008)
+- the cross-process lock that serializes OpenAI token refreshes
+
 ### `airelays.security`
 
 - relay bearer auth
@@ -163,6 +169,11 @@ they do not establish support on an unknown account.
 - provider model catalogs
 - provider readiness
 - Claude runtime
+
+### `airelays.claude_launch`
+
+- one launcher for every `claude` process: resolution, child environment,
+  argument limits, and per-OS process flags (no console windows on Windows)
 
 ### `airelays.transforms`
 

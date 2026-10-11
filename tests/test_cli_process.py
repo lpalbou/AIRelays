@@ -41,10 +41,9 @@ def test_explicit_nested_option_overrides_parent():
 
 @pytest.fixture
 def terminal(tmp_path):
-    if os.name == "nt":
-        pytest.skip("Fake CLI executable uses a POSIX shebang")
-    script = tmp_path / "fake-claude"
-    script.write_text(f"#!{sys.executable}\n" + '''
+    # Launched as [python, script] (`claude_command`), so it runs on Windows too.
+    script = tmp_path / "fake-claude.py"
+    script.write_text('''
 import json, os, pathlib, sys
 args = sys.argv[1:]
 profile = pathlib.Path(os.environ['CLAUDE_CONFIG_DIR'])
@@ -66,12 +65,11 @@ elif '-p' in args:
 else:
     raise SystemExit('Unexpected CLI arguments')
 ''')
-    script.chmod(0o700)
     settings = Settings(
         config_path=tmp_path / "config.toml", data_dir=tmp_path / "data",
         logs_dir=tmp_path / "logs", bearer_token_file=tmp_path / "relay-token",
         claude_oauth_token_file=tmp_path / "claude-token", auth_storage_mode="file",
-        enable_openai_provider=False, enable_claude=True, claude_bin=str(script),
+        enable_openai_provider=False, enable_claude=True, claude_command=(sys.executable, str(script)),
         claude_balance="round_robin", claude_models=("claude:sonnet",),
     )
     settings.write_config_file()

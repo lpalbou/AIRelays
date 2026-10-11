@@ -15,7 +15,8 @@ macOS and Linux.
   xattr -dr com.apple.quarantine /Applications/AIRelays.app
   ```
 
-  Alternatively, Control-click the app in Finder and choose **Open**.
+  Alternatively, open **System Settings → Privacy & Security** and choose
+  **Open Anyway** for AIRelays.
 - The installer reports that no desktop installer exists for your system:
   desktop builds cover Apple Silicon Macs, x86_64 Linux, and x64 Windows.
   On other machines, including Intel Macs, use the headless installer
@@ -86,6 +87,20 @@ remain available. See [model discovery](api.md#get-v1models) and
 - on a server or over SSH, run `airelays login --device`
 - if the browser flow cannot bind `localhost:1455`, use `airelays login --device`
 
+## An OpenAI account is missing after upgrading to 0.16.1
+
+AIRelays 0.16.1 and later store OpenAI sign-ins only as owner-only files
+([ADR 0008](adr/0008-uniform-cross-platform-runtime.md)). Sign-ins that 0.16.0
+or earlier kept in the OS keychain, Credential Manager, or Secret Service are
+no longer read.
+
+- run `airelays doctor --skip-response`; it lists those accounts under
+  `openai_keyring_sign_ins`
+- sign in again with `airelays login` (or **Sign in** in the desktop app),
+  once per account
+- you can remove the old `AIRelays Auth` entries from your OS keychain
+  afterwards
+
 ## I opened the login URL on my laptop and got a connection error at `localhost:1455`
 
 The browser flow's sign-in redirect goes to `localhost:1455` **on the machine
@@ -102,6 +117,21 @@ Two fixes:
   browser-profile picker):** run `ssh -L 1455:localhost:1455 user@server`
   first, then open the printed URL in your local browser. The tunnel can be
   opened even after `airelays login` has started waiting.
+
+## `Claude CLI not found`, or a `.cmd` shim is refused (Windows)
+
+- run `airelays doctor --skip-response`; the Claude check shows which `claude`
+  the relay found
+- AIRelays looks for `claude` on PATH and in the usual install locations; a
+  `claude` installed after the tray started is found after a relay restart
+- on Windows, install Claude Code with its native installer (`claude.exe`).
+  npm's `claude.cmd` shim is refused because cmd.exe would re-parse request
+  text; to use an npm install, set `[providers.claude].command` to
+  `["node", "<path to the package's cli.js>"]`; with the desktop app, set
+  the `AIRELAYS_CLAUDE_COMMAND` environment variable to the same JSON array
+  instead, because the app rewrites `config.toml`
+- a `413` on a Claude request means its system prompt or JSON schema exceeds
+  the OS command-line limit; shorten it
 
 ## `503 No Claude account is connected to AIRelays`
 

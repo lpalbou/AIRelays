@@ -65,8 +65,22 @@ The CLI and desktop share saved accounts and configuration by default. Use
 `--config ./relay.toml` consistently with `init`, sign-in, account commands,
 and `serve` to select another configuration. Shared options (`--config`,
 `--data-dir`, `--logs-dir`, `--auth-storage`, `--bearer-token-file`) work
-before or after subcommands; a later explicit value wins. For example:
+before or after subcommands; a later explicit value wins (`--auth-storage` is
+accepted for compatibility only). For example:
 `airelays --config ./relay.toml claude accounts --json`.
+
+Sign-ins (OpenAI, relay token, Claude setup token) are owner-only files in the
+data directory on macOS, Linux and Windows; AIRelays does not use the OS
+keychain (ADR 0008). OpenAI sign-ins that 0.16.0 or earlier kept in the
+keychain need one new sign-in; `airelays doctor` lists them.
+
+AIRelays starts every `claude` process through one launcher: it finds
+`claude` on PATH and in the usual install locations (the path is used as
+found), or runs `[providers.claude].command` (`AIRELAYS_CLAUDE_COMMAND` as a
+JSON array for the desktop app) as a full argv. Windows requires a real
+`claude.exe`; npm `.cmd` shims are refused. System prompts go through a
+private file when the CLI supports it, and requests whose arguments exceed
+the OS limit return 413. `airelays doctor` shows the CLI path in use.
 
 OpenAI runtime:
 

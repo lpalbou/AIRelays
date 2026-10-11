@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -40,3 +41,24 @@ def isolate_claude_token(monkeypatch):
     resolve = Settings.resolve_claude_oauth_token
     monkeypatch.setattr(Settings, "resolve_claude_oauth_token",
                         lambda self: None if self.claude_oauth_token_file == real else resolve(self))
+
+
+@pytest.fixture(autouse=True)
+def isolate_claude_launcher(monkeypatch):
+    """Never run the developer's `claude --help` (system-prompt-file
+    detection) and never sweep the real temp directory."""
+    from airelay import claude_launch
+
+    monkeypatch.setattr(claude_launch, "read_help", lambda argv, env, cwd: "")
+    # A bare `claude` never resolves to the developer's installed CLI;
+    # resolver tests pass their own environment.
+    real_find = claude_launch._find
+
+    def find(name, environ, home, *, windows):
+        if environ is os.environ:
+            return claude_launch.ClaudeCommand((name,), False)
+        return real_find(name, environ, home, windows=windows)
+
+    monkeypatch.setattr(claude_launch, "_find", find)
+    monkeypatch.setattr(claude_launch, "_help_cache", {})
+    monkeypatch.setattr(claude_launch, "_swept", True)

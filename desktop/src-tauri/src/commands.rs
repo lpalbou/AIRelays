@@ -4,10 +4,10 @@
 //! on blocking threads, never on the main/UI thread.
 
 use crate::relay::{
-    configure_platform, robust_lock, spawn_console_pipe, write_relay_config, ConsoleEntry,
-    RelaySupervisor,
+    configure_child, relay_process, robust_lock, spawn_console_pipe, write_relay_config,
+    ConsoleEntry, RelaySupervisor,
 };
-use crate::settings::AppSettings;
+use crate::settings::{write_private, AppSettings};
 use crate::state::AppState;
 use crate::traffic::RequestSummary;
 use serde::Serialize;
@@ -224,14 +224,8 @@ fn run_streamed(
         .supervisor
         .log(label, &format!("{} {}", program, args.join(" ")), false);
 
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .env("PYTHONUNBUFFERED", "1")
-        .env("PYTHONDONTWRITEBYTECODE", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    configure_platform(&mut command);
+    let mut command = relay_process(program, args);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = command
         .spawn()
@@ -472,14 +466,15 @@ fn kill_previous_login(app: &AppHandle) {
             .log("login", "Cancelling the previous unfinished sign-in.", false);
         #[cfg(unix)]
         unsafe {
-            // Children run in their own process group (configure_platform).
+            // Children run in their own process group (configure_child).
             libc::kill(-(pid as i32), libc::SIGTERM);
         }
         #[cfg(windows)]
         {
-            let _ = Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .output();
+            let mut taskkill = Command::new("taskkill");
+            taskkill.args(["/PID", &pid.to_string(), "/T", "/F"]);
+            configure_child(&mut taskkill);
+            let _ = taskkill.output();
         }
     }
 }
@@ -499,18 +494,14 @@ fn run_login_streamed(
         .supervisor
         .log(label, &format!("{} {}", program, args.join(" ")), false);
 
-    let mut command = Command::new(program);
+    let mut command = relay_process(program, args);
     command
-        .args(args)
-        .env("PYTHONUNBUFFERED", "1")
-        .env("PYTHONDONTWRITEBYTECODE", "1")
         // Piped, kept open: Claude's browser flow asks for a code on stdin
         // (the dashboard collects it via submit_login_code). Inheriting the
         // GUI's stdin would make interactive reads hit EOF or hang.
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_platform(&mut command);
     let mut child = command
         .spawn()
         .map_err(|error| format!("Cannot run {program}: {error}"))?;
@@ -707,17 +698,8 @@ pub async fn set_claude_token(app: AppHandle, token: String) -> Result<(), Strin
             return Err("The token is empty. Paste the full token printed by `claude setup-token`.".into());
         }
         let path = AppSettings::data_dir().join("claude-token");
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("Cannot create data dir: {error}"))?;
-        }
-        std::fs::write(&path, format!("{token}\n"))
+        write_private(&path, format!("{token}\n").as_bytes())
             .map_err(|error| format!("Cannot write the token file: {error}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
         let state = app.state::<AppState>();
         state.supervisor.log(
             "claude-login",
@@ -1033,21 +1015,21 @@ pub fn set_custom_token(token: String) -> Result<(), String> {
     if trimmed.is_empty() {
         return Err("Enter a non-empty relay token.".into());
     }
-    let path = AppSettings::bearer_token_file();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    std::fs::write(&path, format!("{trimmed}\n")).map_err(|error| error.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
-    Ok(())
+    write_private(&AppSettings::bearer_token_file(), format!("{trimmed}\n").as_bytes())
+        .map_err(|error| error.to_string())
 }
 
+/// Opens a file or folder with the system opener. Async: configuring the
+/// child may resolve the login-shell PATH once, which must not block the
+/// UI thread.
 #[tauri::command]
-pub fn open_path(path: String) -> Result<(), String> {
+pub async fn open_path(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || open_path_blocking(&path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn open_path_blocking(path: &str) -> Result<(), String> {
     let opener = if cfg!(target_os = "macos") {
         "open"
     } else if cfg!(target_os = "windows") {
@@ -1055,8 +1037,12 @@ pub fn open_path(path: String) -> Result<(), String> {
     } else {
         "xdg-open"
     };
-    let mut child = Command::new(opener)
-        .arg(&path)
+    let mut command = Command::new(opener);
+    command.arg(path);
+    // Same hygiene as every other child: inside an AppImage, xdg-open and
+    // the file manager it starts must not inherit the app's GTK settings.
+    configure_child(&mut command);
+    let mut child = command
         .spawn()
         .map_err(|error| format!("Cannot open {path}: {error}"))?;
     // Reap in the background to avoid zombie openers on Unix.

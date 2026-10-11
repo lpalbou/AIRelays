@@ -138,6 +138,27 @@ jobs:
           node scripts/check_runtime.mjs
           npx tauri build --verbose --bundles ${{ matrix.bundles }}
 
+      # Check the app exactly as shipped, inside the DMG. A missing or broken
+      # bundle signature makes a browser-downloaded app "damaged" with no
+      # override. spctl is deliberately not used: Gatekeeper rejects every
+      # ad-hoc signature until the app is Developer ID signed and notarized.
+      - name: Verify macOS signature and embedded runtime
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmgs=(desktop/src-tauri/target/release/bundle/dmg/*.dmg)
+          [[ ${#dmgs[@]} -eq 1 && -f "${dmgs[0]}" ]] || { echo "expected one DMG, found: ${dmgs[*]}" >&2; exit 1; }
+          mnt="$RUNNER_TEMP/airelays-dmg"
+          hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mnt" "${dmgs[0]}"
+          trap 'hdiutil detach -quiet "$mnt" || true' EXIT
+          app="$mnt/AIRelays.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          python="$app/Contents/Resources/runtime/bin/python3"
+          "$python" -I -B -c "import airelay; print('embedded relay', airelay.__version__)"
+          # Loads the compiled extensions (pydantic_core) the relay needs.
+          "$python" -I -B -m airelays --help > /dev/null
+
       - uses: actions/upload-artifact@v4
         with:
           name: airelays-desktop-${{ matrix.platform }}

@@ -2,25 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import difflib
-import errno
 import json
 import math
 import os
 import re
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
 from contextlib import aclosing
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, AsyncIterator
 
+from airelay.accounts import keyring_era_sign_ins
 from airelay.auth import AuthManager
 from airelay.backend import ChatGptCodexBackend
 from airelay.config import Settings
 from airelay.claude_auth import ClaudeProfile, account_identity, token_profile
+from airelay.claude_launch import ArgumentsTooLong, ClaudeLauncher, workdir
+from airelay.private_io import write_private
 from airelay.traffic import TrafficLogger, snapshot_body
 from airelay.transforms import chat_completion_chunk, completion_chunk
 
@@ -49,10 +51,9 @@ class ResolvedModel:
 # would otherwise silently fall back to its default on unknown ones.
 OPENAI_REASONING_MODES = ("none", "low", "medium", "high", "xhigh")
 CLAUDE_REASONING_MODES = ("low", "medium", "high", "xhigh", "max")
-# The serialized response_format schema rides the claude CLI's argv; beyond
-# the platform argument-size limit (macOS ARG_MAX ~1 MiB total) the spawn
-# fails with a raw E2BIG. Reject far below that, while a clean 422 is still
-# possible (OpenAI itself caps schema sizes well under this).
+# The serialized response_format schema rides the claude CLI's argv. Cap it
+# here (OpenAI itself caps schema sizes well under this); the launcher
+# also rejects any command line over the OS limit with a 413.
 CLAUDE_MAX_SCHEMA_BYTES = 200_000
 
 
@@ -520,6 +521,8 @@ class ClaudeCliRuntime:
         self.profile = profile or token_profile(settings)
         if not self.profile.managed:
             self.profile.config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Resolved now and again after a launch finds nothing (ADR 0008).
+        self._launcher = ClaudeLauncher(settings)
         self._semaphore = asyncio.Semaphore(settings.claude_max_concurrent_requests)
         self._models = self._build_models(settings.claude_models)
         self._models_fetched_at: float | None = None
@@ -648,7 +651,7 @@ class ClaudeCliRuntime:
         """One SDK control request in a short-lived CLI session: no prompt,
         no inference. Raises ProviderError with code `cli_unsupported` when
         the installed CLI does not know the request."""
-        command = [self._settings.claude_bin, "-p"]
+        command = ["-p"]
         if model:
             command.extend(["--model", model])
         command.extend([
@@ -656,15 +659,12 @@ class ClaudeCliRuntime:
             "--disable-slash-commands", "--no-session-persistence",
             "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
         ])
-        with tempfile.TemporaryDirectory(prefix="airelays-claude-control-") as workdir:
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    *command, cwd=workdir, env=self._subprocess_env(),
-                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL, limit=1024 * 1024,
-                )
-            except OSError as exc:
-                raise ProviderError(503, f"Cannot launch the Claude CLI: {exc}", code="provider_unavailable") from exc
+        with workdir("airelays-claude-control-") as cwd:
+            process = await self._spawn(
+                command, cwd=cwd, env=self._subprocess_env(),
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL, limit=1024 * 1024,
+            )
             try:
                 async with asyncio.timeout(timeout):
                     assert process.stdin is not None and process.stdout is not None
@@ -725,6 +725,8 @@ class ClaudeCliRuntime:
             "identity_mismatch": mismatch,
             "cli_installed": probe.get("installed", False),
             "cli_version": probe.get("version"),
+            "cli_path": self._launcher.describe(),
+            "cli_error": probe.get("cli_error"),
             "auth_method": probe.get("auth_method"),
             "api_provider": probe.get("api_provider"),
             "logged_in": probe.get("logged_in", False),
@@ -1115,38 +1117,19 @@ class ClaudeCliRuntime:
         return resolved
 
     async def _run_json(self, request: ClaudeTextRequest, request_id: str) -> dict[str, Any]:
-        command = self._build_command(request, stream=False)
-        self._log_command(request_id, request.public_model, command, request.prompt)
         async with self._semaphore:
-            with tempfile.TemporaryDirectory(prefix="airelays-claude-") as workdir:
-                try:
-                    process = await asyncio.create_subprocess_exec(
-                        *command,
-                        cwd=workdir,
-                        env=self._subprocess_env(),
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                except FileNotFoundError as exc:
-                    raise ProviderError(
-                        503,
-                        f"Claude CLI not found at `{self._settings.claude_bin}`.",
-                        code="provider_unavailable",
-                    ) from exc
-                except OSError as exc:
-                    if exc.errno == errno.E2BIG:
-                        raise ProviderError(
-                            413,
-                            "The request is too large for the local Claude CLI "
-                            "(argument list exceeded the platform limit).",
-                            code="invalid_request_error",
-                        ) from exc
-                    raise ProviderError(
-                        503,
-                        f"Failed to launch the Claude CLI: {exc}",
-                        code="provider_unavailable",
-                    ) from exc
+            with workdir() as cwd:
+                env = self._subprocess_env()
+                command = await self._inference_command(request, stream=False, cwd=cwd, env=env)
+                self._log_command(request_id, request.public_model, command, request.prompt)
+                process = await self._spawn(
+                    command,
+                    cwd=cwd,
+                    env=env,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
                 try:
                     stdout, stderr = await asyncio.wait_for(
                         process.communicate(request.prompt.encode("utf-8")),
@@ -1163,6 +1146,8 @@ class ClaudeCliRuntime:
                     await _end_process(process)
                     raise
         self._log_result(request_id, stdout)
+        if process.returncode == 127:
+            self._launcher.refresh()  # e.g. `env node` no longer resolves
         if process.returncode != 0:
             # The CLI often exits nonzero with the real error (e.g. a 401
             # for an invalid token) as JSON on stdout; prefer that message
@@ -1188,38 +1173,19 @@ class ClaudeCliRuntime:
         request: ClaudeTextRequest,
         request_id: str,
     ) -> AsyncIterator[dict[str, Any]]:
-        command = self._build_command(request, stream=True)
-        self._log_command(request_id, request.public_model, command, request.prompt)
         async with self._semaphore:
-            with tempfile.TemporaryDirectory(prefix="airelays-claude-") as workdir:
-                try:
-                    process = await asyncio.create_subprocess_exec(
-                        *command,
-                        cwd=workdir,
-                        env=self._subprocess_env(),
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                except FileNotFoundError as exc:
-                    raise ProviderError(
-                        503,
-                        f"Claude CLI not found at `{self._settings.claude_bin}`.",
-                        code="provider_unavailable",
-                    ) from exc
-                except OSError as exc:
-                    if exc.errno == errno.E2BIG:
-                        raise ProviderError(
-                            413,
-                            "The request is too large for the local Claude CLI "
-                            "(argument list exceeded the platform limit).",
-                            code="invalid_request_error",
-                        ) from exc
-                    raise ProviderError(
-                        503,
-                        f"Failed to launch the Claude CLI: {exc}",
-                        code="provider_unavailable",
-                    ) from exc
+            with workdir() as cwd:
+                env = self._subprocess_env()
+                command = await self._inference_command(request, stream=True, cwd=cwd, env=env)
+                self._log_command(request_id, request.public_model, command, request.prompt)
+                process = await self._spawn(
+                    command,
+                    cwd=cwd,
+                    env=env,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
 
                 stderr_task = asyncio.create_task(process.stderr.read())
                 saw_result = False
@@ -1261,6 +1227,8 @@ class ClaudeCliRuntime:
                     async with asyncio.timeout(self._settings.claude_timeout_seconds):
                         returncode = await process.wait()
                         stderr = await stderr_task
+                    if returncode == 127:
+                        self._launcher.refresh()
                     if returncode != 0:
                         raise _claude_failure(_stderr_message(stderr, returncode))
                     if not saw_result:
@@ -1275,9 +1243,10 @@ class ClaudeCliRuntime:
                     await _end_process(process)
                     await stderr_task
 
-    def _build_command(self, request: ClaudeTextRequest, *, stream: bool) -> list[str]:
+    def _build_command(self, request: ClaudeTextRequest, *, stream: bool,
+                       system_prompt_file: str | None = None) -> list[str]:
+        """CLI arguments after the executable (the launcher adds it)."""
         command = [
-            self._settings.claude_bin,
             "-p",
             "--model",
             request.upstream_model,
@@ -1289,7 +1258,9 @@ class ClaudeCliRuntime:
             "--disable-slash-commands",
             "--no-session-persistence",
         ]
-        if request.system_prompt:
+        if system_prompt_file:
+            command.extend(["--system-prompt-file", system_prompt_file])
+        elif request.system_prompt:
             command.extend(["--system-prompt", request.system_prompt])
         if request.effort:
             command.extend(["--effort", request.effort])
@@ -1301,48 +1272,54 @@ class ClaudeCliRuntime:
             command.extend(["--output-format", "json"])
         return command
 
-    def _subprocess_env(self) -> dict[str, str]:
-        allowed = (
-            "PATH",
-            "HOME",
-            "LANG",
-            "LC_ALL",
-            "LC_CTYPE",
-            "TERM",
-            "TMPDIR",
-            "TMP",
-            "TEMP",
-            "USER",
-            "LOGNAME",
-            "SHELL",
-            "HTTP_PROXY",
-            "HTTPS_PROXY",
-            "NO_PROXY",
-            "http_proxy",
-            "https_proxy",
-            "no_proxy",
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    async def _inference_command(self, request: ClaudeTextRequest, *, stream: bool, cwd: str,
+                                 env: dict[str, str]) -> list[str]:
+        """A system prompt leaves argv (process list, OS size limits) for a
+        private file in the per-request directory when the CLI supports it."""
+        prompt_file = None
+        if request.system_prompt and await self._launcher.supports_system_prompt_file(env=env, cwd=self.profile.root):
+            prompt_file = os.path.join(cwd, "system-prompt.txt")
+            write_private(Path(prompt_file), request.system_prompt)
+        return self._build_command(request, stream=stream, system_prompt_file=prompt_file)
+
+    async def _spawn(self, args: list[str], *, cwd: str, env: dict[str, str],
+                     **kwargs: Any) -> asyncio.subprocess.Process:
+        try:
+            return await self._launcher.spawn(args, cwd=cwd, env=env, **kwargs)
+        except ArgumentsTooLong as exc:
+            raise ProviderError(
+                413,
+                "The request is too large for the local Claude CLI "
+                "(its arguments exceed this platform's command-line limit).",
+                code="invalid_request_error",
+            ) from exc
+        except FileNotFoundError as exc:
+            raise ProviderError(
+                503,
+                f"Claude CLI not found at `{self._launcher.describe()}`.",
+                code="provider_unavailable",
+            ) from exc
+        except OSError as exc:
+            raise ProviderError(503, f"Cannot launch the Claude CLI: {exc}", code="provider_unavailable") from exc
+
+    def _subprocess_env(self, *, interactive: bool = False) -> dict[str, str]:
+        # Every process names its relay-owned profile; only the setup-token
+        # account receives the stored token (ADR 0007).
+        token = None if self.profile.managed else self._settings.resolve_claude_oauth_token()
+        return self._launcher.env(config_dir=self.profile.config_dir, oauth_token=token, interactive=interactive)
+
+    def run_cli(self, args: list[str], *, interactive: bool = False, timeout: float | None = None,
+                capture: bool = True) -> subprocess.CompletedProcess[Any]:
+        """One synchronous `claude` command in this profile (sign-in,
+        sign-out, probes). Raises OSError when it cannot be launched."""
+        return self._launcher.run(
+            args, env=self._subprocess_env(interactive=interactive), cwd=self.profile.root,
+            timeout=timeout, capture=capture, interactive=interactive,
         )
-        env = {name: value for name, value in os.environ.items() if name in allowed}
-        # Every process names its relay-owned profile. An inherited
-        # CLAUDE_CONFIG_DIR or CLAUDE_CODE_OAUTH_TOKEN would route through
-        # the user's own Claude Code sign-in (ADR 0007).
-        env["CLAUDE_CONFIG_DIR"] = str(self.profile.config_dir)
-        if not self.profile.managed:
-            token = self._settings.resolve_claude_oauth_token()
-            if token:
-                env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-        if self._settings.claude_strip_api_key_env:
-            for name in (
-                "ANTHROPIC_API_KEY",
-                "ANTHROPIC_AUTH_TOKEN",
-                "ANTHROPIC_BASE_URL",
-                "CLAUDE_CODE_USE_BEDROCK",
-                "CLAUDE_CODE_USE_VERTEX",
-                "CLAUDE_CODE_USE_FOUNDRY",
-            ):
-                env.pop(name, None)
-        return env
+
+    @property
+    def needs_first_probe(self) -> bool:
+        return self._last_probe is None
 
     def _cached_probe(self) -> dict[str, Any]:
         """Stale-while-revalidate CLI probe. The synchronous probe spawns
@@ -1593,59 +1570,58 @@ class ClaudeCliRuntime:
         }
 
     def _run_status_command(self) -> dict[str, Any]:
-        installed = True
+        """`installed` comes from the resolver. A probe that times out (a
+        busy machine) is unknown: the last known sign-in state is kept, and
+        the CLI is never reported as missing because it was slow."""
+        if not self._launcher.command.found:
+            self._launcher.refresh()
+        installed = self._launcher.command.found
         version = None
         status_payload: dict[str, Any] | None = None
-        try:
-            version = self._status_version_probe()
-        except (RuntimeError, FileNotFoundError, subprocess.TimeoutExpired):
-            installed = False
+        timed_out = False
         if installed:
             try:
+                version = self._status_version_probe()
                 status_payload = self._status_auth_probe()
-            except (RuntimeError, subprocess.TimeoutExpired):
-                status_payload = None
-            except FileNotFoundError:
+            except subprocess.TimeoutExpired:
+                timed_out = True
+            except OSError:
                 installed = False
+        previous = self._last_probe or {}
+        if timed_out and status_payload is None:
+            identity = {key: previous.get(key) for key in (
+                "logged_in", "auth_method", "api_provider", "email", "account_id",
+                "organization_id", "subscription_type",
+            )}
+        else:
+            identity = {
+                "logged_in": bool(status_payload and status_payload.get("loggedIn")),
+                "auth_method": status_payload.get("authMethod") if status_payload else None,
+                "api_provider": status_payload.get("apiProvider") if status_payload else None,
+                "email": status_payload.get("email") if status_payload else None,
+                "account_id": status_payload.get("accountId") if status_payload else None,
+                "organization_id": status_payload.get("orgId") if status_payload else None,
+                "subscription_type": status_payload.get("subscriptionType") if status_payload else None,
+            }
         probe = {
             "installed": installed,
-            "version": version,
-            "logged_in": bool(status_payload and status_payload.get("loggedIn")),
-            "auth_method": status_payload.get("authMethod") if status_payload else None,
-            "api_provider": status_payload.get("apiProvider") if status_payload else None,
-            "email": status_payload.get("email") if status_payload else None,
-            "account_id": status_payload.get("accountId") if status_payload else None,
-            "organization_id": status_payload.get("orgId") if status_payload else None,
-            "subscription_type": status_payload.get("subscriptionType") if status_payload else None,
+            "version": version or (previous.get("version") if timed_out else None),
+            "probe_timed_out": timed_out,
+            "cli_error": self._launcher.command.error,
+            **identity,
         }
         self._last_probe = probe
         return probe
 
     def _status_version_probe(self) -> str | None:
-        process = subprocess.run(
-            [self._settings.claude_bin, "--version"],
-            capture_output=True,
-            cwd=self.profile.root,
-            env=self._subprocess_env(),
-            check=False,
-            text=True,
-            timeout=5,
-        )
+        process = self.run_cli(["--version"], timeout=5)
         if process.returncode != 0:
             return None
         text = process.stdout.strip()
         return text or None
 
     def _status_auth_probe(self) -> dict[str, Any] | None:
-        process = subprocess.run(
-            [self._settings.claude_bin, "auth", "status", "--json"],
-            capture_output=True,
-            cwd=self.profile.root,
-            env=self._subprocess_env(),
-            check=False,
-            text=True,
-            timeout=5,
-        )
+        process = self.run_cli(["auth", "status", "--json"], timeout=5)
         if process.returncode != 0:
             return None
         try:
@@ -2092,6 +2068,11 @@ class ProviderRegistry:
             }
         )
 
+    async def warm_status_probes(self) -> None:
+        """Call before provider_statuses() on the event loop."""
+        if self._claude is not None:
+            await self._claude.warm_status_probes()
+
     def provider_statuses(self) -> dict[str, Any]:
         providers: dict[str, Any] = {}
         openai_status = {
@@ -2115,6 +2096,10 @@ class ProviderRegistry:
             statuses = self._account_pool.account_statuses()
             if statuses and "window_tokens" in statuses[0]:
                 openai_status["window_tokens"] = statuses[0]["window_tokens"]
+        if self._settings.enable_openai_provider:
+            keyring_era = keyring_era_sign_ins(self._settings)
+            if keyring_era:
+                openai_status["keyring_era_sign_ins"] = keyring_era
         providers["openai"] = openai_status
         if self._claude is not None:
             providers["claude"] = self._claude.status()

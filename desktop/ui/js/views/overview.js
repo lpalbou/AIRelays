@@ -1457,11 +1457,21 @@ function renderAccounts(state) {
   const openai = providers.openai;
   const accounts = openaiAccountList(openai);
 
+  // Sign-ins an older version kept in the OS keychain are not read since
+  // 0.16.1 (ADR 0008); say so instead of looking signed out for no reason.
+  const keyringEra = openai?.keyring_era_sign_ins?.length ?? 0;
   if (openai?.enabled && accounts.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "No OpenAI account signed in yet — use Sign in above.";
+    empty.textContent = keyringEra
+      ? "OpenAI sign-ins saved in the OS keychain by an older AIRelays version are no longer read — use Sign in above, once per account."
+      : "No OpenAI account signed in yet — use Sign in above.";
     container.appendChild(empty);
+  } else if (openai?.enabled && keyringEra) {
+    const note = document.createElement("p");
+    note.className = "card-caption";
+    note.textContent = `${keyringEra} older OpenAI sign-in${keyringEra > 1 ? "s" : ""} saved in the OS keychain need${keyringEra > 1 ? "" : "s"} a new sign-in.`;
+    container.appendChild(note);
   }
   const balance = openai?.balance ?? "balanced";
   accounts.forEach((account, index) => {

@@ -20,7 +20,6 @@ const FIELDS = [
       { key: "port", label: "Port", kind: "number", min: 1, max: 65535 },
       { key: "requireBearerAuth", label: "Require API key", kind: "bool" },
       { key: "autoGenerateBearerToken", label: "Create a key automatically when missing", kind: "bool" },
-      { key: "authStorageMode", label: "Login storage", kind: "select", options: ["auto", "file", "keyring"] },
       { key: "browserOpen", label: "Open browser automatically on sign-in", kind: "bool" },
       { key: "loginTimeoutSeconds", label: "Sign-in timeout (seconds)", kind: "number", min: 30, max: 7200 },
     ],

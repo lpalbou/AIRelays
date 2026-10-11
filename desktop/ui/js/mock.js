@@ -10,7 +10,6 @@ const settings = {
   port: 8317,
   requireBearerAuth: true,
   autoGenerateBearerToken: false,
-  authStorageMode: "auto",
   browserOpen: true,
   loginTimeoutSeconds: 900,
   upstreamBaseUrl: "https://chatgpt.com/backend-api/codex",

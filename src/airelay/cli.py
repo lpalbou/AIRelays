@@ -17,6 +17,7 @@ from airelay.accounts import (
     OpenAiAccountPool,
     discover_slots,
     find_slot,
+    keyring_era_sign_ins,
     load_manifest,
     resolve_slot,
     save_manifest,
@@ -31,6 +32,7 @@ from airelay.claude_auth import (
     account_identity, discover_profiles, enroll_profile,
     forget_profile, new_profile, resolve_profile, suspend_profile,
 )
+from airelay.private_io import ensure_private_dir
 from airelay.terminal import accent, bad, bold, good, muted, warn
 
 
@@ -99,8 +101,9 @@ def _base_settings(args: argparse.Namespace) -> Settings:
             settings.claude_oauth_token_file = settings.data_dir / "claude-token"
     if getattr(args, "logs_dir", None):
         settings.logs_dir = Path(args.logs_dir).expanduser()
-    if getattr(args, "auth_storage", None):
-        settings.auth_storage_mode = args.auth_storage
+    if getattr(args, "auth_storage", None) in ("auto", "keyring"):
+        # Accepted for old scripts; sign-ins are always private files.
+        settings.legacy_auth_storage = args.auth_storage
     if getattr(args, "bearer_token_file", None):
         settings.bearer_token_file = Path(args.bearer_token_file).expanduser()
     if getattr(args, "no_auth", False):
@@ -519,6 +522,18 @@ async def _doctor_payload(settings: Settings, *, skip_response: bool = False) ->
             _add_next_steps(next_steps, _next_steps_from_check(check))
     if backend is not None:
         await backend.close()
+    keyring_era = keyring_era_sign_ins(settings) if settings.enable_openai_provider else []
+    if keyring_era:
+        check = _check(
+            "openai_keyring_sign_ins",
+            "warn",
+            "OpenAI sign-ins saved in the OS keychain by an AIRelays version before 0.16.1 "
+            "are no longer read. Sign in again to use them.",
+            next_steps=[_login_hint()],
+            data={"accounts": ", ".join(keyring_era)},
+        )
+        checks.append(check)
+        _add_next_steps(next_steps, _next_steps_from_check(check))
 
     claude_status = dict(provider_statuses.get("claude", {}))
     if not settings.enable_claude:
@@ -531,6 +546,7 @@ async def _doctor_payload(settings: Settings, *, skip_response: bool = False) ->
                 "The Claude runtime is ready.",
                 data={
                     "cli_version": claude_status.get("cli_version") or "",
+                    "cli_path": claude_status.get("cli_path") or "",
                     "auth_method": claude_status.get("auth_method") or "",
                     "email": claude_status.get("email") or "",
                 },
@@ -544,6 +560,7 @@ async def _doctor_payload(settings: Settings, *, skip_response: bool = False) ->
             next_steps=["airelays claude login", "airelays claude set-token"],
             data={
                 "cli_version": claude_status.get("cli_version") or "",
+                "cli_path": claude_status.get("cli_path") or "",
                 "auth_method": claude_status.get("auth_method") or "",
             },
         )
@@ -840,6 +857,7 @@ def _print_status_summary(payload: dict[str, object]) -> None:
             kind="good" if claude_provider.get("ready_for_requests") else "warn",
         )
         _print_field("Claude CLI", claude_provider.get("cli_version"))
+        _print_field("Claude CLI path", claude_provider.get("cli_path"))
         _print_field("Claude email", claude_provider.get("email"))
         _print_field("Claude auth", claude_provider.get("auth_method"))
 
@@ -968,6 +986,7 @@ def _print_serve_banner(settings: Settings, provider_statuses: dict[str, object]
             kind="good" if claude_provider.get("ready_for_requests") else "warn",
         )
         _print_field("Claude CLI", claude_provider.get("cli_version"))
+        _print_field("Claude CLI path", claude_provider.get("cli_path"))
     if openai_provider.get("enabled") and not openai_provider.get("ready_for_requests"):
         _print_command("OpenAI login", _login_hint())
     if claude_provider.get("enabled") and not claude_provider.get("ready_for_requests"):
@@ -1056,10 +1075,7 @@ async def _run_login(args: argparse.Namespace) -> None:
             target_root = settings.data_dir / ACCOUNTS_DIRNAME / slug
             added_as = len(existing_slots) + 1
 
-    # The slot directory must exist even when credentials land in the
-    # keyring (keyring saves write no files): discovery lists directories,
-    # and the keyring entry is keyed by this exact path.
-    target_root.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(target_root)
     AuthStorage(target_root, settings.auth_storage_mode).save(raw_payload)
 
     payload = _login_payload(settings, record)
@@ -1339,12 +1355,10 @@ def _run_claude_login(args: argparse.Namespace) -> None:
     expected = account_identity(profile.identity)
     if args.replace:
         suspend_profile(profile)
-    env = ClaudeCliRuntime(settings, profile=profile)._subprocess_env()
+    runtime = ClaudeCliRuntime(settings, profile=profile)
     print("Sign in to your Claude subscription in the browser.", flush=True)
     try:
-        result = subprocess.run(
-            [settings.claude_bin, "auth", "login", "--claudeai"], env=env, cwd=profile.root, check=False,
-        )
+        result = runtime.run_cli(["auth", "login", "--claudeai"], interactive=True, capture=False)
     except OSError as error:
         raise SystemExit(f"Cannot launch Claude Code: {error}") from error
     if result.returncode != 0:
@@ -1358,8 +1372,7 @@ def _run_claude_login(args: argparse.Namespace) -> None:
         if duplicate:
             # Leave the original profile and its credentials untouched.
             try:
-                cleanup = subprocess.run([settings.claude_bin, "auth", "logout"], env=env, cwd=profile.root,
-                                         capture_output=True, check=False, timeout=60)
+                cleanup = runtime.run_cli(["auth", "logout"], timeout=60)
                 if cleanup.returncode != 0:
                     print(f"The unused profile at {profile.config_dir} could not be signed out; it is not enrolled.")
             except (OSError, subprocess.TimeoutExpired):
@@ -1420,11 +1433,9 @@ def _run_claude_logout(args: argparse.Namespace) -> None:
             outcomes.append({"slug": profile.slug, "token_removed": token_removed,
                              "cli_signed_out": True, "cli_error": None})
             continue
-        env = ClaudeCliRuntime(settings, profile=profile)._subprocess_env()
         error = None
         try:
-            result = subprocess.run([settings.claude_bin, "auth", "logout"], env=env, cwd=profile.root,
-                                    capture_output=True, text=True, check=False, timeout=60)
+            result = ClaudeCliRuntime(settings, profile=profile).run_cli(["auth", "logout"], timeout=60)
             if result.returncode != 0:
                 error = (result.stderr or result.stdout).strip() or f"Claude exited {result.returncode}"
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -1587,7 +1598,7 @@ def build_parser() -> argparse.ArgumentParser:
     shared.add_argument(
         "--auth-storage",
         choices=("auto", "file", "keyring"),
-        help="Where to load and store AIRelays-owned OpenAI subscription auth",
+        help="Deprecated: OpenAI sign-ins are always stored as private files",
     )
     shared.add_argument("--bearer-token-file", help="Path to the relay bearer token file")
 

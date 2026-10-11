@@ -136,7 +136,8 @@ def managed_logs(root: Path) -> list[tuple[Path, os.stat_result]]:
                             except ValueError:
                                 continue
                             try:
-                                info = entry.stat(follow_symlinks=False)
+                                # DirEntry.stat() reports st_nlink 0 on Windows.
+                                info = os.lstat(entry.path)
                             except FileNotFoundError:
                                 continue
                             if stat.S_ISREG(info.st_mode) and info.st_nlink == 1:

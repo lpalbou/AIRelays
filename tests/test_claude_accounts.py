@@ -17,6 +17,7 @@ from airelay.claude_auth import ClaudeProfile, discover_profiles, enroll_profile
 from airelay.cli import build_parser
 from airelay.config import Settings
 from airelay.providers import ClaudeCliRuntime, ProviderError, _claude_failure
+from claude_fakes import use_fake_cli
 
 
 @pytest.fixture
@@ -25,6 +26,8 @@ def settings(tmp_path):
                     claude_oauth_token_file=tmp_path / "claude-token",
                     bearer_token_file=tmp_path / "relay-token", require_bearer_auth=False,
                     enable_openai_provider=False, enable_claude=True,
+                    # An existing executable; CLI sign-in tests stub subprocess.run.
+                    claude_bin=sys.executable,
                     claude_models=("claude:sonnet", "claude:opus"))
 
 
@@ -121,7 +124,8 @@ def test_only_completed_signins_are_discovered_and_paths_stay_fixed(settings):
     enroll_profile(pending, {"logged_in": True, "email": "one@example.com"})
     profile, = discover_profiles(settings)
     assert profile.config_dir == pending.config_dir
-    assert (profile.root / "account.json").stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":  # Windows protects it with the profile ACL instead
+        assert (profile.root / "account.json").stat().st_mode & 0o777 == 0o600
     forget_profile(profile)
     assert discover_profiles(settings) == []
     assert profile.config_dir.exists()
@@ -540,15 +544,14 @@ def test_setup_token_account_is_relay_configuration_only(settings, monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_real_subprocesses_use_distinct_profiles_and_scrub_token(pool, settings, tmp_path, monkeypatch):
-    script = tmp_path / "fake-claude"
-    script.write_text(f"#!{sys.executable}\n" + '''
+    script = tmp_path / "fake-claude.py"
+    script.write_text('''
 import json, os, sys
 sys.stdin.read()
 print(json.dumps({"result": os.environ["CLAUDE_CONFIG_DIR"],
                   "is_error": "CLAUDE_CODE_OAUTH_TOKEN" in os.environ}))
 ''')
-    script.chmod(0o700)
-    settings.claude_bin = str(script)
+    use_fake_cli(settings, script)
     settings.claude_balance = "round_robin"
     settings.write_claude_oauth_token("legacy-secret")
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "ambient-secret")
@@ -560,8 +563,8 @@ print(json.dumps({"result": os.environ["CLAUDE_CONFIG_DIR"],
 @pytest.mark.asyncio
 async def test_real_stream_rejection_fails_over_before_error_text_reaches_client(pool, settings, tmp_path):
     first, second = accounts(pool)
-    script = tmp_path / "fake-claude-stream"
-    script.write_text(f"#!{sys.executable}\n" + f'''
+    script = tmp_path / "fake-claude-stream.py"
+    script.write_text(f'''
 import json, os, sys
 sys.stdin.read()
 if os.environ["CLAUDE_CONFIG_DIR"] == {str(first.runtime.profile.config_dir)!r}:
@@ -569,8 +572,7 @@ if os.environ["CLAUDE_CONFIG_DIR"] == {str(first.runtime.profile.config_dir)!r}:
 else:
     print(json.dumps({{"type": "result", "result": "second account", "is_error": False}}))
 ''')
-    script.chmod(0o700)
-    settings.claude_bin = str(script)
+    use_fake_cli(settings, script)
     settings.claude_balance = "ordered"
     output = b"".join([chunk async for chunk in pool.stream_chat_completion(BODY, "real-stream")])
     assert b"second account" in output
@@ -581,15 +583,14 @@ else:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("chat", [True, False])
 async def test_closing_stream_reaps_real_subprocess_and_releases_semaphore(pool, settings, tmp_path, monkeypatch, chat):
-    script = tmp_path / "fake-claude-slow-stream"
-    script.write_text(f"#!{sys.executable}\n" + '''
+    script = tmp_path / "fake-claude-slow-stream.py"
+    script.write_text('''
 import json, sys, time
 sys.stdin.read()
 print(json.dumps({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hello"}}}), flush=True)
 time.sleep(60)
 ''')
-    script.chmod(0o700)
-    settings.claude_bin = str(script)
+    use_fake_cli(settings, script)
     settings.claude_balance = "ordered"
     processes = []
     create = asyncio.create_subprocess_exec

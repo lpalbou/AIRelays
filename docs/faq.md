@@ -8,6 +8,14 @@ No. The OpenAI runtime uses an AIRelays-owned ChatGPT subscription login.
 
 Use the AIRelays relay token from `airelays init`, `airelays token show`, or `airelays token rotate`.
 
+## Where does AIRelays keep my sign-ins?
+
+In owner-only files in the data directory (`~/.airelays` by default), the same
+way on macOS, Linux and Windows. AIRelays does not use the OS keychain. See
+[Credential Storage](security.md#credential-storage). If you used 0.16.0 or
+earlier, OpenAI accounts that version kept in the keychain need one new
+sign-in; `airelays doctor` lists them.
+
 ## Is AIRelays affiliated with any provider?
 
 No. AIRelays is an independent third-party project.

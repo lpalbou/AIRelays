@@ -2,38 +2,43 @@
 
 ## Summary
 
-AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provider-runtime expansion is complete and released: the ChatGPT subscription path is the primary runtime (with balanced multi-account routing) and the Claude runtime is a first-class local adapter as of 0.4.0. Open work is limited to proposed hardening follow-ups.
+AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provider-runtime expansion is complete and released: the ChatGPT subscription path is the primary runtime (with balanced multi-account routing) and the Claude runtime is a first-class local adapter as of 0.4.0. Open work is the cross-platform runtime track (ADR 0008) plus proposed hardening follow-ups.
 
 ## Counts
 
-- Planned: 0
-- Proposed: 3
-- Completed: 8
+- Planned: 3
+- Proposed: 4
+- Completed: 9
 - Deprecated: 1
 - Recurrent: 0
 
 ## Priority
 
-No committed planned items. Proposed items 0014 (wall-clock bench expiry) and 0015 (Claude token shape validation) are low-urgency hardening. Proposed item 0018 (metered embeddings capability slice) is a deliberately uncertain product-boundary idea gated on a new ADR amending ADR 0002 — do not implement without promotion.
+Planned track [cross-platform runtime](planned/platform/README.md) (ADR 0008): 0022 relay lifecycle and single-instance tray (P1), then 0023 headless service install and 0024 signed installers (P2). Proposed items 0014 (wall-clock bench expiry) and 0015 (Claude token shape validation) are low-urgency hardening. Proposed item 0018 (metered embeddings capability slice) is a deliberately uncertain product-boundary idea gated on a new ADR amending ADR 0002 — do not implement without promotion.
 
 ## Planned Tracks
 
-No active planned tracks.
+- [Cross-platform runtime](planned/platform/README.md)
 
 ## Planned Items
 
-No active planned items.
+- [0022_relay_lifecycle_and_single_instance_tray.md](planned/platform/0022_relay_lifecycle_and_single_instance_tray.md)
+- [0023_headless_service_install.md](planned/platform/0023_headless_service_install.md)
+- [0024_signed_installers.md](planned/platform/0024_signed_installers.md)
 
 ## Proposed Work
 
 - [Multi-account pool](proposed/accounts/README.md)
   - [0014_wall_clock_bench_expiry_across_system_sleep.md](proposed/accounts/0014_wall_clock_bench_expiry_across_system_sleep.md)
+  - [0021_keyring_sign_in_import.md](proposed/accounts/0021_keyring_sign_in_import.md) — optional import of keyring-stored OpenAI sign-ins; deferred by the owner (ADR 0008).
 - [Provider runtimes](proposed/providers/README.md)
   - [0015_claude_token_shape_validation_on_set_token.md](proposed/providers/0015_claude_token_shape_validation_on_set_token.md)
   - [0018_metered_embeddings_capability_slice.md](proposed/providers/0018_metered_embeddings_capability_slice.md) — single opt-in API key for `/v1/embeddings` only; both subscriptions verifiably cannot produce embeddings. Value uncertain (possibly reduces to key-management centralization, a double-edged trade); promotion requires a new ADR amending ADR 0002, a demonstrated recurring need, and explicit rejection of the local/direct/sidecar alternatives.
 
 ## Completed Work
 
+- [Cross-platform runtime](completed/platform/README.md)
+  - [0025_uniform_cross_platform_runtime_first_slice.md](completed/platform/0025_uniform_cross_platform_runtime_first_slice.md)
 - [Provider runtimes](completed/providers/README.md)
   - [0001_provider_runtime_registry_for_subscription_relays.md](completed/providers/0001_provider_runtime_registry_for_subscription_relays.md)
   - [0010_experimental_claude_subscription_cli_adapter.md](completed/providers/0010_experimental_claude_subscription_cli_adapter.md)
@@ -55,6 +60,7 @@ No active planned items.
 | 0016 | Capacity-aware balanced routing | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0016_capacity_aware_balanced_routing.md` | 2026-07-11 | Completed | New "balanced" default routes by remaining short-window quota so plans of different sizes deplete proportionally; round_robin/ordered stay as opt-ins. | `pytest -q` (168); log-verified 199/199 request parity motivating the change; live convergence check after install |
 | 0019 | Longest-window balancing and weekly token tally | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0019_longest_window_balancing_and_weekly_tally.md` | 2026-07-28 | Completed | Windows identified by duration after the upstream payload became plan-dependent; balancing and the "more" token tally key on each account's longest (weekly) window; fabricated idle 5h row removed. | Two-agent adversarial pass; `pytest -q` (208, 15 new); Playwright mock render; live check after install |
 | 0020 | Relay-owned Claude accounts and CLI-sourced usage | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0020_relay_owned_claude_accounts.md` | 2026-10-10 | Completed | Claude routes only through AIRelays-owned profiles and an optional inference-only setup token; the personal Claude Code sign-in is never used or signed out; usage comes from Claude Code's `get_usage` with stale readings marked and excluded from routing (ADR 0007). | `pytest` 417 passed; desktop browser, node and `cargo check` green; live `get_usage` check against a real profile |
+| 0025 | Uniform cross-platform runtime, first slice | (worked directly; recorded post-completion) | `docs/backlog/completed/platform/0025_uniform_cross_platform_runtime_first_slice.md` | 2026-10-11 | Completed | File-only private credentials with a cross-process refresh lock, one `claude` launcher, isolated bundled interpreter, valid macOS signing, tests on three OSes (ADR 0008). | Three per-OS adversarial reviews; `pytest` 444 passed on 3.11–3.13; `cargo test`; desktop browser tests; MkDocs/build/twine green |
 
 ## Deprecated Work
 

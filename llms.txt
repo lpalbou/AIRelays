@@ -39,13 +39,15 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 ## Important Notes
 
-- Shared CLI options (`--config`, `--data-dir`, `--logs-dir`, `--auth-storage`, `--bearer-token-file`) work before or after subcommands; a later explicit value wins.
+- Shared CLI options (`--config`, `--data-dir`, `--logs-dir`, `--auth-storage`, `--bearer-token-file`) work before or after subcommands; a later explicit value wins. `--auth-storage` is accepted for compatibility only.
+- Sign-ins (OpenAI, relay token, Claude setup token) are owner-only files in the data directory on every OS; AIRelays does not use the OS keychain. OpenAI sign-ins that 0.16.0 or earlier kept in the keychain need a new sign-in (`airelays doctor` lists them under `openai_keyring_sign_ins`).
 
 - Traffic logs default to 7 days, 1024 MiB total, and hourly/50 MiB rotation. `airelays logs`, GET/PUT `/v1/relay/logging`, and tray Settings inspect or change the saved policy; see `docs/configuration.md` for limits and permanent-deletion behavior.
 
 - OpenAI runtime: first-class `responses`, `chat.completions`, and `completions`
 - Claude runtime: text `chat.completions` and text `completions` only
 - Claude uses only AIRelays-owned accounts: browser profiles with their own `CLAUDE_CONFIG_DIR` under `~/.airelays/claude/accounts/<id>/`, plus an optional setup token (`default`, inference-only, no usage). The personal Claude Code sign-in (`~/.claude`), an inherited `CLAUDE_CONFIG_DIR`, and `CLAUDE_CODE_OAUTH_TOKEN` are ignored; with no account, `claude:*` requests return 503 `provider_auth_error`. Signing out never touches Claude Code. Selection honors fresh usage and model eligibility, with failover only before response bytes reach the client.
+- One launcher starts every `claude` process: it finds `claude` on PATH and in the usual install locations (path used as found), or uses `[providers.claude].command` / `AIRELAYS_CLAUDE_COMMAND` (JSON array) as a full argv; Windows requires a real `claude.exe` and refuses npm `.cmd` shims; system prompts go through a private file when supported; over-long arguments return 413; `doctor`/`status` show the CLI path
 - models starting with `claude:` or discovered concrete `claude-*` ids route to the Claude runtime when it is enabled
 - model discovery follows the installed Codex client version and Claude CLI catalog; `GET /v1/models?refresh=true` bypasses provider caches, and Claude alias resolutions appear in `airelays.resolved_model`
 - OpenAI catalogs form a union; balancing, affinity, and failover stay inside the requested model's supporting account subset; `airelays.account_availability` exposes coverage counts and `catalog_visibility` preserves upstream-hidden status

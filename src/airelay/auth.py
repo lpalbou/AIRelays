@@ -4,10 +4,9 @@ import asyncio
 import base64
 import hashlib
 import json
-import os
+import logging
 import secrets
 import socket
-import tempfile
 import threading
 import time
 import webbrowser
@@ -20,15 +19,16 @@ from typing import Any
 from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
-import keyring
-from keyring.errors import KeyringError
 
 from airelay.config import OPENAI_SUBSCRIPTION_CLIENT_ID
+from airelay.private_io import InterProcessLock, LockUnsupported, write_private
 
 
 TOKEN_REFRESH_INTERVAL_DAYS = 8
-KEYRING_SERVICE = "AIRelays Auth"
-LEGACY_KEYRING_SERVICES = ("AIRelay Auth",)
+# Longer than one refresh round trip (30 s HTTP timeout): a waiter must not
+# give up while another process is mid-refresh, or it would refresh with a
+# token that is about to be rotated.
+REFRESH_LOCK_TIMEOUT_SECONDS = 45.0
 DEFAULT_ORIGINATOR = "codex_cli_rs"
 BROWSER_CALLBACK_PORT = 1455
 BROWSER_LOGIN_SCOPE = "openid profile email offline_access"
@@ -51,15 +51,6 @@ def _parse_timestamp(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value)
     except ValueError:
         return None
-
-
-def _compute_store_key(storage_root: Path) -> str:
-    try:
-        canonical = storage_root.expanduser().resolve()
-    except OSError:
-        canonical = storage_root.expanduser()
-    digest = hashlib.sha256(str(canonical).encode("utf-8")).hexdigest()
-    return f"cli|{digest[:16]}"
 
 
 def _b64url(data: bytes) -> str:
@@ -213,48 +204,24 @@ class AuthRecord:
 
 
 class AuthStorage:
-    def __init__(self, storage_root: Path, mode: str) -> None:
+    """OpenAI sign-in stored as an owner-only file (ADR 0008). There is no
+    OS keyring mode: `mode` is accepted for older callers and always
+    reported as `file`."""
+
+    def __init__(self, storage_root: Path, mode: str = "file") -> None:
+        del mode
         self.storage_root = storage_root.expanduser()
-        self.mode = mode
+        self.mode = "file"
 
     @property
     def auth_path(self) -> Path:
         return self.storage_root / "auth.json"
 
+    @property
+    def lock_path(self) -> Path:
+        return self.storage_root / "auth.json.lock"
+
     def load(self) -> dict[str, Any] | None:
-        if self.mode == "file":
-            return self._load_file()
-        if self.mode == "keyring":
-            return self._load_keyring()
-        try:
-            keyring_payload = self._load_keyring()
-        except RuntimeError:
-            keyring_payload = None
-        return keyring_payload or self._load_file()
-
-    def save(self, payload: dict[str, Any]) -> None:
-        if self.mode == "file":
-            self._save_file(payload)
-            return
-        if self.mode == "keyring":
-            self._save_keyring(payload)
-            return
-        try:
-            self._save_keyring(payload)
-            self._delete_file()
-        except RuntimeError:
-            self._save_file(payload)
-
-    def delete(self) -> bool:
-        if self.mode == "file":
-            return self._delete_file()
-        if self.mode == "keyring":
-            return self._delete_keyring()
-        deleted_keyring = self._delete_keyring()
-        deleted_file = self._delete_file()
-        return deleted_keyring or deleted_file
-
-    def _load_file(self) -> dict[str, Any] | None:
         if not self.auth_path.exists():
             return None
         try:
@@ -262,94 +229,14 @@ class AuthStorage:
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"Stored AIRelays auth at {self.auth_path} is not valid JSON.") from exc
 
-    def _save_file(self, payload: dict[str, Any]) -> None:
-        self.auth_path.parent.mkdir(parents=True, exist_ok=True)
-        serialized = json.dumps(payload, indent=2, ensure_ascii=True)
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=self.auth_path.parent,
-            prefix=f".{self.auth_path.name}.",
-            delete=False,
-        ) as handle:
-            handle.write(serialized)
-            temp_path = Path(handle.name)
-        os.chmod(temp_path, 0o600)
-        os.replace(temp_path, self.auth_path)
+    def save(self, payload: dict[str, Any]) -> None:
+        write_private(self.auth_path, json.dumps(payload, indent=2, ensure_ascii=True))
 
-    def _delete_file(self) -> bool:
+    def delete(self) -> bool:
         if not self.auth_path.exists():
             return False
         self.auth_path.unlink()
         return True
-
-    def _load_keyring(self) -> dict[str, Any] | None:
-        username = _compute_store_key(self.storage_root)
-        try:
-            serialized = keyring.get_password(KEYRING_SERVICE, username)
-        except KeyringError as exc:
-            raise RuntimeError(str(exc)) from exc
-        if not serialized:
-            serialized = self._migrate_legacy_keyring_payload(username)
-            if not serialized:
-                return None
-        return json.loads(serialized)
-
-    def _save_keyring(self, payload: dict[str, Any]) -> None:
-        username = _compute_store_key(self.storage_root)
-        serialized = json.dumps(payload, ensure_ascii=True)
-        try:
-            keyring.set_password(KEYRING_SERVICE, username, serialized)
-        except KeyringError as exc:
-            raise RuntimeError(str(exc)) from exc
-        self._delete_legacy_keyring(username)
-
-    def _delete_keyring(self) -> bool:
-        username = _compute_store_key(self.storage_root)
-        try:
-            existing = keyring.get_password(KEYRING_SERVICE, username)
-            deleted_current = False
-            if existing is not None:
-                keyring.delete_password(KEYRING_SERVICE, username)
-                deleted_current = True
-            deleted_legacy = self._delete_legacy_keyring(username)
-            return deleted_current or deleted_legacy
-        except KeyringError:
-            return False
-
-    def _migrate_legacy_keyring_payload(self, username: str) -> str | None:
-        for service in LEGACY_KEYRING_SERVICES:
-            try:
-                serialized = keyring.get_password(service, username)
-            except KeyringError:
-                continue
-            if not serialized:
-                continue
-            try:
-                keyring.set_password(KEYRING_SERVICE, username, serialized)
-            except KeyringError:
-                return serialized
-            self._delete_legacy_keyring(username, services=(service,))
-            return serialized
-        return None
-
-    def _delete_legacy_keyring(
-        self,
-        username: str,
-        *,
-        services: tuple[str, ...] = LEGACY_KEYRING_SERVICES,
-    ) -> bool:
-        deleted = False
-        for service in services:
-            try:
-                existing = keyring.get_password(service, username)
-                if existing is None:
-                    continue
-                keyring.delete_password(service, username)
-                deleted = True
-            except KeyringError:
-                continue
-        return deleted
 
 
 class LoginCallbackServer:
@@ -463,19 +350,15 @@ class AuthManager:
         self.issuer_base_url = issuer_base_url.rstrip("/")
         self.client_id = client_id
         self._refresh_lock = asyncio.Lock()
-        # Short-lived load cache. Storage reads can hit the OS keyring
-        # (securityd IPC, twice on a miss because of the legacy-service
-        # probe); status endpoints load per poll every ~1.5s, and under
-        # system load that IPC alone pushed polls past their deadline.
-        # In-process writes invalidate it; external file changes (another
-        # process signing in/out) are caught by the stat signature below.
+        # Short-lived load cache: status endpoints load per poll every
+        # ~1.5s. In-process writes invalidate it; external file changes
+        # (another process signing in/out or refreshing) are caught by the
+        # stat signature below.
         self._load_cache: tuple[float, tuple, dict[str, Any] | None] | None = None
         self._load_cache_ttl = 3.0
 
     def _auth_file_signature(self) -> tuple:
-        """Cheap change detector for the on-disk auth file (one stat).
-        Keyring-mode changes from other processes have no file to stat and
-        are covered by the TTL alone."""
+        """Cheap change detector for the on-disk auth file (one stat)."""
         try:
             stat = self.storage.auth_path.stat()
             return (True, stat.st_mtime_ns, stat.st_size)
@@ -515,7 +398,6 @@ class AuthManager:
                 "bound_account_id": None,
                 "last_refresh": None,
                 "auth_store_path": str(self.storage.auth_path),
-                "keyring_service": KEYRING_SERVICE,
                 "storage_mode": self.storage.mode,
             }
         account_bound = record.account_matches_binding()
@@ -530,7 +412,6 @@ class AuthManager:
             "bound_account_id": record.bound_account_id,
             "last_refresh": record.last_refresh.isoformat() if record.last_refresh else None,
             "auth_store_path": str(self.storage.auth_path),
-            "keyring_service": KEYRING_SERVICE,
             "storage_mode": self.storage.mode,
         }
 
@@ -568,49 +449,82 @@ class AuthManager:
         return record
 
     async def refresh_tokens(self, force: bool = True) -> AuthRecord:
+        stale = self.load()
         async with self._refresh_lock:
-            record = self.load()
-            if record is None or not record.refresh_token:
-                raise AuthenticationError(
-                    "Stored auth does not include a refresh token.",
-                    code="upstream_auth_incomplete",
-                )
-            last_refresh = record.last_refresh
-            if (
-                not force
-                and last_refresh is not None
-                and last_refresh >= _utcnow() - timedelta(
-                days=TOKEN_REFRESH_INTERVAL_DAYS
-                )
-            ):
-                return record
-            payload = {
-                "client_id": self.client_id,
-                "grant_type": "refresh_token",
-                "refresh_token": record.refresh_token,
-                "scope": "openid profile email",
-            }
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.issuer_base_url}/oauth/token",
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                )
-            if response.status_code >= 400:
-                raise AuthenticationError(
-                    f"Token refresh failed: {response.status_code} {response.text}",
-                    code="upstream_auth_refresh_failed",
-                )
-            data = response.json()
-            refreshed = self._build_auth_payload(
-                id_token=data.get("id_token") or record.id_token,
-                access_token=data.get("access_token") or record.access_token,
-                refresh_token=data.get("refresh_token") or record.refresh_token,
-                bound_account_id=record.bound_account_id,
+            task = asyncio.ensure_future(self._refresh_guarded(force, stale))
+            # Shielded: a cancelled caller must not strand the file lock or
+            # abandon a rotated token before it is saved.
+            task.add_done_callback(lambda done: done.cancelled() or done.exception())
+            return await asyncio.shield(task)
+
+    async def _refresh_guarded(self, force: bool, stale: AuthRecord | None) -> AuthRecord:
+        # OpenAI refresh tokens rotate: two processes (tray relay, CLI,
+        # doctor) refreshing one sign-in at once would lose it. The file
+        # lock serializes them; waiting happens off the event loop.
+        lock = InterProcessLock(self.storage.lock_path)
+        try:
+            await asyncio.to_thread(lock.acquire, REFRESH_LOCK_TIMEOUT_SECONDS)
+        except LockUnsupported as exc:
+            logging.getLogger(__name__).warning(
+                "%s; refreshing without the cross-process lock. Do not run two AIRelays "
+                "processes on this data directory.", exc,
             )
-            self.storage.save(refreshed)
-            self._invalidate_load_cache()
-            return AuthRecord(refreshed)
+            return await self._refresh_locked(force, stale)
+        except TimeoutError as exc:
+            raise AuthenticationError(
+                "Another AIRelays process is refreshing this sign-in; retry shortly.",
+                code="upstream_auth_refresh_failed",
+            ) from exc
+        try:
+            return await self._refresh_locked(force, stale)
+        finally:
+            lock.release()
+
+    async def _refresh_locked(self, force: bool, stale: AuthRecord | None) -> AuthRecord:
+        self._invalidate_load_cache()
+        record = self.load()
+        if record is None or not record.refresh_token:
+            raise AuthenticationError(
+                "Stored auth does not include a refresh token.",
+                code="upstream_auth_incomplete",
+            )
+        if stale is not None and stale.refresh_token and record.refresh_token != stale.refresh_token:
+            # Another process rotated the token while this one waited.
+            return record
+        last_refresh = record.last_refresh
+        if (
+            not force
+            and last_refresh is not None
+            and last_refresh >= _utcnow() - timedelta(days=TOKEN_REFRESH_INTERVAL_DAYS)
+        ):
+            return record
+        payload = {
+            "client_id": self.client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": record.refresh_token,
+            "scope": "openid profile email",
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.issuer_base_url}/oauth/token",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+        if response.status_code >= 400:
+            raise AuthenticationError(
+                f"Token refresh failed: {response.status_code} {response.text}",
+                code="upstream_auth_refresh_failed",
+            )
+        data = response.json()
+        refreshed = self._build_auth_payload(
+            id_token=data.get("id_token") or record.id_token,
+            access_token=data.get("access_token") or record.access_token,
+            refresh_token=data.get("refresh_token") or record.refresh_token,
+            bound_account_id=record.bound_account_id,
+        )
+        self.storage.save(refreshed)
+        self._invalidate_load_cache()
+        return AuthRecord(refreshed)
 
     async def browser_login(
         self,

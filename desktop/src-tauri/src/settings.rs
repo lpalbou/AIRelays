@@ -5,11 +5,17 @@
 //! like the macOS menu bar app does.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 /// Default relay port: IANA-unregistered and not a common tool default,
 /// chosen to avoid the dev-server collisions that 8080 invites.
 pub const DEFAULT_RELAY_PORT: u16 = 8317;
+
+/// The only credential store (ADR 0008). Rendered explicitly so a config
+/// file shared with a CLI or service relay never keeps an older
+/// `auto`/`keyring` value.
+const AUTH_STORAGE: &str = "file";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -30,7 +36,10 @@ pub struct AppSettings {
     pub port: u16,
     pub require_bearer_auth: bool,
     pub auto_generate_bearer_token: bool,
-    pub auth_storage_mode: String,
+    // OpenAI sign-ins are always stored as private files (ADR 0008), so
+    // there is no storage setting. Settings files written by older versions
+    // still carry `authStorageMode` ("auto"/"file"/"keyring"); serde ignores
+    // the unknown key and the rendered config always says `storage = "file"`.
     pub browser_open: bool,
     pub login_timeout_seconds: u64,
     pub upstream_base_url: String,
@@ -90,7 +99,6 @@ impl Default for AppSettings {
             // Without auto-generation, a fresh install in protected mode has
             // no token and the relay refuses to start — first run must work.
             auto_generate_bearer_token: true,
-            auth_storage_mode: "auto".into(),
             // Login is unusable for most users without the browser opening.
             browser_open: true,
             login_timeout_seconds: 900,
@@ -161,9 +169,6 @@ impl AppSettings {
             || self.host == "localhost";
         if !host_ok {
             return Err(format!("Host '{}' is not a valid IP address.", self.host));
-        }
-        if !matches!(self.auth_storage_mode.as_str(), "auto" | "file" | "keyring") {
-            return Err("Auth storage must be auto, file, or keyring.".into());
         }
         if !matches!(self.openai_balance.as_str(), "balanced" | "round_robin" | "ordered") {
             return Err("OpenAI account balancing must be balanced, round_robin, or ordered.".into());
@@ -257,7 +262,7 @@ impl AppSettings {
                 logs_dir: path_str(Self::logs_dir()),
             },
             auth: AuthSection {
-                storage: &self.auth_storage_mode,
+                storage: AUTH_STORAGE,
                 browser_open: self.browser_open,
                 login_timeout_seconds: self.login_timeout_seconds,
             },
@@ -413,4 +418,174 @@ fn path_str(path: PathBuf) -> String {
 
 fn dirs_home() -> Option<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)
+}
+
+// MARK: owner-only files (ADR 0008), mirroring src/airelay/private_io.py
+
+/// Creates `path` owner-only (0700) on Unix. Missing parents get default
+/// permissions (they are shared locations such as `~/.config`), like
+/// `mkdir -p`. An existing directory is tightened when this user owns it; a
+/// mounted volume owned by someone else is left alone. Windows relies on the
+/// user profile's ACL.
+pub fn ensure_private_dir(path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        match std::fs::DirBuilder::new().mode(0o700).create(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && path.is_dir() => {
+                if let Ok(metadata) = std::fs::metadata(path) {
+                    // SAFETY: getuid has no preconditions and cannot fail.
+                    let uid = unsafe { libc::getuid() };
+                    if metadata.uid() == uid && metadata.mode() & 0o077 != 0 {
+                        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+                    }
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(path)?;
+    Ok(())
+}
+
+/// Atomically replaces `path` with `data`, readable only by the owner. The
+/// temporary file is created 0600 (Unix) in the target directory, so the
+/// secret is never visible with default permissions, and a crash never
+/// leaves a truncated file behind.
+pub fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    ensure_private_dir(parent)?;
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut attempt = 0u32;
+    let (temporary, mut file) = loop {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.subsec_nanos())
+            .unwrap_or_default();
+        let temporary = parent.join(format!(".{name}.{}.{nanos}.tmp", std::process::id()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&temporary) {
+            Ok(file) => break (temporary, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && attempt < 8 => {
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    let written = file.write_all(data).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(error) = written.and_then(|()| replace_file(&temporary, path)) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error);
+    }
+    #[cfg(unix)]
+    if let Ok(directory) = std::fs::File::open(parent) {
+        let _ = directory.sync_all();
+    }
+    Ok(())
+}
+
+fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
+    // Windows refuses to replace a file another process (antivirus, an
+    // indexer, a reader) briefly holds open: ERROR_ACCESS_DENIED (5) or
+    // ERROR_SHARING_VIOLATION (32). Those holds are short.
+    let mut attempt = 0u64;
+    loop {
+        match std::fs::rename(source, target) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if cfg!(windows)
+                    && matches!(error.raw_os_error(), Some(5) | Some(32))
+                    && attempt < 9 =>
+            {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(50 * attempt));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "airelays-settings-test-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn legacy_storage_modes_load_and_render_file_storage() {
+        for legacy in ["auto", "keyring", "file"] {
+            let json = format!(r#"{{"authStorageMode": "{legacy}", "port": 9000}}"#);
+            let settings: AppSettings = serde_json::from_str(&json).unwrap();
+            assert_eq!(settings.port, 9000);
+            settings.validate().unwrap();
+            let rendered: toml::Value = toml::from_str(&settings.render_config_toml().unwrap()).unwrap();
+            assert_eq!(rendered["auth"]["storage"].as_str(), Some("file"));
+            let saved = serde_json::to_value(&settings).unwrap();
+            assert!(saved.get("authStorageMode").is_none());
+        }
+    }
+
+    #[test]
+    fn write_private_replaces_contents_atomically() {
+        let dir = scratch_dir("write");
+        let target = dir.join("nested").join("relay-token");
+        write_private(&target, b"first\n").unwrap();
+        write_private(&target, b"second\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "second\n");
+        let leftovers: Vec<_> = std::fs::read_dir(target.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_files_and_directories_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch_dir("modes");
+        let data_dir = dir.join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let token = data_dir.join("claude-token");
+        write_private(&token, b"secret\n").unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&data_dir), 0o700, "an existing directory we own is tightened");
+        assert_eq!(mode(&token), 0o600);
+        let fresh = dir.join("fresh").join("config");
+        ensure_private_dir(&fresh).unwrap();
+        assert_eq!(mode(&fresh), 0o700);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

@@ -26,6 +26,9 @@
   "bundle": {
     "active": true,
     "targets": ["dmg", "nsis", "appimage", "deb"],
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "linux": {
       "deb": {
         "depends": ["libayatana-appindicator3-1", "xdg-utils"]

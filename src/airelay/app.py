@@ -512,6 +512,7 @@ def create_app(settings: Settings) -> FastAPI:
     async def home(request: Request) -> Response:
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
+        await providers.warm_status_probes()
         provider_statuses = providers.provider_statuses()
         body = render_home(
             relay_token_ready=bool(settings.resolve_bearer_token()),
@@ -652,6 +653,7 @@ def create_app(settings: Settings) -> FastAPI:
             return JSONResponse({"requests_total": request_counter["total"]})
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
+        await providers.warm_status_probes()
         provider_statuses = providers.provider_statuses()
         openai_status = provider_statuses.get("openai", {})
         auth_status = dict(openai_status)

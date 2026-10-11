@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.16.1
+
+### Changed
+
+- OpenAI sign-ins, the relay token and the Claude setup token are stored the
+  same way on macOS, Linux and Windows: owner-only files in the data
+  directory, replaced atomically. AIRelays no longer uses the OS keychain,
+  Credential Manager or Secret Service, so it never shows a keychain prompt
+  and a locked keyring can no longer stall the relay. The `storage` setting
+  and `--auth-storage` are accepted for compatibility; every value means
+  `file`. The desktop **Login storage** setting is removed.
+- Concurrent token refreshes from the tray relay, CLI commands and `doctor`
+  are serialized, so a rotating OpenAI refresh token is never spent twice.
+- The data and logs directories are owner-only on macOS and Linux; traffic
+  logs, which can contain prompts and responses, are no longer readable by
+  other local users.
+- One launcher starts every `claude` process. It finds `claude` on PATH and in
+  the usual install locations without pinning a versioned path, and accepts
+  `[providers.claude].command` (or `AIRELAYS_CLAUDE_COMMAND`) for a full
+  argv. `airelays doctor` and `airelays status` show the CLI path in use.
+- System prompts are passed to `claude` through a private file when the CLI
+  supports it, keeping them out of the process list; requests that exceed the
+  OS command-line limit return `413`.
+- The desktop app runs its bundled Python isolated from user site-packages and
+  `PYTHON*` settings, and AppImage variables no longer leak into child
+  processes such as the browser opened for sign-in.
+
+### Fixed
+
+- Windows: OpenAI sign-in no longer fails while saving credentials.
+- Windows: `airelays init` writes a config file that later commands can read
+  when paths contain backslashes.
+- Windows: `claude` children receive the system variables they need, start
+  without console windows, and npm `.cmd` shims are refused with guidance
+  instead of running through `cmd.exe`.
+- macOS: the downloaded desktop app has a valid signature, so it no longer
+  reports as damaged; open it once through **Privacy & Security → Open
+  Anyway**.
+- Claude status checks no longer block the relay while the CLI starts, and a
+  slow check no longer reports the CLI as not installed.
+
+### Compatibility
+
+- OpenAI accounts that 0.16.0 or earlier kept in the OS keychain need one new
+  sign-in (`airelays login` or **Sign in** in the desktop).
+  `airelays doctor` lists the accounts it can identify.
+- On Windows, keep the data directory inside your user profile, whose
+  permissions protect the credential files.
+
 ## 0.16.0
 
 ### Changed

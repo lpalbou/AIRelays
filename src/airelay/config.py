@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 import secrets
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from airelay.log_retention import LogRetentionPolicy
+from airelay.private_io import ensure_private_dir, write_private
 
 
 CHATGPT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
@@ -149,12 +151,43 @@ def _token_fingerprint(value: str | None) -> str | None:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
+def _toml_str(value: object) -> str:
+    """A TOML basic string. JSON string escaping is valid TOML, so Windows
+    paths (backslashes) and quotes round-trip."""
+    return json.dumps(str(value))
+
+
+def _argv(env_value: str | None, config_value: object) -> tuple[str, ...]:
+    """An argv list: JSON from the environment (shell splitting would mangle
+    Windows backslashes), or a TOML array of strings."""
+    value: object = config_value
+    if env_value:
+        try:
+            value = json.loads(env_value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("AIRELAYS_CLAUDE_COMMAND must be a JSON array of strings.") from exc
+    if not value:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(part, str) and part for part in value):
+        raise ValueError("[providers.claude].command must be an array of non-empty strings.")
+    return tuple(value)
+
+
+def _legacy_auth_storage(value: object) -> str | None:
+    mode = str(value or "").strip().lower()
+    return mode if mode in ("auto", "keyring") else None
+
+
 @dataclass(slots=True)
 class Settings:
     host: str = "127.0.0.1"
     port: int = 8080
     config_path: Path = DEFAULT_CONFIG_PATH
-    auth_storage_mode: str = "auto"
+    # OpenAI sign-ins are always private files (ADR 0008). A legacy
+    # configured value (`auto`/`keyring`) is kept only so `doctor` can say
+    # that sign-ins stored in the OS keyring need a new sign-in.
+    auth_storage_mode: str = "file"
+    legacy_auth_storage: str | None = None
     data_dir: Path = DEFAULT_DATA_DIR
     logs_dir: Path = DEFAULT_DATA_DIR / "logs"
     upstream_base_url: str = CHATGPT_CODEX_BASE_URL
@@ -210,6 +243,9 @@ class Settings:
     openai_retry_backoff_seconds: tuple[float, ...] = (5.0, 20.0, 60.0)
     enable_claude: bool = True
     claude_bin: str = "claude"
+    # Full argv prefix for the Claude CLI; wins over `claude_bin` (e.g. an
+    # npm install on Windows: ["node", "C:/.../cli.js"]).
+    claude_command: tuple[str, ...] = ()
     claude_timeout_seconds: float = 600.0
     claude_max_concurrent_requests: int = 2
     claude_balance: str = "balanced"
@@ -270,11 +306,11 @@ class Settings:
                 8080,
             ),
             config_path=configured_path,
-            auth_storage_mode=str(
+            auth_storage_mode="file",
+            legacy_auth_storage=_legacy_auth_storage(
                 _env("AIRELAYS_AUTH_STORAGE", "AIRELAY_AUTH_STORAGE", "OPENAI_ENDPOINT_AUTH_STORAGE")
                 or _cfg(payload, "auth", "storage")
-                or "auto"
-            ).lower(),
+            ),
             data_dir=data_dir,
             logs_dir=logs_dir,
             upstream_base_url=str(
@@ -453,6 +489,10 @@ class Settings:
                 or _cfg(payload, "providers", "claude", "bin")
                 or "claude"
             ),
+            claude_command=_argv(
+                _env("AIRELAYS_CLAUDE_COMMAND"),
+                _cfg(payload, "providers", "claude", "command"),
+            ),
             claude_timeout_seconds=_float(
                 _env(
                     "AIRELAYS_CLAUDE_TIMEOUT_SECONDS",
@@ -501,8 +541,9 @@ class Settings:
         return LogRetentionPolicy(self.log_retention_days, self.log_max_total_mb, self.log_max_file_mb)
 
     def ensure_directories(self) -> None:
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        # Logs hold full prompts and responses; both stay owner-only.
+        ensure_private_dir(self.data_dir)
+        ensure_private_dir(self.logs_dir)
 
     def resolve_bearer_token(self) -> str | None:
         if self.bearer_token_env_override and self.bearer_token:
@@ -553,18 +594,14 @@ class Settings:
 
     def write_claude_oauth_token(self, token: str) -> None:
         self.ensure_directories()
-        self.claude_oauth_token_file.parent.mkdir(parents=True, exist_ok=True)
-        self.claude_oauth_token_file.write_text(f"{token}\n", encoding="utf-8")
-        os.chmod(self.claude_oauth_token_file, 0o600)
+        write_private(self.claude_oauth_token_file, f"{token}\n")
 
     def claude_oauth_token_source(self) -> str:
         return "file" if self.resolve_claude_oauth_token() else "none"
 
     def write_bearer_token(self, token: str) -> None:
         self.ensure_directories()
-        self.bearer_token_file.parent.mkdir(parents=True, exist_ok=True)
-        self.bearer_token_file.write_text(f"{token}\n", encoding="utf-8")
-        os.chmod(self.bearer_token_file, 0o600)
+        write_private(self.bearer_token_file, f"{token}\n")
         if self.bearer_token_env_override or self.bearer_token is not None:
             self.bearer_token = token
 
@@ -597,8 +634,7 @@ class Settings:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         if self.config_path.exists() and not force:
             return False
-        self.config_path.write_text(self.render_config_toml(), encoding="utf-8")
-        os.chmod(self.config_path, 0o600)
+        write_private(self.config_path, self.render_config_toml())
         return True
 
     def auth_file(self) -> Path:
@@ -606,28 +642,28 @@ class Settings:
 
     def render_config_toml(self) -> str:
         return f"""[server]
-host = "{self.host}"
+host = {_toml_str(self.host)}
 port = {self.port}
 
 [paths]
-data_dir = "{self.data_dir}"
-logs_dir = "{self.logs_dir}"
+data_dir = {_toml_str(self.data_dir)}
+logs_dir = {_toml_str(self.logs_dir)}
 
 [auth]
-storage = "{self.auth_storage_mode}"
+storage = {_toml_str(self.auth_storage_mode)}
 browser_open = {str(self.browser_open).lower()}
 login_timeout_seconds = {int(self.login_timeout_seconds)}
 
 [upstream]
-base_url = "{self.upstream_base_url}"
-issuer_base_url = "{self.issuer_base_url}"
-client_id = "{self.client_id}"
-client_version = "{self.client_version}"
+base_url = {_toml_str(self.upstream_base_url)}
+issuer_base_url = {_toml_str(self.issuer_base_url)}
+client_id = {_toml_str(self.client_id)}
+client_version = {_toml_str(self.client_version)}
 request_timeout_seconds = {self.request_timeout_seconds}
 
 [security]
 require_bearer_auth = {str(self.require_bearer_auth).lower()}
-bearer_token_file = "{self.bearer_token_file}"
+bearer_token_file = {_toml_str(self.bearer_token_file)}
 auto_generate_bearer_token = {str(self.auto_generate_bearer_token).lower()}
 rate_limit_per_minute = {self.rate_limit_per_minute}
 rate_limit_burst = {self.rate_limit_burst}
@@ -650,22 +686,23 @@ max_file_mb = {self.log_max_file_mb}
 [providers.openai]
 enabled = {str(self.enable_openai_provider).lower()}
 models_cache_ttl_seconds = {self.models_cache_ttl_seconds}
-balance = "{self.openai_balance}"
+balance = {_toml_str(self.openai_balance)}
 account_cooldown_seconds = {self.openai_account_cooldown_seconds}
 retry_attempts = {self.openai_retry_attempts}
 retry_backoff_seconds = [{", ".join(str(delay) for delay in self.openai_retry_backoff_seconds)}]
-extra_models = [{", ".join(f'"{model}"' for model in self.openai_extra_models)}]
+extra_models = [{", ".join(_toml_str(model) for model in self.openai_extra_models)}]
 
 [providers.claude]
 enabled = {str(self.enable_claude).lower()}
-oauth_token_file = "{self.claude_oauth_token_file}"
-bin = "{self.claude_bin}"
+oauth_token_file = {_toml_str(self.claude_oauth_token_file)}
+bin = {_toml_str(self.claude_bin)}
+command = [{", ".join(_toml_str(part) for part in self.claude_command)}]
 timeout_seconds = {self.claude_timeout_seconds}
 max_concurrent_requests = {self.claude_max_concurrent_requests}
-balance = "{self.claude_balance}"
+balance = {_toml_str(self.claude_balance)}
 account_cooldown_seconds = {self.claude_account_cooldown_seconds}
 strip_api_key_env = {str(self.claude_strip_api_key_env).lower()}
-models = [{", ".join(f'"{model}"' for model in self.claude_models)}]
+models = [{", ".join(_toml_str(model) for model in self.claude_models)}]
 """
 
     def client_base_url(self) -> str:
@@ -712,6 +749,7 @@ models = [{", ".join(f'"{model}"' for model in self.claude_models)}]
                 "claude": {
                     "enabled": self.enable_claude,
                     "bin": self.claude_bin,
+                    "command": list(self.claude_command),
                     "timeout_seconds": self.claude_timeout_seconds,
                     "max_concurrent_requests": self.claude_max_concurrent_requests,
                     "balance": self.claude_balance,

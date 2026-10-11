@@ -80,7 +80,9 @@ need before first starting the upgraded relay or reducing a policy.
 - config: `~/.config/airelays/config.toml`
 - data dir: `~/.airelays`
 - logs dir: `~/.airelays/logs`
-- auth fallback file: `~/.airelays/auth.json`
+- OpenAI sign-ins: `~/.airelays/auth.json` (first account) and
+  `~/.airelays/accounts/<slug>/auth.json`, owner-only files (see
+  [Security](security.md#credential-storage))
 - relay token file: `~/.airelays/relay-token`
 - Claude account profiles: `~/.airelays/claude/accounts/<id>/` (metadata in
   `account.json`; the adjacent `config/` is the profile's `CLAUDE_CONFIG_DIR`)
@@ -101,7 +103,7 @@ data_dir = "~/.airelays"
 logs_dir = "~/.airelays/logs"
 
 [auth]
-storage = "auto"
+storage = "file"
 browser_open = false
 login_timeout_seconds = 900
 
@@ -164,6 +166,7 @@ retry_backoff_seconds = [5, 20, 60]
 [providers.claude]
 enabled = false
 bin = "claude"
+command = []                          # full argv, wins over `bin` (see below)
 timeout_seconds = 600.0
 max_concurrent_requests = 2
 balance = "balanced"                  # balanced, round_robin, or ordered
@@ -180,7 +183,7 @@ oauth_token_file = "~/.airelays/claude-token"   # written by `airelays claude se
 - `AIRELAYS_PORT`
 - `AIRELAYS_DATA_DIR`
 - `AIRELAYS_LOGS_DIR`
-- `AIRELAYS_AUTH_STORAGE`
+- `AIRELAYS_CLAUDE_COMMAND` (a JSON array, for example `["node", "C:/npm/cli.js"]`)
 - `AIRELAYS_BROWSER_OPEN`
 - `AIRELAYS_LOGIN_TIMEOUT_SECONDS`
 - `AIRELAYS_UPSTREAM_BASE_URL`
@@ -238,7 +241,9 @@ can select an older catalog.
 OpenAI runtime:
 
 - enabled by default
-- uses AIRelays-owned auth storage
+- stores each sign-in as an owner-only file on every OS; `storage` only
+  accepts `file` in practice (`auto` and `keyring` are read as `file`, and
+  `airelays doctor` flags sign-ins an older version kept in the OS keyring)
 - `airelays login` manages its subscription session
 - caches successful upstream model-list responses for `models_cache_ttl_seconds` seconds
   by default
@@ -281,6 +286,19 @@ Claude runtime:
   in the relay's environment are ignored
 - every `claude` process gets an explicit environment, its profile's
   `CLAUDE_CONFIG_DIR`, and a relay-owned working directory
+- finding `claude`: `command` (a full argv such as `["node", "/path/cli.js"]`)
+  wins; otherwise `bin` is looked up on PATH and in the usual install
+  locations (`~/.local/bin`, `~/.claude/local`, Homebrew, Volta, bun, nvm;
+  on Windows `%USERPROFILE%\.local\bin`, Volta and WinGet). The path is used
+  as found, so Claude Code's auto-updates keep working
+- Windows needs a real `claude.exe`; npm's `claude.cmd` shim is refused
+  because cmd.exe would re-parse request text. Install Claude Code with its
+  native installer, or set `command` to run `node` with the npm package's
+  `cli.js` (desktop app: `AIRELAYS_CLAUDE_COMMAND`, since the app rewrites
+  `config.toml`)
+- system prompts are passed through a private file when the CLI supports
+  it; a request whose arguments still exceed the OS command-line limit gets
+  `413` instead of a launch failure
 - usage comes from Claude Code's `get_usage` (verified with 2.1.292+);
   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` in the relay's environment stops
   it and marks readings `nonessential_traffic_disabled`

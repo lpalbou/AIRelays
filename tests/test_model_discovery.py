@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -197,7 +198,8 @@ async def test_claude_discovery_single_flight_expiry_failure_and_removal(tmp_pat
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["success", "timeout", "cancel", "malformed"])
 async def test_claude_initialize_protocol_is_bounded_and_reaps_process(tmp_path, monkeypatch, outcome):
-    runtime = ClaudeCliRuntime(settings(tmp_path, claude_timeout_seconds=0.01, claude_models=()))
+    runtime = ClaudeCliRuntime(settings(tmp_path, claude_timeout_seconds=0.01, claude_models=(),
+                                        claude_bin=sys.executable))  # spawn is stubbed below
     writes = []
     spawned = {}
 

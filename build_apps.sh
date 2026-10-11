@@ -21,13 +21,16 @@ cd "$REPO_DIR/desktop"
 npm ci
 swift scripts/make_tray_icons.swift src-tauri/icons
 bash scripts/bundle_runtime.sh
-CARGO_TARGET_DIR="$BUILD_TARGET" npm run build -- --bundles app
+# Tauri ad-hoc signs the bundle (tauri.conf.json) and first clears extended
+# attributes by running `xattr` from PATH; a pip/pyenv `xattr` shim lacks the
+# options it needs, so the system tools must come first.
+PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" CARGO_TARGET_DIR="$BUILD_TARGET" npm run build -- --bundles app
 [[ -x "$BUILD_APP/Contents/MacOS/airelays-desktop" ]]
 
 # Prepare and verify the full replacement before interrupting the old app.
+# The signature is Tauri's, identical to the CI build; ditto preserves it.
 INSTALL_DIR="$(mktemp -d /Applications/.airelays-install.XXXXXX)"
 ditto "$BUILD_APP" "$INSTALL_DIR/AIRelays.app"
-codesign --force --deep --sign - "$INSTALL_DIR/AIRelays.app"
 codesign --verify --deep --strict "$INSTALL_DIR/AIRelays.app"
 
 # Match only this installed app and its embedded relay, never other relays.

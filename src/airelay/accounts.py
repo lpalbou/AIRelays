@@ -3,10 +3,9 @@ request pool that balances traffic across them.
 
 Design (from the adversarial investigation):
 
-- An account is a storage root. The legacy ``data_dir/auth.json`` (or its
-  keyring entry) is the implicit first account; extra accounts live under
-  ``data_dir/accounts/<slug>/``. Keyring entries key on the storage-root
-  path, so per-directory slots isolate credentials with no auth changes.
+- An account is a storage root holding one private ``auth.json``
+  (ADR 0008). The legacy ``data_dir/auth.json`` is the implicit first
+  account; extra accounts live under ``data_dir/accounts/<slug>/``.
 - Accounts are discovered from storage, never declared in config.toml
   (desktop apps rewrite that file). Only the balancing strategy and the
   failover cooldown are config knobs.
@@ -172,6 +171,25 @@ def discover_slots(settings: Settings) -> list[AccountSlot]:
         rank = {slug: index for index, slug in enumerate(order)}
         slots.sort(key=lambda slot: rank.get(slot.slug, len(rank)))
     return slots
+
+
+def keyring_era_sign_ins(settings: Settings) -> list[str]:
+    """Sign-ins an AIRelays version before 0.16.1 kept in the OS keyring,
+    found from files alone (the keyring is never read): such versions left
+    account folders without an ``auth.json``."""
+    found = []
+    # The tray rewrites `storage`, so OpenAI usage history also marks a
+    # default account whose sign-in no longer exists as a file.
+    used_before = settings.legacy_auth_storage or (settings.data_dir / "openai-window-tokens.json").exists()
+    if used_before and not (settings.data_dir / "auth.json").exists():
+        found.append(DEFAULT_SLUG)
+    accounts_dir = _accounts_dir(settings.data_dir)
+    if accounts_dir.is_dir():
+        found.extend(
+            child.name for child in sorted(accounts_dir.iterdir())
+            if child.is_dir() and not child.name.startswith(".") and not (child / "auth.json").exists()
+        )
+    return found
 
 
 def find_slot(slots: list[AccountSlot], needle: str) -> AccountSlot | None:

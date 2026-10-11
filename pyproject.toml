@@ -29,7 +29,6 @@ classifiers = [
 dependencies = [
   "fastapi>=0.115.0",
   "httpx>=0.28.0",
-  "keyring>=25.5.0",
   "python-multipart>=0.0.20",
   "uvicorn>=0.35.0",
 ]

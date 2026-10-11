@@ -144,38 +144,19 @@ def test_discover_legacy_plus_named_accounts(tmp_path: Path) -> None:
     assert [slot.email for slot in slots] == ["first@example.com", "second@example.com"]
 
 
-def test_discover_finds_keyring_account_by_directory(tmp_path: Path) -> None:
-    # Keyring-mode accounts write no auth.json; the slot directory is what
-    # makes them discoverable, so an empty (but present) dir with a keyring
-    # payload must still be found.
-    import airelay.accounts as accounts_module
+def test_keyring_era_slot_is_reported_not_discovered(tmp_path: Path) -> None:
+    """ADR 0008: an account folder an older version left empty (its tokens
+    were in the OS keyring) is not an account; it is reported so the user
+    can sign in again. The keyring is never read."""
+    from airelay.accounts import keyring_era_sign_ins
 
-    settings = _settings(tmp_path, auth_storage_mode="auto")
+    settings = _settings(tmp_path)
     _write_auth(settings.data_dir, "acct-1", "first@example.com")
     slot_dir = settings.data_dir / ACCOUNTS_DIRNAME / "second-x"
-    slot_dir.mkdir(parents=True)  # created by login, no file inside
+    slot_dir.mkdir(parents=True)
 
-    real_storage = accounts_module.AuthStorage
-
-    class KeyringOnlyStorage(real_storage):
-        def load(self):
-            if self.storage_root == slot_dir:
-                return {
-                    "bound_account_id": "acct-2",
-                    "tokens": {
-                        "id_token": _fake_id_token("acct-2", "second@example.com"),
-                        "access_token": "at",
-                        "account_id": "acct-2",
-                    },
-                }
-            return super().load()
-
-    accounts_module.AuthStorage = KeyringOnlyStorage
-    try:
-        slots = discover_slots(settings)
-    finally:
-        accounts_module.AuthStorage = real_storage
-    assert {slot.email for slot in slots} == {"first@example.com", "second@example.com"}
+    assert [slot.slug for slot in discover_slots(settings)] == ["default"]
+    assert keyring_era_sign_ins(settings) == ["second-x"]
 
 
 def test_discover_dedupes_same_account_id(tmp_path: Path) -> None:

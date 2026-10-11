@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 from airelay.claude_auth import account_identity, discover_profiles
+from airelay.claude_launch import sweep_stale_workdirs
 from airelay.config import Settings
 from airelay.providers import CLAUDE_TOKEN_USAGE_UNSUPPORTED, ClaudeCliRuntime, ProviderError, ResolvedModel
 from airelay.traffic import TrafficLogger
@@ -75,6 +76,7 @@ class ClaudeAccountPool:
         self._traffic = traffic
         self._accounts: dict[str, _Account] = {}
         self._sequence = 0
+        sweep_stale_workdirs()
         self.refresh_if_changed()
 
     def refresh_if_changed(self) -> None:
@@ -114,6 +116,13 @@ class ClaudeAccountPool:
             status["in_flight"] = account.in_flight
             rows.append(status)
         return rows
+
+    async def warm_status_probes(self) -> None:
+        """A runtime's first status probe spawns the CLI and waits for it;
+        run those off the event loop so status routes never block."""
+        self.refresh_if_changed()
+        if any(account.runtime.needs_first_probe for account in self._accounts.values()):
+            await asyncio.to_thread(self._statuses)
 
     def status(self) -> dict[str, Any]:
         rows = self._statuses()

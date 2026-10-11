@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from types import SimpleNamespace
 
 import pytest
 
 from airelay.claude_auth import new_profile
+from claude_fakes import use_fake_cli
 from airelay.providers import ClaudeCliRuntime, ProviderError, ProviderRegistry
 from airelay.config import Settings
 
@@ -588,14 +590,12 @@ else:
 '''
 
 
-def _install_fake_claude(tmp_path) -> str:
-    import os
-    import sys as _sys
-
-    script = tmp_path / "fake-claude"
-    script.write_text(FAKE_CLAUDE_CLI.replace("#!/usr/bin/env python3", f"#!{_sys.executable}"), encoding="utf-8")
-    script.chmod(script.stat().st_mode | 0o111)
-    return str(script)
+def _fake_claude_settings(tmp_path) -> Settings:
+    script = tmp_path / "fake-claude.py"
+    script.write_text(FAKE_CLAUDE_CLI, encoding="utf-8")
+    settings = make_settings(tmp_path)
+    use_fake_cli(settings, script)
+    return settings
 
 
 @pytest.mark.asyncio
@@ -604,7 +604,7 @@ async def test_claude_end_to_end_json_schema_through_a_real_subprocess(tmp_path)
     binary speaking the probed CLI envelope: response_format travels as
     --json-schema argv, the result envelope's structured_output becomes the
     message content, and --effort rides along."""
-    settings = make_settings(tmp_path, claude_bin=_install_fake_claude(tmp_path))
+    settings = _fake_claude_settings(tmp_path)
     runtime = ClaudeCliRuntime(settings)
 
     payload = await runtime.create_chat_completion(
@@ -628,7 +628,7 @@ async def test_claude_end_to_end_json_schema_through_a_real_subprocess(tmp_path)
 
 @pytest.mark.asyncio
 async def test_claude_end_to_end_streaming_json_schema_through_a_real_subprocess(tmp_path) -> None:
-    settings = make_settings(tmp_path, claude_bin=_install_fake_claude(tmp_path))
+    settings = _fake_claude_settings(tmp_path)
     runtime = ClaudeCliRuntime(settings)
 
     collected = []
@@ -846,7 +846,8 @@ def test_subprocess_env_names_relay_profile_and_ignores_ambient_claude_state(tmp
 
     settings.write_claude_oauth_token("file-token")
     assert token_runtime._subprocess_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "file-token"
-    assert settings.claude_oauth_token_file.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":  # Windows protects it with the profile ACL instead
+        assert settings.claude_oauth_token_file.stat().st_mode & 0o777 == 0o600
     assert settings.claude_oauth_token_source() == "file"
 
     managed = ClaudeCliRuntime(settings, profile=new_profile(settings))
@@ -1124,22 +1125,20 @@ async def test_control_request_reads_answer_and_ends_cli_gracefully(tmp_path) ->
     """A real child process: the request goes in on stdin, the matching
     control_response comes back, and the CLI is allowed to exit on its own
     (stdin closed), never killed while it may be persisting a token."""
-    import sys as _sys
-
     marker = tmp_path / "clean-exit"
-    script = tmp_path / "fake-claude"
-    script.write_text(f"#!{_sys.executable}\n" + f'''
+    script = tmp_path / "fake-claude.py"
+    script.write_text(f'''
 import json, os, sys
 request = json.loads(sys.stdin.readline())
-assert os.environ["CLAUDE_CONFIG_DIR"].endswith("/config")
+assert os.path.basename(os.environ["CLAUDE_CONFIG_DIR"]) == "config"
 print(json.dumps({{"type": "system"}}), flush=True)
 print(json.dumps({{"type": "control_response", "response": {{"subtype": "success",
       "request_id": request["request_id"], "response": {{"echo": request["request"]}}}}}}), flush=True)
 sys.stdin.read()
 open({str(marker)!r}, "w").write("ok")
 ''')
-    script.chmod(0o700)
-    settings = make_settings(tmp_path, claude_bin=str(script))
+    settings = make_settings(tmp_path)
+    use_fake_cli(settings, script)
     runtime = ClaudeCliRuntime(settings, profile=new_profile(settings))
     answer = await REAL_CONTROL_REQUEST(runtime, {"subtype": "get_usage"}, timeout=10)
     assert answer == {"echo": {"subtype": "get_usage"}}
@@ -1148,17 +1147,15 @@ open({str(marker)!r}, "w").write("ok")
 
 @pytest.mark.asyncio
 async def test_control_request_maps_unknown_subtype_to_cli_unsupported(tmp_path) -> None:
-    import sys as _sys
-
-    script = tmp_path / "old-claude"
-    script.write_text(f"#!{_sys.executable}\n" + '''
+    script = tmp_path / "old-claude.py"
+    script.write_text('''
 import json, sys
 request = json.loads(sys.stdin.readline())
 print(json.dumps({"type": "control_response", "response": {"subtype": "error",
       "request_id": request["request_id"], "error": "Unsupported control request subtype: get_usage"}}), flush=True)
 ''')
-    script.chmod(0o700)
-    settings = make_settings(tmp_path, claude_bin=str(script))
+    settings = make_settings(tmp_path)
+    use_fake_cli(settings, script)
     runtime = ClaudeCliRuntime(settings, profile=new_profile(settings))
     with pytest.raises(ProviderError) as excinfo:
         await REAL_CONTROL_REQUEST(runtime, {"subtype": "get_usage"}, timeout=10)

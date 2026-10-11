@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from airelay.auth import AuthManager, AuthStorage, _compute_store_key
+from airelay.accounts import keyring_era_sign_ins
+from airelay.auth import AuthManager, AuthStorage
+from airelay.config import Settings
 from airelay.cli import _base_settings, build_parser
 
 
@@ -43,53 +45,105 @@ def _clear_airelay_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def test_auth_storage_auto_falls_back_to_file_when_keyring_fails(tmp_path, monkeypatch) -> None:
-    storage_root = tmp_path / "airelay"
+@pytest.mark.parametrize("mode", ["auto", "file", "keyring"])
+def test_auth_storage_is_a_private_file_in_every_mode(tmp_path, mode) -> None:
+    """ADR 0008: one storage everywhere; legacy modes never reach a keyring."""
+    import os
+    import sys
+
+    storage_root = tmp_path / "airelay" / "accounts" / "one"
     payload = {"tokens": {"access_token": "access", "refresh_token": "refresh"}}
-    _write_auth_payload(storage_root, payload)
-    storage = AuthStorage(storage_root, "auto")
-
-    def _raise_runtime_error() -> dict[str, object]:
-        raise RuntimeError("no backend")
-
-    monkeypatch.setattr(storage, "_load_keyring", _raise_runtime_error)
-
+    storage = AuthStorage(storage_root, mode)
+    storage.save(payload)
+    assert storage.mode == "file"
     assert storage.load() == payload
+    assert json.loads(storage.auth_path.read_text(encoding="utf-8")) == payload
+    if sys.platform != "win32":
+        assert storage.auth_path.stat().st_mode & 0o777 == 0o600
+        assert storage_root.stat().st_mode & 0o777 == 0o700
+    assert [p.name for p in storage_root.iterdir() if p.name.startswith(".")] == []
+    assert storage.delete() and storage.load() is None
+    assert not os.path.exists(storage.auth_path)
 
 
-def test_auth_storage_auto_migrates_legacy_keyring_payload(tmp_path, monkeypatch) -> None:
+def test_concurrent_refreshes_rotate_the_token_once(tmp_path, monkeypatch) -> None:
+    """Two processes (here: two managers) refreshing one sign-in at once must
+    not both spend the rotating refresh token: the second reuses the first's."""
     storage_root = tmp_path / "airelay"
-    payload = {"tokens": {"access_token": "access", "refresh_token": "refresh"}}
-    serialized = json.dumps(payload)
-    calls: list[tuple[str, str, str | None]] = []
-    username = _compute_store_key(storage_root)
+    _write_auth_payload(storage_root, {"tokens": {"id_token": "id-token", "access_token": "old", "refresh_token": "r1"}})
+    calls = []
 
-    def fake_get_password(service: str, username: str) -> str | None:
-        calls.append(("get", service, username))
-        if service == "AIRelays Auth":
-            return None
-        if service == "AIRelay Auth":
-            return serialized
-        return None
+    class FakeResponse:
+        status_code = 200
+        text = ""
 
-    def fake_set_password(service: str, username: str, value: str) -> None:
-        calls.append(("set", service, username))
-        assert service == "AIRelays Auth"
-        assert value == serialized
+        def json(self):
+            return {"access_token": "new", "refresh_token": "r2"}
 
-    def fake_delete_password(service: str, username: str) -> None:
-        calls.append(("delete", service, username))
-        assert service == "AIRelay Auth"
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
 
-    monkeypatch.setattr("airelay.auth.keyring.get_password", fake_get_password)
-    monkeypatch.setattr("airelay.auth.keyring.set_password", fake_set_password)
-    monkeypatch.setattr("airelay.auth.keyring.delete_password", fake_delete_password)
+        async def __aenter__(self):
+            return self
 
-    storage = AuthStorage(storage_root, "auto")
+        async def __aexit__(self, *exc):
+            return False
 
-    assert storage.load() == payload
-    assert ("set", "AIRelays Auth", username) in calls
-    assert ("delete", "AIRelay Auth", username) in calls
+        async def post(self, url, json, headers):
+            calls.append(json["refresh_token"])
+            await asyncio.sleep(0.3)
+            return FakeResponse()
+
+    monkeypatch.setattr("airelay.auth.httpx.AsyncClient", FakeClient)
+    first = AuthManager(storage_root, "file", "https://auth.openai.com")
+    second = AuthManager(storage_root, "file", "https://auth.openai.com")
+
+    async def both():
+        return await asyncio.gather(first.refresh_tokens(force=True), second.refresh_tokens(force=True))
+
+    records = asyncio.run(both())
+    assert calls == ["r1"]
+    assert {record.refresh_token for record in records} == {"r2"}
+    assert (storage_root / "auth.json.lock").exists()
+
+
+def test_keyring_era_sign_ins_are_detected_from_files_only(tmp_path) -> None:
+    settings = Settings(data_dir=tmp_path, logs_dir=tmp_path / "logs")
+    assert keyring_era_sign_ins(settings) == []
+    (tmp_path / "accounts" / "keychain-account").mkdir(parents=True)
+    _write_auth_payload(tmp_path / "accounts" / "file-account", {"tokens": {"access_token": "a"}})
+    assert keyring_era_sign_ins(settings) == ["keychain-account"]
+    settings.legacy_auth_storage = "auto"
+    assert keyring_era_sign_ins(settings) == ["default", "keychain-account"]
+    # The tray rewrites `storage`; OpenAI usage history still marks the default.
+    settings.legacy_auth_storage = None
+    (tmp_path / "openai-window-tokens.json").write_text("{}", encoding="utf-8")
+    assert keyring_era_sign_ins(settings) == ["default", "keychain-account"]
+    _write_auth_payload(tmp_path, {"tokens": {"access_token": "a"}})
+    assert keyring_era_sign_ins(settings) == ["keychain-account"]
+
+
+def test_config_toml_round_trips_windows_paths_and_reports_legacy_storage(tmp_path, monkeypatch) -> None:
+    import tomllib
+    from pathlib import PureWindowsPath
+
+    settings = Settings(
+        data_dir=PureWindowsPath(r"C:\Users\someone\.airelays"),
+        logs_dir=PureWindowsPath(r"C:\Users\someone\.airelays\logs"),
+        claude_bin=r'C:\Tools\say "claude".exe',
+    )
+    parsed = tomllib.loads(settings.render_config_toml())
+    assert parsed["paths"]["data_dir"] == r"C:\Users\someone\.airelays"
+    assert parsed["providers"]["claude"]["bin"] == r'C:\Tools\say "claude".exe'
+    assert parsed["auth"]["storage"] == "file"
+
+    _clear_airelay_env(monkeypatch)
+    config = tmp_path / "config.toml"
+    config.write_text('[auth]\nstorage = "keyring"\n', encoding="utf-8")
+    loaded = Settings.from_sources(config)
+    assert loaded.auth_storage_mode == "file"
+    assert loaded.legacy_auth_storage == "keyring"
 
 
 def test_auth_manager_status_without_tokens_is_not_ready(tmp_path) -> None:
@@ -684,3 +738,97 @@ enabled = true
     args.func(args)
 
     assert not (tmp_path / "state" / "relay-token").exists()
+
+
+def test_refresh_proceeds_with_a_warning_when_the_filesystem_cannot_lock(tmp_path, monkeypatch, caplog) -> None:
+    """NFS without lockd refuses locks: refresh must still work (and say why
+    it is unguarded), not stall and report a phantom concurrent refresh."""
+    import errno
+
+    from airelay import private_io
+
+    storage_root = tmp_path / "airelay"
+    _write_auth_payload(storage_root, {"tokens": {"id_token": "id-token", "access_token": "old", "refresh_token": "r1"}})
+
+    def no_locks(fd):
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"access_token": "new", "refresh_token": "r2"}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, json, headers):
+            return FakeResponse()
+
+    monkeypatch.setattr(private_io, "_lock", no_locks)
+    monkeypatch.setattr("airelay.auth.httpx.AsyncClient", FakeClient)
+    manager = AuthManager(storage_root, "file", "https://auth.openai.com")
+    with caplog.at_level("WARNING"):
+        record = asyncio.run(manager.refresh_tokens(force=True))
+    assert record.refresh_token == "r2"
+    assert "without the cross-process lock" in caplog.text
+
+
+def test_cancelled_refresh_never_strands_the_refresh_lock(tmp_path, monkeypatch) -> None:
+    """A client disconnecting while its refresh waits for the lock must not
+    leave the lock held, and the refresh it started still saves its token."""
+    from airelay.private_io import InterProcessLock
+
+    storage_root = tmp_path / "airelay"
+    _write_auth_payload(storage_root, {"tokens": {"id_token": "id-token", "access_token": "old", "refresh_token": "r1"}})
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"access_token": "new", "refresh_token": "r2"}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, json, headers):
+            return FakeResponse()
+
+    monkeypatch.setattr("airelay.auth.httpx.AsyncClient", FakeClient)
+    manager = AuthManager(storage_root, "file", "https://auth.openai.com")
+    holder = InterProcessLock(manager.storage.lock_path)
+    holder.acquire(timeout=1)
+
+    async def scenario():
+        caller = asyncio.create_task(manager.refresh_tokens(force=True))
+        await asyncio.sleep(0.2)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        holder.release()
+        for _ in range(50):
+            await asyncio.sleep(0.1)
+            if manager.load().refresh_token == "r2":
+                break
+
+    asyncio.run(scenario())
+    assert manager.load().refresh_token == "r2"
+    probe = InterProcessLock(manager.storage.lock_path)
+    probe.acquire(timeout=2)
+    probe.release()

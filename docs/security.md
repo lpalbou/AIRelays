@@ -41,6 +41,26 @@ Rotate it:
 airelays token rotate
 ```
 
+## Credential Storage
+
+AIRelays stores its secrets the same way on macOS, Linux and Windows
+([ADR 0008](adr/0008-uniform-cross-platform-runtime.md)):
+
+- OpenAI sign-ins, the relay token and the Claude setup token are files in the
+  data directory. On macOS and Linux the directories AIRelays creates are
+  owner-only (0700) and the files are created owner-only (0600); on Windows
+  they inherit the user profile's permissions, so keep the data directory
+  inside your profile.
+- Files are replaced atomically, and a lock file next to each sign-in keeps
+  two AIRelays processes (for example the tray relay and a CLI command) from
+  refreshing the same rotating token at once.
+- AIRelays does not use the OS keychain, Credential Manager, or Secret
+  Service. Protection at rest comes from file permissions and disk
+  encryption; enable FileVault, BitLocker, or LUKS if the machine may be lost.
+- Claude browser sign-ins stay with Claude Code, which keeps them in the macOS
+  keychain or in each profile's folder on Linux and Windows (see
+  [Claude Guardrails](#claude-guardrails)).
+
 ## Open Local Relay Mode
 
 Open local relay mode applies to all enabled providers, including the Claude runtime.
@@ -112,7 +132,7 @@ AIRelays logs:
 - provider stream lines
 - usage summaries
 
-Request and response contents, including prompts and model outputs, can be written to the local AIRelays log files. Raw bearer tokens are redacted.
+Request and response contents, including prompts and model outputs, can be written to the local AIRelays log files. Raw bearer tokens are redacted. The logs directory is owner-only, like the rest of the data directory.
 
 Traffic logs default to a 7-day age limit and 1 GiB disk budget, with hourly/
 50 MiB rotation. The oldest whole files are permanently deleted, including

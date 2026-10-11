@@ -14,10 +14,12 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # ADR 0008: the relay runs on all three OSes, so its tests do too.
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - name: Check out repository
@@ -39,6 +41,39 @@ jobs:
 
       - name: Byte-compile source and tests
         run: python -m compileall src tests
+
+  desktop-rust:
+    # The tray's per-OS code (process flags, AppImage environment, private
+    # files) must compile and pass its tests on every OS it ships for.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux webkit dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            libxdo-dev librsvg2-dev libgtk-3-dev
+
+      - name: Stand in for the embedded runtime resource
+        shell: bash
+        run: mkdir -p desktop/src-tauri/runtime && touch desktop/src-tauri/runtime/.keep
+
+      - name: Test desktop crate
+        if: runner.os != 'Windows'
+        run: cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
+
+      # Test binaries lack the app manifest (Common Controls v6) and cannot
+      # load on Windows; compiling them still checks the Windows-only code.
+      - name: Build desktop crate tests (Windows)
+        if: runner.os == 'Windows'
+        run: cargo test --locked --no-run --manifest-path desktop/src-tauri/Cargo.toml
 
   build:
     runs-on: ubuntu-latest
