@@ -765,6 +765,8 @@ def create_app(settings: Settings) -> FastAPI:
                     },
                 }
             )
+            # Windows cannot rename a file that is still open.
+            temp_handle.close()
             record = store.create_file_from_path(
                 filename=filename,
                 purpose=purpose,

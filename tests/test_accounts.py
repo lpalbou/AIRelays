@@ -291,7 +291,7 @@ async def test_marker_text_in_a_client_error_body_does_not_bench(tmp_path: Path)
     pool = _pool(settings, [a, b], RecordingTraffic())
     with pytest.raises(BackendError):
         await pool.collect_response({}, "req", None)
-    assert not pool._accounts[0].is_limited(time.monotonic())
+    assert not pool._accounts[0].is_limited(time.perf_counter())
     assert b.calls == 0
 
 
@@ -345,7 +345,7 @@ async def test_all_accounts_limited_reports_actionable_error(tmp_path: Path) -> 
     assert "2 OpenAI accounts" in excinfo.value.detail
     # The last attempt is benched too: an exhausted final account must not be
     # re-selected as "healthy" and hammered by every subsequent request.
-    now = time.monotonic()
+    now = time.perf_counter()
     assert all(account.is_limited(now) for account in pool._accounts)
 
 
@@ -511,7 +511,7 @@ async def test_stream_failure_event_before_content_benches_and_fails_over(tmp_pa
     ]
     assert json.loads(events[-1].data)["response"]["served_by"] == "b"
     assert "account_failover" in traffic.phases()
-    assert pool._accounts[0].is_limited(time.monotonic())
+    assert pool._accounts[0].is_limited(time.perf_counter())
 
 
 @pytest.mark.asyncio
@@ -594,7 +594,7 @@ async def test_invalid_request_stream_error_fails_fast_without_rotation_or_bench
     assert "at their limits" not in error["message"]
     assert b.calls == 0
     assert "account_failover" not in traffic.phases()
-    assert not pool._accounts[0].is_limited(time.monotonic())
+    assert not pool._accounts[0].is_limited(time.perf_counter())
     assert pool._accounts[0].limited_kind is None
 
 
@@ -626,7 +626,7 @@ async def test_invalid_request_error_fails_fast_on_collect_path(tmp_path: Path) 
     assert json.loads(excinfo.value.detail)["error"] == upstream_error
     assert b.calls == 0
     assert "account_failover" not in traffic.phases()
-    assert not pool._accounts[0].is_limited(time.monotonic())
+    assert not pool._accounts[0].is_limited(time.perf_counter())
 
 
 @pytest.mark.asyncio
@@ -667,7 +667,7 @@ async def test_unknown_stream_error_defaults_to_failover_with_transient_bench(tm
 
     assert json.loads(events[-1].data)["response"]["served_by"] == "b"
     assert "account_failover" in traffic.phases()
-    assert pool._accounts[0].is_limited(time.monotonic())
+    assert pool._accounts[0].is_limited(time.perf_counter())
     assert pool._accounts[0].limited_kind == "transient"
 
 
@@ -731,7 +731,7 @@ async def test_usage_maxed_account_is_skipped_directly(tmp_path: Path) -> None:
                 "secondary_window": {"used_percent": 100, "reset_after_seconds": 3600},
             },
         },
-        time.monotonic(),
+        time.perf_counter(),
     )
 
     for request_id in ("req1", "req2"):
@@ -765,7 +765,7 @@ async def test_stream_failure_after_content_passes_through_verbatim(tmp_path: Pa
         "response.failed",
     ]
     assert b.calls == 0
-    assert not pool._accounts[0].is_limited(time.monotonic())
+    assert not pool._accounts[0].is_limited(time.perf_counter())
 
 
 @pytest.mark.asyncio
@@ -792,7 +792,7 @@ async def test_balanced_mode_prefers_the_account_with_most_remaining_quota(tmp_p
     settings = _settings(tmp_path)
     a, b = FakeBackend("a"), FakeBackend("b")
     pool = _pool(settings, [a, b], RecordingTraffic())
-    now = time.monotonic()
+    now = time.perf_counter()
     pool._accounts[0].used_percent = 25.0
     pool._accounts[0].usage_observed_at = now
     pool._accounts[1].used_percent = 1.0
@@ -813,7 +813,7 @@ async def test_balanced_mode_ignores_stale_usage_signal(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     a, b = FakeBackend("a"), FakeBackend("b")
     pool = _pool(settings, [a, b], RecordingTraffic())
-    stale = time.monotonic() - USAGE_ROUTING_MAX_AGE_SECONDS - 1
+    stale = time.perf_counter() - USAGE_ROUTING_MAX_AGE_SECONDS - 1
     pool._accounts[0].used_percent = 90.0
     pool._accounts[0].usage_observed_at = stale
     pool._accounts[1].used_percent = 1.0
@@ -931,9 +931,9 @@ def test_probe_records_weekly_signal_from_weekly_only_payload(tmp_path: Path) ->
     a = FakeBackend("a")
     pool = _pool(settings, [a], RecordingTraffic())
     account = pool._accounts[0]
-    pool._bench_from_usage(account, _plus_shaped_usage(91), time.monotonic())
+    pool._bench_from_usage(account, _plus_shaped_usage(91), time.perf_counter())
     assert account.used_percent == 91.0
-    assert not account.is_limited(time.monotonic())
+    assert not account.is_limited(time.perf_counter())
 
 
 def test_probe_records_weekly_signal_not_the_5h_one(tmp_path: Path) -> None:
@@ -945,7 +945,7 @@ def test_probe_records_weekly_signal_not_the_5h_one(tmp_path: Path) -> None:
     a = FakeBackend("a")
     pool = _pool(settings, [a], RecordingTraffic())
     account = pool._accounts[0]
-    pool._bench_from_usage(account, _enterprise_shaped_usage(37, 4), time.monotonic())
+    pool._bench_from_usage(account, _enterprise_shaped_usage(37, 4), time.perf_counter())
     assert account.used_percent == 4.0
 
 
@@ -1063,7 +1063,7 @@ async def test_subset_never_fails_over_to_unsupported_account(tmp_path, streamin
     # session pinned to a healthy account that lacks the requested model.
     pool._pin("session", pool._accounts[0].slot.slug)
     if cooling:
-        pool._accounts[1].limited_until = time.monotonic() + 3600
+        pool._accounts[1].limited_until = time.perf_counter() + 3600
     with pytest.raises(BackendError) as exc:
         if streaming:
             _ = [event async for event in pool.stream_response_events({"model": "exclusive"}, "req", "session")]
@@ -1161,7 +1161,7 @@ def test_bench_from_usage_proactively_cools_a_maxed_account(tmp_path: Path) -> N
     a, b = FakeBackend("a"), FakeBackend("b")
     pool = _pool(settings, [a, b], RecordingTraffic())
     account = pool._accounts[0]
-    assert not account.is_limited(time.monotonic())
+    assert not account.is_limited(time.perf_counter())
     pool._bench_from_usage(
         account,
         {
@@ -1170,11 +1170,11 @@ def test_bench_from_usage_proactively_cools_a_maxed_account(tmp_path: Path) -> N
                 "secondary_window": {"used_percent": 100, "reset_after_seconds": 3600},
             },
         },
-        time.monotonic(),
+        time.perf_counter(),
     )
-    assert account.is_limited(time.monotonic())
+    assert account.is_limited(time.perf_counter())
     # Cooldown tracks the window reset (~1h), not the default.
-    assert 3000 < (account.limited_until - time.monotonic()) <= 3600
+    assert 3000 < (account.limited_until - time.perf_counter()) <= 3600
 
 
 def test_bench_from_usage_ignores_healthy_account(tmp_path: Path) -> None:
@@ -1186,9 +1186,9 @@ def test_bench_from_usage_ignores_healthy_account(tmp_path: Path) -> None:
     pool._bench_from_usage(
         account,
         {"rate_limit": {"primary_window": {"used_percent": 42, "reset_after_seconds": 100}}},
-        time.monotonic(),
+        time.perf_counter(),
     )
-    assert not account.is_limited(time.monotonic())
+    assert not account.is_limited(time.perf_counter())
 
 
 def test_bench_from_usage_reads_explicit_reached_booleans(tmp_path: Path) -> None:
@@ -1202,9 +1202,9 @@ def test_bench_from_usage_reads_explicit_reached_booleans(tmp_path: Path) -> Non
     pool._bench_from_usage(
         account,
         {"rate_limit": {"limit_reached": True, "primary_window": {"used_percent": 99}}},
-        time.monotonic(),
+        time.perf_counter(),
     )
-    assert account.is_limited(time.monotonic())
+    assert account.is_limited(time.perf_counter())
 
 
 def test_bench_from_usage_waits_for_longest_exhausted_window(tmp_path: Path) -> None:
@@ -1223,9 +1223,9 @@ def test_bench_from_usage_waits_for_longest_exhausted_window(tmp_path: Path) -> 
                 "secondary_window": {"used_percent": 100, "reset_after_seconds": 86400},
             },
         },
-        time.monotonic(),
+        time.perf_counter(),
     )
-    remaining = account.limited_until - time.monotonic()
+    remaining = account.limited_until - time.perf_counter()
     assert 80000 < remaining <= 86400
 
 
@@ -1237,21 +1237,21 @@ def test_stale_usage_snapshot_cannot_release_a_newer_bench(tmp_path: Path) -> No
     a = FakeBackend("a")
     pool = _pool(settings, [a], RecordingTraffic())
     account = pool._accounts[0]
-    probe_started = time.monotonic()
+    probe_started = time.perf_counter()
     pool._mark_limited(account, 3600, "status 429")  # bench lands after the probe began
     pool._bench_from_usage(
         account,
         {"rate_limit": {"primary_window": {"used_percent": 12}}},
         probe_started,
     )
-    assert account.is_limited(time.monotonic())
+    assert account.is_limited(time.perf_counter())
     # A probe that started after the bench is authoritative and releases it.
     pool._bench_from_usage(
         account,
         {"rate_limit": {"primary_window": {"used_percent": 12}}},
-        time.monotonic(),
+        time.perf_counter(),
     )
-    assert not account.is_limited(time.monotonic())
+    assert not account.is_limited(time.perf_counter())
 
 
 def test_mark_limited_never_shortens_an_existing_bench(tmp_path: Path) -> None:
@@ -1283,8 +1283,8 @@ async def test_hard_refresh_keeps_bench_when_usage_confirms_the_limit(tmp_path: 
 
     await pool.hard_refresh("req")
 
-    assert pool._accounts[0].is_limited(time.monotonic())
-    assert not pool._accounts[1].is_limited(time.monotonic())
+    assert pool._accounts[0].is_limited(time.perf_counter())
+    assert not pool._accounts[1].is_limited(time.perf_counter())
 
 
 @pytest.mark.asyncio
@@ -1302,7 +1302,7 @@ async def test_hard_refresh_keeps_bench_when_probe_fails(tmp_path: Path) -> None
 
     await pool.hard_refresh("req")
 
-    assert pool._accounts[0].is_limited(time.monotonic())
+    assert pool._accounts[0].is_limited(time.perf_counter())
 
 
 @pytest.mark.asyncio
@@ -1325,8 +1325,8 @@ async def test_warm_start_benches_exhausted_accounts_and_learns_models(tmp_path:
 
     await pool.warm_start()
 
-    assert pool._accounts[0].is_limited(time.monotonic())
-    assert not pool._accounts[1].is_limited(time.monotonic())
+    assert pool._accounts[0].is_limited(time.perf_counter())
+    assert not pool._accounts[1].is_limited(time.perf_counter())
     assert pool._accounts[0].models == {"gpt-5.5"}
     assert pool._accounts[1].models == {"gpt-5.5", "gpt-5-pro"}
     assert "account_pool_warmed" in traffic.phases()
@@ -1368,7 +1368,7 @@ async def test_hard_refresh_releases_bench_when_usage_shows_capacity(tmp_path: P
 
     await pool.hard_refresh("req")
 
-    assert not pool._accounts[0].is_limited(time.monotonic())
+    assert not pool._accounts[0].is_limited(time.perf_counter())
 
 
 @pytest.mark.asyncio
@@ -1470,7 +1470,7 @@ def test_tally_survives_5h_roll_and_clears_on_weekly_roll(tmp_path: Path) -> Non
     pool._bench_from_usage(
         account,
         _enterprise_shaped_usage(80, 4, five_hour_reset_at=1785214800, weekly_reset_at=1785732000),
-        time.monotonic(),
+        time.perf_counter(),
     )
     pool._tally.record(account_id, "gpt-test", {"input_tokens": 100, "output_tokens": 10})
     assert pool._tally.snapshot(account_id) is not None
@@ -1480,20 +1480,20 @@ def test_tally_survives_5h_roll_and_clears_on_weekly_roll(tmp_path: Path) -> Non
     pool._bench_from_usage(
         account,
         _enterprise_shaped_usage(1, 5, five_hour_reset_at=1785232800, weekly_reset_at=1785732000),
-        time.monotonic(),
+        time.perf_counter(),
     )
     snap = pool._tally.snapshot(account_id)
     assert snap is not None and snap["totals"]["input_tokens"] == 100
 
     # A degenerate probe with no windows keeps the current tally.
-    pool._bench_from_usage(account, {"rate_limit": {"allowed": True}}, time.monotonic())
+    pool._bench_from_usage(account, {"rate_limit": {"allowed": True}}, time.perf_counter())
     assert pool._tally.snapshot(account_id) is not None
 
     # The weekly window itself rolls: cleared.
     pool._bench_from_usage(
         account,
         _enterprise_shaped_usage(0, 0, five_hour_reset_at=1785250800, weekly_reset_at=1786336800),
-        time.monotonic(),
+        time.perf_counter(),
     )
     assert pool._tally.snapshot(account_id) is None
 
@@ -1542,7 +1542,7 @@ def test_tally_snapshot_labels_the_window(tmp_path: Path) -> None:
     pool = _pool(settings, [a], RecordingTraffic())
     account = pool._accounts[0]
     account_id = account.slot.account_id
-    pool._bench_from_usage(account, _plus_shaped_usage(91), time.monotonic())
+    pool._bench_from_usage(account, _plus_shaped_usage(91), time.perf_counter())
     pool._tally.record(account_id, "gpt-test", {"input_tokens": 10, "output_tokens": 1})
     snap = pool._tally.snapshot(account_id)
     assert snap is not None

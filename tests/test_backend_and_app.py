@@ -1312,7 +1312,7 @@ def test_chat_stream_invalid_request_returns_400_with_real_code(tmp_path) -> Non
                 "messages": [{"role": "user", "content": "hello"}],
             },
         )
-        benched = pool._accounts[0].is_limited(time.monotonic())
+        benched = pool._accounts[0].is_limited(time.perf_counter())
 
     assert response.status_code == 400
     error = response.json()["error"]
@@ -1794,7 +1794,7 @@ def test_chat_route_oversized_input_fails_fast_without_rotation_or_retry(tmp_pat
                 "messages": [{"role": "user", "content": "hello"}],
             },
         )
-        now = time.monotonic()
+        now = time.perf_counter()
         benched = [account.is_limited(now) for account in pool._accounts]
 
     assert response.status_code == 400

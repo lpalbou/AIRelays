@@ -18,6 +18,11 @@ Design (from the adversarial investigation):
   accounts under one session id would defeat prompt caching and look
   anomalous). Failover re-pins at turn boundaries.
 
+Timing uses ``time.perf_counter()``: monotonic, high resolution on every
+OS. ``time.monotonic()`` ticks only every ~15.6 ms on Windows before Python
+3.13, which turned back-to-back selections and bench/probe ordering into
+ties.
+
 Vocabulary note: this exists so one person can use their own multiple
 subscriptions from one relay — it is not an account-sharing mechanism.
 """
@@ -356,7 +361,7 @@ class OpenAiAccountPool:
         are never interrupted. Returns True when the set changed."""
         if not self._discoverable:
             return False
-        now = time.monotonic()
+        now = time.perf_counter()
         # 10s: discovery does per-slot credential loads (keyring IPC on
         # macOS) on the event loop. At the old 2s throttle the desktop's
         # 1.5s status poll re-triggered it on every other poll; account
@@ -386,7 +391,7 @@ class OpenAiAccountPool:
                 remembered = self._bench_memory.pop(slot.slug, None)
                 if remembered is not None:
                     account_id, limited_until, limited_since, last_error, limited_kind = remembered
-                    if account_id == slot.account_id and limited_until > time.monotonic():
+                    if account_id == slot.account_id and limited_until > time.perf_counter():
                         fresh.limited_until = limited_until
                         fresh.limited_since = limited_since
                         fresh.last_error = last_error
@@ -395,7 +400,7 @@ class OpenAiAccountPool:
         for slug, account in existing.items():
             if slug in kept:
                 continue
-            if account.limited_until > time.monotonic():
+            if account.limited_until > time.perf_counter():
                 self._bench_memory[slug] = (
                     account.slot.account_id,
                     account.limited_until,
@@ -439,7 +444,7 @@ class OpenAiAccountPool:
 
     def account_statuses(self) -> list[dict[str, Any]]:
         self.refresh_if_changed()
-        now = time.monotonic()
+        now = time.perf_counter()
         statuses = []
         for account in self._accounts:
             status = account.manager.status()
@@ -468,7 +473,7 @@ class OpenAiAccountPool:
                 "No ChatGPT login found. Run `airelays login` first.",
                 code="upstream_auth_missing",
             )
-        now = time.monotonic()
+        now = time.perf_counter()
         for account in self._accounts:
             if not account.is_limited(now):
                 return account
@@ -500,7 +505,7 @@ class OpenAiAccountPool:
                 await self._account_models(account, request_id)
             except Exception:  # noqa: BLE001
                 continue
-        now = time.monotonic()
+        now = time.perf_counter()
         self._traffic.write(
             {
                 "request_id": request_id,
@@ -525,7 +530,7 @@ class OpenAiAccountPool:
         a fresh 429 before the re-probe landed."""
         self.refresh_if_changed()
         before = {
-            account.slot.slug: account.is_limited(time.monotonic())
+            account.slot.slug: account.is_limited(time.perf_counter())
             for account in self._accounts
         }
         try:
@@ -533,7 +538,7 @@ class OpenAiAccountPool:
             await self.subscription_statuses(request_id, force=True)
         except Exception:  # noqa: BLE001
             pass
-        now = time.monotonic()
+        now = time.perf_counter()
         self._traffic.write(
             {
                 "request_id": request_id,
@@ -561,7 +566,7 @@ class OpenAiAccountPool:
                 "No ChatGPT login found. Run `airelays login` first.",
                 code="upstream_auth_missing",
             )
-        now = time.monotonic()
+        now = time.perf_counter()
         # Conversation affinity: keep one session on one account (only if it
         # can still serve this model).
         if session_id and session_id in self._sticky:
@@ -716,7 +721,7 @@ class OpenAiAccountPool:
     def _mark_limited(
         self, account: _PooledAccount, seconds: float, reason: str, kind: str = "transient"
     ) -> None:
-        now = time.monotonic()
+        now = time.perf_counter()
         # Extend-only: a short transient-error cooldown must never truncate
         # an authoritative multi-hour usage bench.
         account.limited_until = max(account.limited_until, now + seconds)
@@ -758,7 +763,7 @@ class OpenAiAccountPool:
         self, session_id: str | None, model: str | None = None
     ) -> list[_PooledAccount]:
         first = self._select(session_id, model)
-        now = time.monotonic()
+        now = time.perf_counter()
         # Fallbacks in health order: healthy accounts before benched ones
         # (a known-benched account would waste a guaranteed-429 round trip),
         # benched ones by earliest recovery.
@@ -929,7 +934,7 @@ class OpenAiAccountPool:
         """Cached per-account model slugs, refreshed on the same TTL as the
         registry's models cache."""
         ttl = max(0.0, float(self._settings.models_cache_ttl_seconds))
-        now = time.monotonic()
+        now = time.perf_counter()
         if (
             account.models_payload is not None
             and account.models_fetched_at > 0
@@ -1015,17 +1020,17 @@ class OpenAiAccountPool:
         """One account's usage with a short TTL cache. Every successful probe
         feeds the bench lifecycle and the balanced strategy's capacity
         signal, so any status consumer keeps routing honest for free."""
-        now = time.monotonic()
+        now = time.perf_counter()
         if (
             not force
             and account.usage_payload is not None
             and now - account.usage_fetched_at < USAGE_CACHE_SECONDS
         ):
             return json.loads(json.dumps(account.usage_payload))
-        probe_started = time.monotonic()
+        probe_started = time.perf_counter()
         usage = await account.backend.get_subscription_status(request_id)
         account.usage_payload = usage
-        account.usage_fetched_at = time.monotonic()
+        account.usage_fetched_at = time.perf_counter()
         account.usage_captured_at = datetime.now(timezone.utc).isoformat()
         self._bench_from_usage(account, usage, probe_started)
         return json.loads(json.dumps(usage))
@@ -1118,7 +1123,7 @@ class OpenAiAccountPool:
         if anchor is not None:
             if anchor.used_percent is not None:
                 account.used_percent = anchor.used_percent
-                account.usage_observed_at = time.monotonic()
+                account.usage_observed_at = time.perf_counter()
             self._tally.set_window(
                 account.slot.account_id, anchor.reset_at, anchor.window_seconds
             )
@@ -1130,7 +1135,7 @@ class OpenAiAccountPool:
                 reached = True
                 if window.reset_after_seconds is not None:
                     resets.append(window.reset_after_seconds)
-        now = time.monotonic()
+        now = time.perf_counter()
         if not reached:
             # Authoritative recovery signal: usage says there is capacity, so
             # release any bench rather than waiting out an over-long
@@ -1168,7 +1173,7 @@ class OpenAiAccountPool:
             and len(self._accounts) > 1
             and self._bench_decision(error) is not None
         ):
-            now = time.monotonic()
+            now = time.perf_counter()
             # Only claim "all unavailable" when it is true.
             if all(account.is_limited(now) for account in self._accounts):
                 earliest = max(

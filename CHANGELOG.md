@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.16.2
+
+### Fixed
+
+- Windows: file uploads (`POST /v1/files`) no longer fail while moving the
+  uploaded file into storage.
+- Windows with Python 3.11 or 3.12: OpenAI requests sent in quick succession
+  rotate across accounts as configured, and usage checks release benched
+  accounts reliably.
+
+### Compatibility
+
+- Desktop installers were not published for 0.16.1; 0.16.2 is the first
+  desktop release with the 0.16.1 changes below.
+
 ## 0.16.1
 
 ### Changed

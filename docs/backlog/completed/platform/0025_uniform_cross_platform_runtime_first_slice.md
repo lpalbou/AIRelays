@@ -55,4 +55,6 @@ macOS app's signature was invalid; tests ran on Linux only.
   installers).
 - Proposed [0021](../../proposed/accounts/0021_keyring_sign_in_import.md):
   optional import of keyring-era sign-ins (deferred).
-- First Windows and macOS CI runs may surface platform-specific test fixes.
+- The first three-OS CI run surfaced two pre-existing Windows bugs (upload
+  rename while the temp file was open; ~15.6 ms `time.monotonic()` ties in
+  account selection before Python 3.13), fixed in 0.16.2.
