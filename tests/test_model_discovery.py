@@ -198,7 +198,11 @@ async def test_claude_discovery_single_flight_expiry_failure_and_removal(tmp_pat
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["success", "timeout", "cancel", "malformed"])
 async def test_claude_initialize_protocol_is_bounded_and_reaps_process(tmp_path, monkeypatch, outcome):
-    runtime = ClaudeCliRuntime(settings(tmp_path, claude_timeout_seconds=0.01, claude_models=(),
+    # Only the timeout case races a tiny deadline: on coarse clocks (Windows,
+    # Python 3.11) a 10 ms deadline can expire before a simulated cancellation,
+    # and asyncio.timeout then reports it as its own TimeoutError.
+    timeout = 0.01 if outcome == "timeout" else 5.0
+    runtime = ClaudeCliRuntime(settings(tmp_path, claude_timeout_seconds=timeout, claude_models=(),
                                         claude_bin=sys.executable))  # spawn is stubbed below
     writes = []
     spawned = {}
