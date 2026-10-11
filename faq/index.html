@@ -577,6 +577,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#does-airelays-use-my-claude-code-sign-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does AIRelays use my Claude Code sign-in?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#can-i-see-my-claude-subscription-usage" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -969,6 +980,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0007-relay-owned-claude-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Relay-Owned Claude Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1073,6 +1112,17 @@
     <span class="md-ellipsis">
       
         How do I log in to the Claude runtime?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-airelays-use-my-claude-code-sign-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does AIRelays use my Claude Code sign-in?
       
     </span>
   </a>
@@ -1230,14 +1280,24 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <li>browser login: <code>airelays claude login</code>; repeat to add another of your accounts</li>
 <li>headless login: <code>claude setup-token</code> on a browser-equipped machine, then
   <code>airelays claude set-token</code> on the relay machine (stores the token in a
-  0600 file that survives service managers and reboots)</li>
+  0600 file that survives service managers and reboots). It appears as the
+  account <code>default</code> and is inference-only, without a usage bar</li>
 </ul>
 <p>List accounts with <code>airelays claude accounts</code>, renew one with
 <code>airelays claude login --replace ACCOUNT</code>, and sign out one with
-<code>airelays claude logout ACCOUNT</code>. The desktop offers <strong>Add account</strong> and
-per-account sign-out. Browser-added accounts use isolated profiles; signing
-out one leaves the others intact. Signing out the legacy <code>default</code> account
-also signs out other tools using that CLI profile.</p>
+<code>airelays claude logout ACCOUNT</code>. The desktop offers <strong>Sign in</strong> / <strong>Add
+account</strong> ("In a browser" or "With a token") and per-account sign-out. Each
+browser account is its own AIRelays-owned profile; signing out one leaves the
+others intact. <code>airelays claude logout default</code> only deletes the stored token.</p>
+<h2 id="does-airelays-use-my-claude-code-sign-in">Does AIRelays use my Claude Code sign-in?<a class="headerlink" href="#does-airelays-use-my-claude-code-sign-in" title="Permanent link">&para;</a></h2>
+<p>No. AIRelays never uses your personal Claude Code sign-in (<code>~/.claude</code>), an
+inherited <code>CLAUDE_CONFIG_DIR</code>, or an exported <code>CLAUDE_CODE_OAUTH_TOKEN</code>, and it
+never signs Claude Code out. Switching or signing out Claude Code does not
+affect the relay. If you upgraded from 0.15.0 or earlier and Claude only
+worked through one of those, connect it once with <code>airelays claude login</code> or
+<code>airelays claude set-token</code>. AIRelays cannot copy the personal sign-in
+because Claude Code refresh tokens rotate. Profiles already enrolled keep
+working.</p>
 <p>Claude requests balance across eligible accounts with capacity. The relay
 uses fresh weekly usage when available, rotates when usage is unknown, and
 can fail over before response bytes reach the client. Subscription tokens
@@ -1246,8 +1306,10 @@ remain subscription tokens; adding accounts does not enable API-key auth.</p>
 <p>Yes: <code>GET /v1/subscription/status?provider=claude</code> returns the 5-hour and
 weekly windows in the same normalized shape as OpenAI usage. The desktop
 app shows per-account usage in the OpenAI and Anthropic cards. Use <strong>?</strong> beside
-an account name for details. See
-<a href="../subscription-status/">Subscription Status</a>.</p>
+an account name for details. Readings come from each profile's Claude Code
+(<code>get_usage</code>, verified with 2.1.292+) every five minutes and are marked stale
+with a reason when Claude returns no live data. Setup-token accounts report
+no usage. See <a href="../subscription-status/">Subscription Status</a>.</p>
 <h2 id="is-using-my-subscription-through-airelays-allowed-by-the-providers">Is using my subscription through AIRelays allowed by the providers?<a class="headerlink" href="#is-using-my-subscription-through-airelays-allowed-by-the-providers" title="Permanent link">&para;</a></h2>
 <p>AIRelays does not certify that your use is permitted. Personal, local, or
 noncommercial use and a successful login do not by themselves establish

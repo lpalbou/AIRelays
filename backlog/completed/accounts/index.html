@@ -753,6 +753,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../adr/0007-relay-owned-claude-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Relay-Owned Claude Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -858,19 +886,22 @@
 evidence-driven router: charge spreads across every account with capacity
 by default, exhausted accounts are benched and released on fresh usage
 evidence, and account-scoped failures fail over instead of failing the
-request.</p>
+request. Item 0020 records which accounts the Claude pool may
+use and where its usage readings come from.</p>
 <h2 id="completed-items">Completed Items<a class="headerlink" href="#completed-items" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="0012_balanced_multi_account_routing_and_pool_hardening/">0012_balanced_multi_account_routing_and_pool_hardening.md</a>: round-robin default, evidence-gated benching, failover classification, launch-time warm-up.</li>
 <li><a href="0013_openai_usage_probe_caching_and_single_flight/">0013_openai_usage_probe_caching_and_single_flight.md</a>: TTL cache, single-flight, and a background refresher for the usage probes.</li>
 <li><a href="0016_capacity_aware_balanced_routing/">0016_capacity_aware_balanced_routing.md</a>: the "balanced" default — route by remaining short-window quota so plans of different sizes deplete proportionally.</li>
 <li><a href="0019_longest_window_balancing_and_weekly_tally/">0019_longest_window_balancing_and_weekly_tally.md</a>: windows identified by duration, balancing and the token tally keyed to each account's longest (weekly) window after the upstream payload became plan-dependent.</li>
+<li><a href="0020_relay_owned_claude_accounts/">0020_relay_owned_claude_accounts.md</a>: Claude routes only through AIRelays-owned profiles and an optional setup token, never the personal Claude Code sign-in; usage comes from Claude Code's <code>get_usage</code>, with stale readings marked and never used for routing.</li>
 </ul>
 <h2 id="related-material">Related Material<a class="headerlink" href="#related-material" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../../architecture/">Architecture</a> (account pool lifecycle diagram)</li>
 <li><a href="../../../configuration/">Configuration</a> (<code>[providers.openai] balance</code>)</li>
 <li><a href="../../../faq/">FAQ</a> (account balancing entry)</li>
+<li><a href="../../../adr/0007-relay-owned-claude-accounts/">ADR 0007</a> (relay-owned Claude accounts)</li>
 </ul>
 
 

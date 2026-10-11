@@ -881,6 +881,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0007-relay-owned-claude-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Relay-Owned Claude Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1057,12 +1085,24 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <li>the runtime is stateless</li>
 <li>the runtime is local-only</li>
 </ul>
-<p>Claude accounts added through <code>airelays claude login</code> have separate CLI-owned
-credential stores. AIRelays stores identity metadata and usage state beside
-each profile; it does not implement OAuth login or refresh for these profiles.
-An ambient or stored default-account token cannot override their credentials.
-Signing out one isolated profile does not sign out other accounts. The legacy
-<code>default</code> profile is shared with other tools using that CLI sign-in.</p>
+<p>AIRelays uses only Claude accounts it owns: profiles added through
+<code>airelays claude login</code>, each with its own CLI-owned credential store, and an
+optional setup token stored 0600 by <code>airelays claude set-token</code>. The personal
+Claude Code sign-in, an inherited <code>CLAUDE_CONFIG_DIR</code>, and an inherited
+<code>CLAUDE_CODE_OAUTH_TOKEN</code> are never used. AIRelays stores identity metadata
+and usage state beside each profile. It never reads Claude credentials
+(no keychain or credential-file reads) and does not implement OAuth login or
+refresh; usage comes from Claude Code's <code>get_usage</code> request inside each
+profile. Signing out runs <code>claude auth logout</code> only inside that relay-owned
+profile, or deletes the stored setup token; it never signs out the personal
+Claude Code or other accounts.</p>
+<p>Every Claude Code process runs with an explicit environment, its profile's
+<code>CLAUDE_CONFIG_DIR</code>, and a relay-owned working directory. Processes are ended
+gracefully (stdin closed or SIGTERM before SIGKILL) so a token refresh in
+progress can finish. Claude Code still derives a few files from the home
+directory (for example device keys) regardless of <code>CLAUDE_CONFIG_DIR</code>. On
+macOS, run the relay in your login session, not over SSH or as a
+LaunchDaemon, so Claude Code can use the keychain.</p>
 <h2 id="rate-limits">Rate Limits<a class="headerlink" href="#rate-limits" title="Permanent link">&para;</a></h2>
 <p>Default single-process protections:</p>
 <ul>

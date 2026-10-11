@@ -947,6 +947,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0007-relay-owned-claude-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Relay-Owned Claude Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1258,7 +1286,7 @@ adaptation records when the request shape itself is repaired:</p>
 <p>Returns an OpenAI-style models list built from the enabled provider runtimes.</p>
 <ul>
 <li>OpenAI models come from the authenticated ChatGPT/Codex upstream catalog. The default client version setting, <code>auto</code>, follows the installed <code>codex --version</code>, with a tested version floor when the CLI is missing or older. Model names are not hard-coded into automatic discovery.</li>
-<li>Claude models come from the installed CLI's initialization catalog, including its alias resolutions and per-model reasoning modes. Discovery sends no generation prompt. Both <code>claude:*</code> aliases and discovered concrete <code>claude-*</code> ids are accepted.</li>
+<li>Claude models come from the installed CLI's initialization catalog, including its alias resolutions and per-model reasoning modes. Discovery sends no generation prompt. Both <code>claude:*</code> aliases and discovered concrete <code>claude-*</code> ids are accepted. No Claude models are listed until an AIRelays Claude account is connected.</li>
 <li>models starting with <code>claude:</code> or <code>claude-</code> route to the Claude runtime when it is enabled</li>
 <li>other model ids route to the OpenAI runtime when it is enabled</li>
 <li>Each model record includes an <code>airelays</code> extension block with provider identity, route capabilities, a <code>reasoning</code> block (<code>parameter</code>, supported <code>modes</code>, <code>default</code>), and a <code>structured_output</code> block (<code>parameter</code>, supported <code>types</code> for <code>response_format</code> on chat completions).</li>
@@ -1284,13 +1312,23 @@ upstream policy; only reported windows are returned.</p>
 <li><code>?provider=claude</code> returns Claude subscription usage in the same
   normalized shape (see <a href="../subscription-status/">Subscription Status</a>)</li>
 <li><code>?account=&lt;email-or-prefix&gt;</code> selects one enrolled OpenAI account</li>
-<li><code>?provider=claude&amp;account=&lt;email-or-id&gt;</code> selects one Claude account</li>
+<li><code>?provider=claude&amp;account=&lt;email-or-id&gt;</code> selects one Claude account; the
+  setup-token account (<code>default</code>) returns 422 <code>unsupported_for_provider</code>
+  because Claude reports no usage for setup tokens</li>
 <li><code>?all_accounts=true</code> returns the list shape with one entry per enrolled
   OpenAI account (an entry carries an <code>error</code> instead of a <code>status</code> when
   that account's usage probe fails)</li>
 <li><code>?raw=true</code> includes the raw upstream payload (OpenAI only)</li>
-<li><code>?provider=claude&amp;all_accounts=true</code> returns the same list shape for
-  Claude, keyed by stable account <code>slug</code>; a failed probe affects only its entry</li>
+<li><code>?provider=claude&amp;all_accounts=true</code> returns
+  <code>{"object": "subscription_status_list", "provider": "claude", "accounts": [...]}</code>,
+  keyed by stable account <code>slug</code>. Each entry has <code>slug</code>, <code>email</code>, and one of
+  <code>status</code>, <code>error</code>, or <code>usage_unsupported</code> (the setup-token account); a
+  failed reading affects only its entry</li>
+<li>Claude readings come from each profile's Claude Code (<code>get_usage</code>). A
+  reading without live data keeps the last good values with <code>stale: true</code>, its
+  age, and <code>stale_reason</code> (<code>usage_unavailable</code>,
+  <code>nonessential_traffic_disabled</code>, <code>cli_unsupported</code>, <code>cli_failed</code>). Without
+  any good reading, the account reports an error message instead of numbers</li>
 </ul>
 <p><code>GET /v1/account/rate_limits</code> is an alias.</p>
 <h2 id="post-v1relayaccountsrefresh"><code>POST /v1/relay/accounts/refresh</code><a class="headerlink" href="#post-v1relayaccountsrefresh" title="Permanent link">&para;</a></h2>
@@ -1301,17 +1339,19 @@ so live traffic can never slip onto a still-exhausted account during the
 re-check. Use it when you know an account has recovered and don't want to
 wait for the scheduled reset. CLI equivalent: <code>airelays accounts refresh</code>.</p>
 <p>With <code>?provider=claude</code>, refreshes Claude account usage while respecting each
-account's cached observations and upstream cooldown. It never bypasses a
-usage-endpoint <code>Retry-After</code>.</p>
+account's cached readings and persisted backoff.</p>
 <h2 id="get-v1relaystatus"><code>GET /v1/relay/status</code><a class="headerlink" href="#get-v1relaystatus" title="Permanent link">&para;</a></h2>
 <p>Returns relay diagnostics, provider readiness, provider cache status, and
 <code>requests_total</code> — the count of real (non-monitoring) requests served by
 this process, usable as a lightweight activity signal. OpenAI model-list
 cache diagnostics live under <code>providers.openai.models_cache</code>.</p>
-<p><code>providers.claude.accounts</code> lists Claude profiles with their <code>slug</code>, email,
-readiness, <code>managed_profile</code>, and request cooldown. <code>providers.claude.balance</code>
-reports their selection strategy. Duplicate subscriptions are counted once;
-an account whose identity differs from its enrollment is not eligible.</p>
+<p><code>providers.claude.accounts</code> lists AIRelays-owned Claude accounts with their
+<code>slug</code>, email, readiness, <code>managed_profile</code>, <code>oauth_token_source</code>, and request
+cooldown. <code>managed_profile</code> is <code>false</code> only for the setup-token account;
+<code>oauth_token_source</code> is <code>profile</code> or <code>file</code>. <code>providers.claude.balance</code> reports their selection
+strategy. A second ready profile of the same subscription carries
+<code>duplicate_of</code> and is counted once; an account whose identity differs from its
+enrollment is not eligible.</p>
 <p><code>GET /v1/relay/status?activity_only=true</code> returns only
 <code>{"requests_total": N}</code>. It requires the same authentication as the full
 status, but it does not scan storage or probe providers, is not itself
@@ -1321,9 +1361,11 @@ clients such as the desktop tray can poll it frequently.</p>
 <p><code>airelays status</code> reports local config, relay-token, and provider readiness
 state. <code>airelays doctor</code> runs the same local checks and also probes the OpenAI
 upstream <code>/models</code> route plus a tiny <code>/responses</code> smoke request when the OpenAI
-runtime is enabled and logged in. Use <code>airelays doctor --skip-response</code> to skip
-the response smoke request. <code>airelays models</code> lists every model id the running
-relay accepts, grouped by provider (<code>--json</code> supported).</p>
+runtime is enabled and logged in, and reports a <code>CLAUDE_CODE_OAUTH_TOKEN</code> set in
+the relay's environment, which AIRelays ignores. Use
+<code>airelays doctor --skip-response</code> to skip the response smoke request.
+<code>airelays models</code> lists every model id the running relay accepts, grouped by
+provider (<code>--json</code> supported).</p>
 <h2 id="post-v1responses"><code>POST /v1/responses</code><a class="headerlink" href="#post-v1responses" title="Permanent link">&para;</a></h2>
 <p>OpenAI runtime:</p>
 <ul>
@@ -1381,6 +1423,10 @@ relay accepts, grouped by provider (<code>--json</code> supported).</p>
 <li>sampling parameters stripped and disclosed via
   <code>x-airelays-ignored-parameters</code> (the <code>claude</code> CLI has no sampling
   controls); other unsupported generation controls rejected locally</li>
+<li>with no AIRelays Claude account connected, <code>claude:*</code> requests (here and
+  on <code>/v1/completions</code>) return 503 <code>provider_auth_error</code>: "No Claude account
+  is connected to AIRelays. Run <code>airelays claude login</code> or
+  <code>airelays claude set-token</code>."</li>
 </ul>
 <h2 id="post-v1completions"><code>POST /v1/completions</code><a class="headerlink" href="#post-v1completions" title="Permanent link">&para;</a></h2>
 <p>OpenAI runtime:</p>

@@ -16,6 +16,8 @@
         <link rel="prev" href="../0005-bounded-traffic-log-retention/">
       
       
+        <link rel="next" href="../0007-relay-owned-claude-accounts/">
+      
       
         
       
@@ -859,6 +861,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0007-relay-owned-claude-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Relay-Owned Claude Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -970,6 +1000,9 @@
 <h1 id="0006-isolated-claude-subscription-accounts">0006: Isolated Claude Subscription Accounts<a class="headerlink" href="#0006-isolated-claude-subscription-accounts" title="Permanent link">&para;</a></h1>
 <h2 id="status">Status<a class="headerlink" href="#status" title="Permanent link">&para;</a></h2>
 <p>Accepted, 2026-09-26. Extends <a href="../0004-provider-runtime-boundary-and-experimental-local-adapters/">ADR 0004</a>.</p>
+<p>Amended 2026-10-10 by <a href="../0007-relay-owned-claude-accounts/">ADR 0007</a>: the ambient
+Claude Code sign-in is no longer an account, the <code>default</code> slug now names only
+the stored setup token, and usage comes from Claude Code itself.</p>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>One user may have several Claude subscriptions. Claude Code supports isolated
 configuration directories, including directory-scoped macOS Keychain entries.

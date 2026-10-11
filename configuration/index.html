@@ -870,6 +870,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0007-relay-owned-claude-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Relay-Owned Claude Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1079,6 +1107,10 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <li>logs dir: <code>~/.airelays/logs</code></li>
 <li>auth fallback file: <code>~/.airelays/auth.json</code></li>
 <li>relay token file: <code>~/.airelays/relay-token</code></li>
+<li>Claude account profiles: <code>~/.airelays/claude/accounts/&lt;id&gt;/</code> (metadata in
+  <code>account.json</code>; the adjacent <code>config/</code> is the profile's <code>CLAUDE_CONFIG_DIR</code>)</li>
+<li>Claude setup token: <code>~/.airelays/claude-token</code>, run from
+  <code>~/.airelays/claude/token/config</code></li>
 </ul>
 <p>Earlier singular AIRelay paths remain compatible for local upgrades.</p>
 <h2 id="sample-config">Sample Config<a class="headerlink" href="#sample-config" title="Permanent link">&para;</a></h2>
@@ -1160,6 +1192,7 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <span class="n">account_cooldown_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">300</span><span class="w">         </span><span class="c1"># fallback when no reset time is reported</span>
 <span class="n">strip_api_key_env</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="n">models</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"claude:sonnet"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:opus"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:haiku"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:fable"</span><span class="p">]</span>
+<span class="n">oauth_token_file</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"~/.airelays/claude-token"</span><span class="w">   </span><span class="c1"># written by `airelays claude set-token`</span>
 </code></pre></div>
 <h2 id="important-environment-variables">Important Environment Variables<a class="headerlink" href="#important-environment-variables" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1193,6 +1226,7 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <li><code>AIRELAYS_CLAUDE_MAX_CONCURRENT_REQUESTS</code></li>
 <li><code>AIRELAYS_CLAUDE_STRIP_API_KEY_ENV</code></li>
 <li><code>AIRELAYS_CLAUDE_MODELS</code></li>
+<li><code>AIRELAYS_CLAUDE_OAUTH_TOKEN_FILE</code> (setup-token file; default <code>~/.airelays/claude-token</code>)</li>
 </ul>
 <h2 id="relay-token-inputs">Relay Token Inputs<a class="headerlink" href="#relay-token-inputs" title="Permanent link">&para;</a></h2>
 <p>AIRelays resolves the relay token in this order:</p>
@@ -1241,11 +1275,11 @@ can select an older catalog.</p>
   to reload provider catalogs immediately</p>
 </li>
 <li>
-<p>enabled by default; set <code>[providers.claude].enabled = false</code> or <code>AIRELAYS_ENABLE_CLAUDE=false</code> to opt out (requests still require the local <code>claude</code> CLI to be installed and signed in)</p>
+<p>enabled by default; set <code>[providers.claude].enabled = false</code> or <code>AIRELAYS_ENABLE_CLAUDE=false</code> to opt out (requests still require the local <code>claude</code> CLI and at least one AIRelays Claude account)</p>
 </li>
 <li>uses the local <code>claude</code> CLI</li>
-<li><code>airelays claude login</code> adds an isolated account by delegating browser
-  authentication to <code>claude auth login --claudeai</code>; credentials remain CLI-owned</li>
+<li><code>airelays claude login</code> adds an isolated account by running Claude Code's
+  browser sign-in inside a new relay-owned profile; credentials remain CLI-owned</li>
 <li>each account has its own <code>CLAUDE_CONFIG_DIR</code>, usage cache, model catalog,
   and <code>max_concurrent_requests</code> limit</li>
 <li><code>balance</code> defaults to <code>balanced</code>: available execution slots first, then
@@ -1253,9 +1287,18 @@ can select an older catalog.</p>
   the first eligible profile in stable account-id order</li>
 <li><code>AIRELAYS_CLAUDE_BALANCE</code> and <code>AIRELAYS_CLAUDE_ACCOUNT_COOLDOWN_SECONDS</code>
   override the corresponding Claude configuration values</li>
-<li>the default CLI sign-in remains available; stored tokens and ambient
-  <code>CLAUDE_CODE_OAUTH_TOKEN</code> apply only to this default account</li>
-<li>headless login is handled by <code>claude setup-token</code> plus <code>CLAUDE_CODE_OAUTH_TOKEN</code></li>
+<li>headless login: <code>claude setup-token</code> on a machine with a browser, then
+  <code>airelays claude set-token</code>; the token is stored 0600 at <code>oauth_token_file</code>
+  and runs as the inference-only account <code>default</code> in its own relay-owned
+  configuration directory</li>
+<li>only AIRelays-owned accounts are used: the personal Claude Code sign-in
+  (<code>~/.claude</code>), an inherited <code>CLAUDE_CONFIG_DIR</code>, and <code>CLAUDE_CODE_OAUTH_TOKEN</code>
+  in the relay's environment are ignored</li>
+<li>every <code>claude</code> process gets an explicit environment, its profile's
+  <code>CLAUDE_CONFIG_DIR</code>, and a relay-owned working directory</li>
+<li>usage comes from Claude Code's <code>get_usage</code> (verified with 2.1.292+);
+  <code>CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC</code> in the relay's environment stops
+  it and marks readings <code>nonessential_traffic_disabled</code></li>
 <li>follows the relay's protected or open local auth mode</li>
 <li>requires loopback binding</li>
 </ul>

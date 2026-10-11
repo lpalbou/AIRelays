@@ -986,6 +986,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0007-relay-owned-claude-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Relay-Owned Claude Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1227,8 +1255,9 @@
 <ul>
 <li>The default runtime uses the ChatGPT Codex subscription backend and
   balances requests across every enrolled OpenAI account with capacity.</li>
-<li>The Claude account pool selects an isolated CLI profile for each local
-  <code>claude -p</code> subprocess. Claude Code owns authentication and token refresh.</li>
+<li>The Claude account pool selects an AIRelays-owned CLI profile for each
+  local <code>claude -p</code> subprocess. Claude Code owns authentication and token
+  refresh; the personal Claude Code sign-in is never used.</li>
 </ul>
 <div class="highlight"><pre><span></span><code>flowchart LR
     Client["OpenAI-compatible client"] --&gt;|"bearer token"| Edge
@@ -1274,9 +1303,35 @@ Claude remains stateless: there is no cross-request conversation affinity.</p>
 <p><code>airelay.claude_auth</code> owns enrollment metadata under
 <code>data_dir/claude/accounts/&lt;id&gt;/account.json</code>. Each adjacent <code>config/</code> directory
 is owned by Claude Code and stays at a stable path because macOS credentials
-are scoped to it. <code>airelay.claude_accounts</code> owns selection and failover;
-<code>ClaudeCliRuntime</code> owns per-profile execution, model discovery, and usage
-backoff. See <a href="../adr/0006-isolated-claude-subscription-accounts/">the profile decision</a>.</p>
+are scoped to it. The optional setup token (<code>data_dir/claude-token</code>) is the
+inference-only account <code>default</code>, run from its own relay-owned
+<code>data_dir/claude/token/config</code>. The ambient Claude Code sign-in, an inherited
+<code>CLAUDE_CONFIG_DIR</code>, and <code>CLAUDE_CODE_OAUTH_TOKEN</code> are not accounts.
+<code>airelay.claude_accounts</code> owns selection and failover; <code>ClaudeCliRuntime</code> owns
+per-profile execution, model discovery, and usage backoff.</p>
+<p>Usage readings come from the profile's own CLI through the Claude Code SDK
+<code>get_usage</code> control request, at startup and every five minutes; AIRelays never
+reads Claude credentials. Claude Code renews the profile's token while
+answering, which keeps idle profiles signed in. A reading without live data
+keeps the last good one, marked stale, and failures back off up to 60 minutes,
+persisted across restarts. Every Claude Code process gets an explicit
+environment, its profile's <code>CLAUDE_CONFIG_DIR</code>, and a relay-owned working
+directory, and is ended gracefully (stdin closed or SIGTERM before SIGKILL).
+See <a href="../adr/0006-isolated-claude-subscription-accounts/">the profile decision</a>
+and <a href="../adr/0007-relay-owned-claude-accounts/">relay-owned accounts</a>.</p>
+<div class="highlight"><pre><span></span><code>flowchart LR
+    Pool["Claude account pool\nselection · cooldown · failover"]
+    Pool --&gt; Profile["Browser profile runtime\nCLAUDE_CONFIG_DIR: claude/accounts/ID/config"]
+    Pool --&gt; Token["Setup-token runtime (default)\nCLAUDE_CONFIG_DIR: claude/token/config"]
+    Profile --&gt;|"claude -p (requests)"| CLI1["claude CLI\nprofile credentials"]
+    Refresh["Usage refresh\nstartup · every 5 min"] --&gt;|"get_usage control request\n(no prompt)"| CLI1
+    CLI1 --&gt;|"renews OAuth token\nlive limits"| Refresh
+    Token --&gt;|"claude -p (requests)"| CLI2["claude CLI\ninference only"]
+    CLI1 --&gt; Anthropic["Claude subscription"]
+    CLI2 --&gt; Anthropic
+</code></pre></div>
+<p>The personal Claude Code sign-in (<code>~/.claude</code>) is not part of this picture:
+AIRelays never reads it, routes through it, or signs it out.</p>
 <h2 id="openai-account-pool-lifecycle">OpenAI Account Pool Lifecycle<a class="headerlink" href="#openai-account-pool-lifecycle" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>stateDiagram-v2
     [*] --&gt; Probing: relay starts (2+ accounts)

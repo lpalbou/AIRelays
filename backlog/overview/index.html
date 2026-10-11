@@ -753,6 +753,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/0007-relay-owned-claude-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Relay-Owned Claude Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -912,7 +940,7 @@
 <ul>
 <li>Planned: 0</li>
 <li>Proposed: 3</li>
-<li>Completed: 7</li>
+<li>Completed: 8</li>
 <li>Deprecated: 1</li>
 <li>Recurrent: 0</li>
 </ul>
@@ -941,6 +969,7 @@
 <li><a href="../completed/accounts/0013_openai_usage_probe_caching_and_single_flight/">0013_openai_usage_probe_caching_and_single_flight.md</a></li>
 <li><a href="../completed/accounts/0016_capacity_aware_balanced_routing/">0016_capacity_aware_balanced_routing.md</a></li>
 <li><a href="../completed/accounts/0019_longest_window_balancing_and_weekly_tally/">0019_longest_window_balancing_and_weekly_tally.md</a></li>
+<li><a href="../completed/accounts/0020_relay_owned_claude_accounts/">0020_relay_owned_claude_accounts.md</a></li>
 </ul>
 <table>
 <thead>
@@ -1025,6 +1054,16 @@
 <td>Completed</td>
 <td>Windows identified by duration after the upstream payload became plan-dependent; balancing and the "more" token tally key on each account's longest (weekly) window; fabricated idle 5h row removed.</td>
 <td>Two-agent adversarial pass; <code>pytest -q</code> (208, 15 new); Playwright mock render; live check after install</td>
+</tr>
+<tr>
+<td>0020</td>
+<td>Relay-owned Claude accounts and CLI-sourced usage</td>
+<td>(worked directly; recorded post-completion)</td>
+<td><code>docs/backlog/completed/accounts/0020_relay_owned_claude_accounts.md</code></td>
+<td>2026-10-10</td>
+<td>Completed</td>
+<td>Claude routes only through AIRelays-owned profiles and an optional inference-only setup token; the personal Claude Code sign-in is never used or signed out; usage comes from Claude Code's <code>get_usage</code> with stale readings marked and excluded from routing (ADR 0007).</td>
+<td><code>pytest</code> 417 passed; desktop browser, node and <code>cargo check</code> green; live <code>get_usage</code> check against a real profile</td>
 </tr>
 </tbody>
 </table>
