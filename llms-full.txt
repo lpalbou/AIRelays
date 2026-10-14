@@ -74,6 +74,38 @@ data directory on macOS, Linux and Windows; AIRelays does not use the OS
 keychain (ADR 0008). OpenAI sign-ins that 0.16.0 or earlier kept in the
 keychain need one new sign-in; `airelays doctor` lists them.
 
+Errors use OpenAI's error object (`{"error": {message, type, param, code}}`,
+with a `detail` copy). Unknown models return 404 `model_not_found`; quota
+rejections carry `Retry-After`; Claude streams start only once the CLI
+produces output, so earlier failures are real HTTP errors. Non-empty `stop`,
+`logprobs`, `top_logprobs` and `logit_bias` are rejected with 422 because
+neither upstream honors them; `seed` is stripped and disclosed.
+`finish_reason` includes `content_filter`, and refusals are returned in
+`message.refusal`. `response_format` `json_object` works on GPT models (native JSON mode). Claude CLI failures are classified before any account is paused: request errors pause nothing, a model an account cannot serve pauses only that model there, and a rejected sign-in marks the account as needing a new sign-in; error messages name each account's state and the action to take. Parameters AIRelays does not recognize on chat and
+completions are dropped and listed in `x-airelays-ignored-parameters`;
+`web_search_options` and `moderation` are rejected. Every response carries
+`x-request-id`; upstream quota errors carry `Retry-After`; 501 responses tell
+SDKs not to retry.
+
+Chat accepts assistant `content: null` with `tool_calls`, OpenAI `file`
+content parts, `allowed_tools` tool choices, `verbosity` and
+`prompt_cache_key`, and the deprecated `functions` interface end to end
+(`message.function_call`, `finish_reason: "function_call"`). `json_schema`
+formats are rewritten to strict-mode form only with `strict: true`; otherwise
+they run with `strict: false`, OpenAI's default.
+Conversations keep their whole history: each turn sees every earlier
+successful turn (messages, client-answered calls, and reasoning with
+`encrypted_content`; local files stored as `file_id` references). `GET /v1/files` paginates like OpenAI (`after`, `limit`,
+`order`, `purpose`, `has_more`), uploads read `purpose` from the form field,
+and `GET /v1/models/{model}` returns one model.
+
+Chat and completions responses report `usage` in OpenAI's Chat Completions
+shape on both runtimes: `prompt_tokens` (cached tokens included, broken out in
+`prompt_tokens_details`), `completion_tokens`, `total_tokens`; usage is
+omitted when a provider reports none. With `stream_options.include_usage`,
+chunks carry `usage: null` and a final chunk with `choices: []` holds the
+usage. `/v1/responses` keeps the Responses API usage. See docs/api.md.
+
 AIRelays starts every `claude` process through one launcher: it finds
 `claude` on PATH and in the usual install locations (the path is used as
 found), or runs `[providers.claude].command` (`AIRELAYS_CLAUDE_COMMAND` as a
@@ -183,7 +215,7 @@ The verified upstream is the ChatGPT subscription backend, not the public platfo
 - `reasoning_effort` (chat) and `reasoning.effort` (responses) pass through verbatim to OpenAI models; on Claude models `reasoning_effort` maps to the CLI's `--effort` flag. Supported modes and defaults are read from provider catalogs when available and published in `/v1/models` under `airelays.reasoning`; they vary by model and can include `max` or `ultra`. Omitting effort uses the provider default; Claude can choose adaptively. An empty Claude modes list advertises no effort parameter.
 - `store=true`, `n>1`, and `best_of`/`echo`/`logprobs`/`suffix` are rejected loudly instead of silently adapted.
 - Failed upstream OpenAI calls are retried automatically with exponential backoff (default 3 retries, 5s/20s/60s; `retry_attempts = 0` disables) while no response byte has reached the client; each retry re-runs account failover. Final failures return OpenAI-shaped `{"error": {...}}` JSON with the real HTTP status and the upstream's own error code. After a stream has started, failures surface as an in-band `data: {"error": ...}` event (chat/completions) or verbatim `response.failed` events (responses passthrough).
-- Claude runtime: discovered `claude:*` aliases and concrete `claude-*` ids, plus configured overrides; text chat/completions only, stateless, loopback-only, no tools/files/images. Structured outputs are supported on chat completions: `response_format` `json_schema`/`json_object` map to the claude CLI's `--json-schema` (native enforcement); supported types per model are published in `/v1/models` under `airelays.structured_output`.
+- Claude runtime: discovered `claude:*` aliases and concrete `claude-*` ids, plus configured overrides; text chat/completions only, stateless, loopback-only, no tools/files/images. Structured outputs are supported on chat completions: `response_format` `json_schema` maps to the claude CLI's `--json-schema` (native enforcement) and `json_object` answers are checked to be one JSON object; supported types per model are published in `/v1/models` under `airelays.structured_output`.
 
 ## Subscription Usage
 

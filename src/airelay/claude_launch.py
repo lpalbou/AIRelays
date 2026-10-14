@@ -290,6 +290,8 @@ def _inherited_streams() -> dict[str, Any]:
 
 
 _help_cache: dict[tuple[str, ...], bool] = {}
+_help_failures: dict[tuple[str, ...], float] = {}
+HELP_RETRY_SECONDS = 60.0
 _swept = False
 
 
@@ -400,8 +402,12 @@ class ClaudeLauncher:
             return False
         key = self.command.argv
         if key not in _help_cache:
+            # A failed probe is retried after a minute, not on every request.
+            if time.monotonic() - _help_failures.get(key, -HELP_RETRY_SECONDS) < HELP_RETRY_SECONDS:
+                return False
             text = await asyncio.to_thread(read_help, key, env, cwd)
             if not text:
+                _help_failures[key] = time.monotonic()
                 return False
             _help_cache[key] = bool(SYSTEM_PROMPT_FILE_FLAG.search(text))
         return _help_cache[key]

@@ -253,28 +253,41 @@ async def test_claude_runtime_maps_response_format_json_schema_to_the_cli(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_claude_runtime_maps_response_format_json_object_to_permissive_schema(tmp_path, monkeypatch) -> None:
-    """`json_object` promises "a valid JSON object" without a caller schema;
-    the equivalent native enforcement is the permissive object schema."""
+async def test_claude_json_mode_is_an_instruction_plus_a_local_check(tmp_path, monkeypatch) -> None:
+    """`json_object` is not a CLI schema (a schema naming no fields makes
+    haiku models answer `{}`): the system prompt asks for one JSON object and
+    the answer is checked, with a surrounding code fence removed."""
     runtime = ClaudeCliRuntime(make_settings(tmp_path))
     captured: dict[str, object] = {}
+    answers = iter(['```json\n{"ok": true}\n```', "Sure! Here it is."])
 
     async def fake_run_json(request, request_id):
         captured["request"] = request
-        return {"result": "{\"ok\": true}", "structured_output": {"ok": True}, "stop_reason": "tool_use"}
+        return {"result": next(answers), "stop_reason": "end_turn"}
 
     monkeypatch.setattr(runtime, "_run_json", fake_run_json)
-    await runtime.create_chat_completion(
-        {
-            "model": "claude:sonnet",
-            "messages": [{"role": "user", "content": "Reply in JSON."}],
-            "response_format": {"type": "json_object"},
-        },
-        "req_1",
-    )
-    import json as _json
+    body = {"model": "claude:sonnet", "messages": [{"role": "system", "content": "Be brief."},
+                                                     {"role": "user", "content": "Reply in JSON."}],
+            "response_format": {"type": "json_object"}}
+    payload = await runtime.create_chat_completion(body, "req_1")
+    request = captured["request"]
+    assert request.output_schema is None and request.json_mode
+    assert request.system_prompt.startswith("Be brief.") and "single valid JSON object" in request.system_prompt
+    assert payload["choices"][0]["message"]["content"] == '{"ok": true}'
+    with pytest.raises(ProviderError) as error:
+        await runtime.create_chat_completion(body, "req_2")
+    assert error.value.code == "invalid_json_output" and "Sure! Here it is." in error.value.detail
 
-    assert _json.loads(captured["request"].output_schema) == {"type": "object"}
+
+def test_claude_requests_always_carry_a_system_prompt(tmp_path) -> None:
+    """Without one the CLI applies Claude Code's own agent prompt (about
+    3,000 tokens), which an OpenAI-compatible request must not carry."""
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    chat = runtime._prepare_chat_request({"model": "claude:sonnet", "messages": [{"role": "user", "content": "hi"}]})
+    completion = runtime._prepare_completion_request({"model": "claude:sonnet", "prompt": "hi"})
+    for request in (chat, completion):
+        command = runtime._build_command(request, stream=False)
+        assert command[command.index("--system-prompt") + 1] == "."
 
 
 @pytest.mark.asyncio
@@ -375,7 +388,7 @@ async def test_claude_stream_with_schema_streams_only_the_enforced_json(tmp_path
             "model": "claude:sonnet",
             "messages": [{"role": "user", "content": "Rate it."}],
             "stream": True,
-            "response_format": {"type": "json_object"},
+            "response_format": {"type": "json_schema", "json_schema": {"name": "r", "schema": {"type": "object"}}},
         },
         "req_1",
     ):
@@ -417,7 +430,7 @@ async def test_claude_stream_with_schema_falls_back_to_the_result_envelope(tmp_p
             "model": "claude:sonnet",
             "messages": [{"role": "user", "content": "Rate it."}],
             "stream": True,
-            "response_format": {"type": "json_object"},
+            "response_format": {"type": "json_schema", "json_schema": {"name": "r", "schema": {"type": "object"}}},
         },
         "req_1",
     ):
@@ -506,7 +519,7 @@ async def test_claude_runtime_never_serves_prose_as_enforced_json(tmp_path, monk
             {
                 "model": "claude:sonnet",
                 "messages": [{"role": "user", "content": "Rate it."}],
-                "response_format": {"type": "json_object"},
+                "response_format": {"type": "json_schema", "json_schema": {"name": "r", "schema": {"type": "object"}}},
             },
             "req_1",
         )
@@ -538,7 +551,7 @@ async def test_claude_stream_surfaces_cli_error_envelopes_instead_of_content(tmp
                 "model": "claude:sonnet",
                 "messages": [{"role": "user", "content": "Rate it."}],
                 "stream": True,
-                "response_format": {"type": "json_object"},
+                "response_format": {"type": "json_schema", "json_schema": {"name": "r", "schema": {"type": "object"}}},
             },
             "req_1",
         ):
@@ -637,7 +650,7 @@ async def test_claude_end_to_end_streaming_json_schema_through_a_real_subprocess
             "model": "claude:sonnet",
             "messages": [{"role": "user", "content": "Rate it."}],
             "stream": True,
-            "response_format": {"type": "json_object"},
+            "response_format": {"type": "json_schema", "json_schema": {"name": "r", "schema": {"type": "object"}}},
             "stream_options": {"include_usage": True},
         },
         "req_e2e_stream",
@@ -667,7 +680,7 @@ def test_model_records_expose_structured_output_types(tmp_path) -> None:
     from airelay.providers import _openai_model_record
 
     openai_wire = _openai_model_record("gpt-5.5").as_wire()
-    assert openai_wire["airelays"]["structured_output"]["types"] == ["json_schema"]
+    assert openai_wire["airelays"]["structured_output"]["types"] == ["json_schema", "json_object"]
 
 
 def test_model_records_expose_reasoning_modes(tmp_path) -> None:
@@ -735,7 +748,7 @@ async def test_claude_runtime_rejects_response_format_on_completions_route(tmp_p
             {
                 "model": "claude:sonnet",
                 "prompt": "hello",
-                "response_format": {"type": "json_object"},
+                "response_format": {"type": "json_schema", "json_schema": {"name": "r", "schema": {"type": "object"}}},
             },
             "req_123",
         )
@@ -1183,3 +1196,48 @@ def test_refresh_stale_windows_clears_rolled_over_state() -> None:
     # A future window that is not maxed clears the account-level limit flag.
     assert snapshot["rate_limit_reached_type"] is None
     assert snapshot["rate_limits"]["default"]["limit_reached"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pieces, expected", [
+    (["```json\n", '{"a": ', "1}", "\n```"], '{"a": 1}'),
+    (["I can't do that."], None),
+])
+async def test_claude_stream_json_mode_sends_one_checked_answer(tmp_path, monkeypatch, pieces, expected) -> None:
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+
+    async def fake_stream(request, request_id):
+        for piece in pieces:
+            yield {"type": "stream_event", "event": {"type": "content_block_delta",
+                                                     "delta": {"type": "text_delta", "text": piece}}}
+        yield {"type": "result", "result": "".join(pieces), "stop_reason": "end_turn",
+               "usage": {"input_tokens": 3, "output_tokens": 5}}
+
+    monkeypatch.setattr(runtime, "_run_stream", fake_stream)
+    body = {"model": "claude:sonnet", "messages": [{"role": "user", "content": "JSON please"}], "stream": True,
+            "response_format": {"type": "json_object"}}
+    if expected is None:
+        with pytest.raises(ProviderError, match="valid JSON object"):
+            [chunk async for chunk in runtime.stream_chat_completion(body, "req_1")]
+        return
+    chunks = _collect_stream_chunks([chunk async for chunk in runtime.stream_chat_completion(body, "req_1")])
+    contents = [c["choices"][0]["delta"]["content"] for c in chunks if c["choices"] and c["choices"][0]["delta"].get("content")]
+    assert contents == [expected]
+
+
+@pytest.mark.parametrize("text, expected", [
+    ('{"a": NaN}', None), ('{"a": Infinity}', None), ("```JSON\n{\"a\": 1}\n```", '{"a": 1}'), ("[1, 2]", None),
+])
+def test_json_mode_accepts_only_one_strict_json_object(text, expected) -> None:
+    from airelay.providers import _json_object_text
+
+    assert _json_object_text(text) == expected
+
+
+def test_json_mode_returns_refusals_and_cut_answers_as_is() -> None:
+    from airelay.providers import _json_mode_answer
+
+    assert _json_mode_answer("I can't help with that.", "content_filter") == "I can't help with that."
+    assert _json_mode_answer('{"a": ', "length") == '{"a": '
+    with pytest.raises(ProviderError, match="valid JSON object"):
+        _json_mode_answer("I can't help with that.", "stop")

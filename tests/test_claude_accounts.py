@@ -430,7 +430,14 @@ def test_account_status_api_lists_independent_usage_failures(settings):
     ("API Error: 429 rate_limit_error", 429),
     ("You've hit your limit", 429),
     ("invalid_request_error: prompt is too long", 422),
-    ("overloaded_error", 502),
+    ("overloaded_error", 503),
+    # The request's own fault: never an account problem.
+    ("API Error: 400 Unable to download the file. Please verify the URL and try again.", 422),
+    ("API Error: 413 request_too_large", 413),
+    ("API Error: 404 not_found_error model: claude-x", 404),
+    ("API Error: 529 Overloaded", 503),
+    ("Not logged in · Please run /login", 401),
+    ("something unexpected", 502),
 ])
 def test_cli_errors_keep_account_vs_request_failure_distinction(detail, expected):
     assert _claude_failure(detail).status_code == expected
@@ -608,3 +615,130 @@ time.sleep(60)
     assert len(processes) == 1 and processes[0].returncode is not None
     assert all(a.in_flight == 0 for a in accounts(pool))
     assert all(a.runtime._semaphore._value == settings.claude_max_concurrent_requests for a in accounts(pool))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status, verdict", [(401, True), (403, True), (401, False), (401, None)])
+async def test_login_like_failures_are_checked_before_blaming_the_account(pool, settings, monkeypatch,
+                                                                          status, verdict):
+    """A login-like CLI failure is checked against Anthropic. A working
+    sign-in after a 401 is temporary (no pause); after a 403 only that model
+    pauses on that account; a rejected sign-in asks for a new sign-in (no
+    timer); an unknown answer pauses the account."""
+    settings.claude_balance = "ordered"
+    first, second = accounts(pool)
+    serve(monkeypatch, first, error=ProviderError(status, "Not logged in · Please run /login", code="provider_auth_error"))
+    serve(monkeypatch, second, "second")
+    checks = []
+
+    async def check_sign_in():
+        checks.append(1)
+        return verdict
+
+    monkeypatch.setattr(first.runtime, "check_sign_in", check_sign_in)
+    suspended = []
+    monkeypatch.setattr("airelay.claude_accounts.suspend_profile", lambda profile: suspended.append(profile.slug))
+    result = await pool.create_chat_completion(BODY, "login-like")
+    assert result["choices"][0]["message"]["content"] == "second" and checks == [1]
+    paused_model = first.model_blocked.get(BODY["model"], 0) > time.time()
+    assert paused_model is (status == 403 and verdict is True)
+    assert (first.blocked_until > time.time()) is (verdict is None)
+    assert suspended == ([first.runtime.profile.slug] if verdict is False else [])
+
+
+@pytest.mark.asyncio
+async def test_model_pause_keeps_other_models_and_explains_itself(pool, settings, monkeypatch):
+    settings.claude_balance = "ordered"
+    first, second = accounts(pool)
+    for account in (first, second):
+        serve(monkeypatch, account, error=ProviderError(403, "permission_error: model not enabled",
+                                                         code="provider_auth_error"))
+
+        async def works():
+            return True
+
+        monkeypatch.setattr(account.runtime, "check_sign_in", works)
+    with pytest.raises(ProviderError) as error:
+        await pool.create_chat_completion(BODY, "model-only")
+    assert error.value.status_code == 404 and error.value.code == "model_unavailable"
+    assert "sign-in works" in error.value.detail
+    assert first.blocked_until == 0 and second.blocked_until == 0
+    with pytest.raises(ProviderError) as again:
+        await pool.create_chat_completion(BODY, "still-paused")
+    assert again.value.code == "model_unavailable" and "is not available on this account" in again.value.detail
+    other = {**BODY, "model": "claude:opus"}
+    serve(monkeypatch, first, "opus works")
+    assert (await pool.create_chat_completion(other, "other-model"))["choices"][0]["message"]["content"] == "opus works"
+
+
+@pytest.mark.parametrize("detail, expected", [
+    # A number quoted inside the message never outranks the reported status.
+    ("API Error: 400 Unable to download the file: the server returned 403 Forbidden.", 422),
+    ("API Error: 400 image URL returned HTTP 401", 422),
+    ("Error at cli.js:401:17", 502),
+])
+def test_quoted_status_numbers_do_not_classify(detail, expected):
+    assert _claude_failure(detail).status_code == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer, expected", [
+    ({"rate_limits_available": True, "rate_limits": {}}, None),  # snapshot, not live: proves nothing
+    (ProviderError(502, "API Error: 401 authentication_error: OAuth token revoked"), False),
+    (ProviderError(502, "OAuth token refresh failed"), None),  # ambiguous: never suspend
+])
+async def test_sign_in_check_needs_live_evidence(pool, monkeypatch, answer, expected):
+    runtime = accounts(pool)[0].runtime
+
+    async def control(request, **kwargs):
+        if isinstance(answer, ProviderError):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(runtime, "_control_request", control)
+    assert await runtime.check_sign_in() is expected
+
+
+@pytest.mark.asyncio
+async def test_sign_in_verdict_applies_even_if_the_request_is_cancelled(pool, monkeypatch):
+    first = accounts(pool)[0]
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_check():
+        started.set()
+        await release.wait()
+        return None
+
+    monkeypatch.setattr(first.runtime, "check_sign_in", slow_check)
+    waiter = asyncio.create_task(pool._check_sign_in(first, "cancelled"))
+    await started.wait()
+    waiter.cancel()
+    release.set()
+    await asyncio.sleep(0.05)
+    assert first.blocked_until > time.time()
+
+
+@pytest.mark.asyncio
+async def test_request_errors_from_the_cli_never_pause_accounts(pool, settings, monkeypatch):
+    settings.claude_balance = "ordered"
+    first, second = accounts(pool)
+    bad_url = _claude_failure("API Error: 400 Unable to download the file. Please verify the URL and try again.")
+    serve(monkeypatch, first, error=bad_url)
+    serve(monkeypatch, second, "must not run")
+    with pytest.raises(ProviderError) as error:
+        await pool.create_chat_completion(BODY, "bad-url")
+    assert error.value.status_code == 422 and first.blocked_until == 0 and second.last_selected == 0
+
+
+@pytest.mark.asyncio
+async def test_invalid_json_answers_never_pause_or_rotate(pool, settings, monkeypatch):
+    """A JSON-mode answer that is not JSON is the model's answer, not an
+    account problem: no pause and no second account."""
+    settings.claude_balance = "ordered"
+    first, second = accounts(pool)
+    serve(monkeypatch, first, error=ProviderError(502, "not JSON", code="invalid_json_output"))
+    serve(monkeypatch, second, "must not run")
+    with pytest.raises(ProviderError) as error:
+        await pool.create_chat_completion(BODY, "bad-json")
+    assert error.value.code == "invalid_json_output"
+    assert first.blocked_until == 0 and second.last_selected == 0

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import tempfile
 import time
@@ -10,9 +11,12 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
+from urllib.parse import quote
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from airelay import __version__
 from airelay.accounts import build_pool
@@ -27,25 +31,46 @@ from airelay.backend import (
     stream_error_object,
 )
 from airelay.config import APP_NAME, Settings
+from airelay.conversations import ConversationTurn
 from airelay.html import render_home
-from airelay.providers import ProviderError, ProviderRegistry
+from airelay.providers import (
+    CLAUDE_CHAT_PARAMETERS,
+    CLAUDE_COMPLETION_PARAMETERS,
+    ProviderError,
+    ProviderRegistry,
+)
 from airelay.retry import RetryPolicy, retry_call
 from airelay.security import EndpointProtector
+from airelay.errors import error_body
 from airelay.store import AppStore
 from airelay.traffic import TrafficLogger, snapshot_body
 from airelay.transforms import (
+    CHAT_PARAMETERS,
+    COMPLETIONS_PARAMETERS,
+    expand_local_files,
+    is_responses_shape,
+    strip_unknown_parameters,
+    uses_legacy_functions,
     chat_route_request_to_responses,
     completion_chunk,
     completions_to_responses,
     strip_unsupported_response_parameters,
     TranslationError,
+    UnknownLocalFileError,
     chat_completion_chunk,
     chat_completions_to_responses,
+    normalize_conversation_items,
     normalize_subscription_status_payload,
     prepare_response_request,
     response_item_to_chat_tool_call,
     responses_to_completion,
     responses_to_chat_completion,
+    completion_usage_from_responses,
+    created_timestamp,
+    incomplete_finish_reason,
+    reject_unhonored_parameters,
+    stream_include_usage,
+    usage_chunk,
 )
 
 
@@ -61,6 +86,14 @@ CHAT_ROUTE_RESPONSES_SHAPE_REASON = (
     "The chat route accepted a Responses-shaped request body and translated "
     "the response back to chat.completions for client compatibility."
 )
+
+# OpenAI SDKs retry 5xx responses; a 501 cannot succeed on retry.
+NOT_RETRYABLE = {"x-should-retry": "false"}
+
+MAX_DISCLOSURE_HEADER = 2048
+
+# Upload purposes OpenAI's files API accepts.
+FILE_PURPOSES = ("assistants", "batch", "fine-tune", "vision", "user_data", "evals")
 
 # Endpoints the desktop app and health checks poll continuously. Logging
 # them to the JSONL traffic log floods it and evicts real requests from the
@@ -91,6 +124,26 @@ def _stream_error_event(message: str, code: str) -> bytes:
     the response headers are already on the wire."""
     payload = {"error": {"message": message, "type": code, "param": None, "code": code}}
     return f"data: {json.dumps(payload, ensure_ascii=True)}\n\n".encode("utf-8")
+
+
+async def _first_chunk(stream: AsyncIterator[bytes]) -> bytes:
+    """Run a provider stream until its first chunk before the response
+    starts: account selection, quota, sign-in and CLI failures then reach
+    the client as real HTTP errors (retryable 429/503 with Retry-After)
+    instead of in-band errors behind a 200."""
+    try:
+        return await anext(stream)
+    except StopAsyncIteration:
+        raise ProviderError(502, "The Claude CLI ended without any output.", code="provider_failure") from None
+    except BaseException:
+        await stream.aclose()
+        raise
+
+
+async def _with_first(first: bytes, rest: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    yield first
+    async for chunk in rest:
+        yield chunk
 
 
 def _parse_event_data(event: SSEEvent) -> Any:
@@ -139,14 +192,29 @@ def _backend_error_payload(exc: BackendError) -> dict[str, Any]:
     except json.JSONDecodeError:
         parsed = None
     if isinstance(parsed, dict) and isinstance(parsed.get("error"), dict):
-        error = parsed["error"]
+        error = dict(parsed["error"])
     if error is None:
-        error = {"message": detail, "type": "upstream_error", "code": None}
+        # e.g. {"detail": "Unsupported parameter: stop"}: surface the message.
+        message = parsed.get("detail") if isinstance(parsed, dict) else None
+        error = {"message": message if isinstance(message, str) and message else detail,
+                 "type": "upstream_error", "code": None}
+    error.setdefault("type", "upstream_error")
+    error.setdefault("param", None)
+    error.setdefault("code", None)
     message = error.get("message")
     return {
         "error": error,
         "detail": message if isinstance(message, str) and message else detail,
     }
+
+
+class _ApiError(HTTPException):
+    """An HTTP error that keeps its machine-readable OpenAI error `code`."""
+
+    def __init__(self, status_code: int, detail: str, *, code: str | None = None,
+                 headers: dict[str, str] | None = None) -> None:
+        super().__init__(status_code=status_code, detail=detail, headers=headers)
+        self.code = code
 
 
 def _http_error(exc: Exception) -> Exception:
@@ -162,12 +230,25 @@ def _http_error(exc: Exception) -> Exception:
         # error body instead of FastAPI's {"detail": ...} envelope.
         return exc
     if isinstance(exc, ProviderError):
-        return HTTPException(status_code=exc.status_code, detail=exc.detail)
+        status = exc.status_code
+        # A Claude CLI sign-in problem is the relay's, not the caller's API
+        # key: 401 would tell OpenAI clients their own credentials are bad.
+        headers: dict[str, str] = {}
+        if exc.code == "provider_auth_error":
+            status = 503
+            # Retrying cannot sign the CLI in; tell OpenAI SDKs not to.
+            headers["x-should-retry"] = "false"
+        if exc.retry_after_seconds and status in (429, 503):
+            headers["Retry-After"] = str(max(1, math.ceil(exc.retry_after_seconds)))
+            if exc.retry_after_seconds > 60:
+                # OpenAI SDKs would retry on a short backoff; a wait this long cannot be met.
+                headers["x-should-retry"] = "false"
+        return _ApiError(status, exc.detail, code=exc.code, headers=headers or None)
     if isinstance(exc, AuthenticationError):
         return exc
     if isinstance(exc, TranslationError):
-        return HTTPException(status_code=422, detail=str(exc))
-    raise HTTPException(status_code=500, detail=str(exc))
+        return _ApiError(422, str(exc))
+    raise _ApiError(500, str(exc))
 
 
 def _file_sha256(data: bytes) -> str:
@@ -299,13 +380,9 @@ def create_app(settings: Settings) -> FastAPI:
             headers = {"x-airelays-upstream-auth": "account_mismatch"}
         elif code == "upstream_auth_rejected":
             headers = {"x-airelays-upstream-auth": "rejected"}
-        payload = {
-            "error": {
-                "message": message,
-                "type": "authentication_error",
-                "code": code,
-            }
-        }
+        payload = error_body(message, status_code=503, code=code, type_="authentication_error")
+        # Retrying cannot repair a missing or expired sign-in.
+        headers = {**(headers or {}), "x-should-retry": "false"}
         return 503, payload, headers
 
     @app.exception_handler(AuthenticationError)
@@ -317,19 +394,54 @@ def create_app(settings: Settings) -> FastAPI:
     @app.exception_handler(BackendError)
     async def backend_error_handler(request: Request, exc: BackendError) -> JSONResponse:
         request_id = _request_id(request)
-        return logged_json(request_id, _backend_error_payload(exc), status_code=exc.status_code)
+        payload = _backend_error_payload(exc)
+        resets = payload["error"].get("resets_in_seconds")
+        headers = None
+        if (exc.status_code in (429, 503) and isinstance(resets, (int, float))
+                and not isinstance(resets, bool) and resets > 0):
+            # OpenAI SDKs wait this long, or give up when it exceeds their
+            # retry ceiling, instead of retrying a spent quota blindly.
+            headers = {"Retry-After": str(max(1, math.ceil(resets)))}
+        return logged_json(request_id, payload, status_code=exc.status_code, headers=headers)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        request_id = _request_id(request)
+        message = "; ".join(f"{'.'.join(str(p) for p in error.get('loc', ()))}: {error.get('msg')}"
+                            for error in exc.errors()) or "Invalid request."
+        return logged_json(request_id, error_body(message, status_code=422), status_code=422)
+
+    @app.exception_handler(Exception)
+    async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        # Runs outside the HTTP middleware, so it sets x-request-id itself.
+        request_id = _request_id(request)
+        return logged_json(request_id, error_body(f"Internal error: {exc}", status_code=500), status_code=500,
+                           headers={"x-request-id": request_id})
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        # Every remaining error (validation, unknown model, unknown route...)
+        # in OpenAI's error shape.
+        request_id = _request_id(request)
+        detail = exc.detail if isinstance(exc.detail, str) else json.dumps(exc.detail)
+        payload = error_body(detail, status_code=exc.status_code, code=getattr(exc, "code", None))
+        headers = dict(getattr(exc, "headers", None) or {})
+        if exc.status_code == 501:
+            headers.update(NOT_RETRYABLE)
+        return logged_json(request_id, payload, status_code=exc.status_code, headers=headers or None)
 
     @app.middleware("http")
     async def guard_requests(request: Request, call_next):  # type: ignore[no-untyped-def]
         request_id = _request_id(request)
         lease, rejection = protector.acquire(request_id, request)
         request.state.client_ip = lease.client_ip
-        if rejection is not None:
-            return rejection
         try:
-            return await call_next(request)
+            response = rejection if rejection is not None else await call_next(request)
         finally:
             protector.release(lease)
+        # OpenAI SDKs surface this as the error/response `request_id`.
+        response.headers["x-request-id"] = request_id
+        return response
 
     # Count of real (non-monitoring) requests served by this process. The
     # desktop reads it from /v1/relay/status to blink the tray on activity.
@@ -364,9 +476,12 @@ def create_app(settings: Settings) -> FastAPI:
     def _adaptation_headers(ignored_parameters: list[str]) -> dict[str, str]:
         if not ignored_parameters:
             return {}
-        return {
-            "x-airelays-ignored-parameters": ",".join(ignored_parameters),
-        }
+        # Names come from client JSON keys: percent-encoded so any key is a
+        # valid header value, and capped (the traffic log keeps them all).
+        listed = ",".join(quote(name, safe="_-.") for name in ignored_parameters)
+        if len(listed) > MAX_DISCLOSURE_HEADER:
+            listed = listed[:MAX_DISCLOSURE_HEADER].rsplit(",", 1)[0] + ",..."
+        return {"x-airelays-ignored-parameters": listed}
 
     def log_adaptation(
         request_id: str,
@@ -462,6 +577,26 @@ def create_app(settings: Settings) -> FastAPI:
                 detail="This route is currently available only when the OpenAI runtime is enabled.",
             )
 
+    def begin_turn(conversation_id: str | None, payload: dict[str, Any]) -> ConversationTurn | None:
+        """Attach the conversation history, then inline local files into the
+        final upstream input (the history keeps file references)."""
+        try:
+            turn = ConversationTurn.begin(store, conversation_id, payload)
+        except KeyError as exc:
+            raise _ApiError(404, f"Unknown conversation id `{conversation_id}`.") from exc
+        try:
+            expand_local_files(payload, store)
+        except UnknownLocalFileError as exc:
+            if turn is None:
+                raise
+            # The turn's own files were checked during translation, so the
+            # missing one is in the stored history.
+            raise TranslationError(
+                f"Conversation `{conversation_id}` references the deleted file `{exc.file_id}` and cannot "
+                "continue; start a new conversation."
+            ) from exc
+        return turn
+
     async def collect_response_with_retry(
         payload: dict[str, Any],
         request_id: str,
@@ -540,6 +675,17 @@ def create_app(settings: Settings) -> FastAPI:
         await log_inbound(request_id, request, b"")
         try:
             payload = await providers.list_models(request_id, refresh=refresh)
+        except Exception as exc:  # noqa: BLE001
+            raise _http_error(exc) from exc
+        return logged_json(request_id, payload)
+
+    @app.get("/v1/models/{model_id:path}")
+    @app.get("/no-tools/v1/models/{model_id:path}")
+    async def retrieve_model(model_id: str, request: Request) -> JSONResponse:
+        request_id = _request_id(request)
+        await log_inbound(request_id, request, b"")
+        try:
+            payload = await providers.retrieve_model(model_id, request_id)
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
         return logged_json(request_id, payload)
@@ -707,9 +853,14 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(status_code=503, detail=f"Cannot save log retention: {error}") from error
 
     @app.post("/v1/files")
-    async def upload_file(request: Request, file: UploadFile = File(...), purpose: str = "assistants") -> JSONResponse:
+    async def upload_file(request: Request, file: UploadFile = File(...),
+                          purpose: str = Form("assistants")) -> JSONResponse:
         require_openai_runtime()
         request_id = _request_id(request)
+        if purpose not in FILE_PURPOSES:
+            raise _ApiError(422, f"`purpose` must be one of: {', '.join(FILE_PURPOSES)}.")
+        if any(key.startswith("expires_after") for key in (await request.form()).keys()):
+            raise _ApiError(422, "`expires_after` is not supported; delete files with `DELETE /v1/files/{file_id}`.")
         content_type = file.content_type or "application/octet-stream"
         filename = file.filename or "upload.bin"
         chunk_size = 1024 * 1024
@@ -784,11 +935,26 @@ def create_app(settings: Settings) -> FastAPI:
                 temp_path.unlink()
 
     @app.get("/v1/files")
-    async def list_files(request: Request) -> JSONResponse:
+    async def list_files(request: Request, after: str | None = None, limit: int = 10_000,
+                         order: str = "desc", purpose: str | None = None) -> JSONResponse:
         require_openai_runtime()
         request_id = _request_id(request)
         await log_inbound(request_id, request, b"")
-        payload = {"object": "list", "data": store.list_files()}
+        if not 1 <= limit <= 10_000:
+            raise _ApiError(422, "`limit` must be between 1 and 10000.")
+        if order not in ("asc", "desc"):
+            raise _ApiError(422, "`order` must be `asc` or `desc`.")
+        try:
+            files, has_more = store.list_files(after=after, limit=limit, order=order, purpose=purpose)
+        except KeyError as exc:
+            raise _ApiError(404, f"Unknown file id `{after}` in `after`.") from exc
+        payload = {
+            "object": "list",
+            "data": files,
+            "first_id": files[0]["id"] if files else None,
+            "last_id": files[-1]["id"] if files else None,
+            "has_more": has_more,
+        }
         return logged_json(request_id, payload)
 
     @app.get("/v1/files/{file_id}")
@@ -830,9 +996,11 @@ def create_app(settings: Settings) -> FastAPI:
         body = await request.body()
         await log_inbound(request_id, request, body)
         payload = load_json(body)
-        metadata = payload.get("metadata") if isinstance(payload, dict) else None
-        seed_items = payload.get("items") if isinstance(payload, dict) else None
-        conversation = store.create_conversation(metadata=metadata, seed_items=seed_items)
+        try:
+            items = normalize_conversation_items(payload.get("items"), store)
+        except TranslationError as exc:
+            raise _http_error(exc) from exc
+        conversation = store.create_conversation(metadata=payload.get("metadata"), items=items)
         return logged_json(request_id, conversation)
 
     @app.get("/v1/conversations/{conversation_id}")
@@ -868,7 +1036,7 @@ def create_app(settings: Settings) -> FastAPI:
         if not deleted:
             raise HTTPException(status_code=404, detail=f"Unknown conversation id `{conversation_id}`.")
         return logged_json(
-            request_id, {"id": conversation_id, "object": "conversation", "deleted": True}
+            request_id, {"id": conversation_id, "object": "conversation.deleted", "deleted": True}
         )
 
     async def _responses_route(request: Request, allow_tools: bool) -> Response:
@@ -889,18 +1057,13 @@ def create_app(settings: Settings) -> FastAPI:
             payload, wants_stream, conversation_id = prepare_response_request(body, store, allow_tools)
             log_adaptation(request_id, ignored_parameters)
             response_headers = _adaptation_headers(ignored_parameters)
-            if conversation_id:
-                conversation = store.get_conversation(conversation_id)
-                if conversation["seed_items"] and not conversation["latest_response_id"]:
-                    payload["input"] = conversation["seed_items"] + payload["input"]
-            else:
-                conversation = None
+            turn = begin_turn(conversation_id, payload)
             if not wants_stream:
                 response_payload = await collect_response_with_retry(
                     payload, request_id, conversation_id, request
                 )
-                if conversation_id:
-                    store.touch_conversation(conversation_id, response_payload.get("id"))
+                if turn:
+                    turn.complete(response_payload)
                 return logged_json(request_id, response_payload, headers=response_headers)
 
             # Same eager first-event contact as the translated lanes: dead-
@@ -913,8 +1076,6 @@ def create_app(settings: Settings) -> FastAPI:
             )
 
             async def event_stream() -> AsyncIterator[bytes]:
-                latest_response_id: str | None = None
-
                 async def upstream_iter() -> AsyncIterator[SSEEvent]:
                     try:
                         yield first_event
@@ -928,10 +1089,11 @@ def create_app(settings: Settings) -> FastAPI:
                         parsed = json.loads(event.data)
                     except json.JSONDecodeError:
                         parsed = None
+                    if turn:
+                        turn.observe(event.event, parsed)
                     if isinstance(parsed, dict):
                         response_obj = parsed.get("response")
                         if isinstance(response_obj, dict):
-                            latest_response_id = response_obj.get("id")
                             if event.event == "response.completed":
                                 traffic.write(
                                     {
@@ -951,16 +1113,12 @@ def create_app(settings: Settings) -> FastAPI:
                         }
                     )
                     yield chunk
-                if conversation_id:
-                    store.touch_conversation(conversation_id, latest_response_id)
 
             return StreamingResponse(
                 event_stream(),
                 media_type="text/event-stream",
                 headers=response_headers,
             )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=f"Unknown conversation id `{conversation_id}`.") from exc
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
 
@@ -989,6 +1147,8 @@ def create_app(settings: Settings) -> FastAPI:
                             code="provider_unavailable",
                         )
                     ignored_parameters = strip_unsupported_response_parameters(body)
+                    ignored_parameters += strip_unknown_parameters(body, CLAUDE_CHAT_PARAMETERS)
+                    reject_unhonored_parameters(body)
                     log_adaptation(request_id, ignored_parameters, reason=CLAUDE_ADAPTATION_REASON)
                     claude_headers = _adaptation_headers(ignored_parameters)
                     if not body.get("stream"):
@@ -1010,10 +1170,11 @@ def create_app(settings: Settings) -> FastAPI:
                     # committed: invalid requests surface as real 4xx
                     # responses instead of empty 200 streams.
                     claude_stream = claude_runtime.stream_chat_completion(body, request_id)
+                    first_chunk = await _first_chunk(claude_stream)
 
                     async def claude_event_stream() -> AsyncIterator[bytes]:
                         try:
-                            async for chunk in claude_stream:
+                            async for chunk in _with_first(first_chunk, claude_stream):
                                 traffic.write(
                                     {
                                         "request_id": request_id,
@@ -1037,8 +1198,12 @@ def create_app(settings: Settings) -> FastAPI:
                         headers=claude_headers,
                     )
             ignored_parameters = strip_unsupported_response_parameters(body)
-            responses_shape_on_chat_route = "input" in body and "messages" not in body
+            responses_shape_on_chat_route = is_responses_shape(body)
+            if not responses_shape_on_chat_route:
+                ignored_parameters += strip_unknown_parameters(body, CHAT_PARAMETERS)
+                reject_unhonored_parameters(body)
             payload, wants_stream, conversation_id = chat_route_request_to_responses(body, store, allow_tools)
+            legacy_functions = not responses_shape_on_chat_route and uses_legacy_functions(body)
             log_adaptation(request_id, ignored_parameters)
             if responses_shape_on_chat_route:
                 traffic.write(
@@ -1049,19 +1214,14 @@ def create_app(settings: Settings) -> FastAPI:
                     }
                 )
             response_headers = _adaptation_headers(ignored_parameters)
-            if conversation_id:
-                conversation = store.get_conversation(conversation_id)
-                if conversation["seed_items"] and not conversation["latest_response_id"]:
-                    payload["input"] = conversation["seed_items"] + payload["input"]
-            else:
-                conversation = None
+            turn = begin_turn(conversation_id, payload)
             if not wants_stream:
                 response_payload = await collect_response_with_retry(
                     payload, request_id, conversation_id, request
                 )
-                if conversation_id:
-                    store.touch_conversation(conversation_id, response_payload.get("id"))
-                chat_payload = responses_to_chat_completion(response_payload)
+                if turn:
+                    turn.complete(response_payload)
+                chat_payload = responses_to_chat_completion(response_payload, legacy_functions=legacy_functions)
                 return logged_json(request_id, chat_payload, headers=response_headers)
 
             # Contact the upstream before committing SSE headers: an upstream
@@ -1082,8 +1242,7 @@ def create_app(settings: Settings) -> FastAPI:
                 sent_role = False
                 tool_index = 0
                 saw_tool_calls = False
-                usage_requested = bool((body.get("stream_options") or {}).get("include_usage"))
-                latest_response_id: str | None = None
+                usage_requested = stream_include_usage(body)
                 latest_usage: dict[str, Any] | None = None
                 finished = False
 
@@ -1100,39 +1259,42 @@ def create_app(settings: Settings) -> FastAPI:
                         parsed = json.loads(event.data)
                     except json.JSONDecodeError:
                         continue
+                    if turn:
+                        turn.observe(event.event, parsed)
                     if event.event == "response.created":
                         response_obj = parsed.get("response") or {}
                         response_id = response_obj.get("id", response_id)
-                        created_at = response_obj.get("created_at", created_at)
+                        created_at = created_timestamp(response_obj.get("created_at"), created_at)
                         model = response_obj.get("model", model)
                         continue
-                    if event.event == "response.output_text.delta":
-                        delta_payload = {"content": parsed.get("delta", "")}
+                    if event.event in ("response.output_text.delta", "response.refusal.delta"):
+                        field = "refusal" if event.event == "response.refusal.delta" else "content"
+                        delta_payload = {field: parsed.get("delta", "")}
                         if not sent_role:
-                            delta_payload = {"role": "assistant", "content": parsed.get("delta", "")}
+                            delta_payload = {"role": "assistant", field: parsed.get("delta", "")}
                             sent_role = True
-                        chunk = chat_completion_chunk(response_id, created_at, model, delta_payload)
+                        chunk = chat_completion_chunk(response_id, created_at, model, delta_payload,
+                                                      include_usage=usage_requested)
                         encoded = f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
                         yield encoded
                         continue
                     if event.event == "response.output_item.done":
                         item = parsed.get("item") or {}
                         tool_call = response_item_to_chat_tool_call(item)
+                        if legacy_functions and (saw_tool_calls or (tool_call or {}).get("type") != "function"):
+                            tool_call = None  # the deprecated interface carries one function call
                         if tool_call is not None:
                             saw_tool_calls = True
-                            delta_payload: dict[str, Any] = {
-                                "tool_calls": [
-                                    {
-                                        "index": tool_index,
-                                        **tool_call,
-                                    }
-                                ]
-                            }
+                            if legacy_functions:
+                                delta_payload: dict[str, Any] = {"function_call": dict(tool_call["function"])}
+                            else:
+                                delta_payload = {"tool_calls": [{"index": tool_index, **tool_call}]}
                             if not sent_role:
                                 delta_payload["role"] = "assistant"
                                 sent_role = True
                             tool_index += 1
-                            chunk = chat_completion_chunk(response_id, created_at, model, delta_payload)
+                            chunk = chat_completion_chunk(response_id, created_at, model, delta_payload,
+                                                          include_usage=usage_requested)
                             encoded = f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
                             yield encoded
                         continue
@@ -1144,7 +1306,6 @@ def create_app(settings: Settings) -> FastAPI:
                         return
                     if event.event in ("response.completed", "response.incomplete"):
                         response_obj = parsed.get("response") or {}
-                        latest_response_id = response_obj.get("id")
                         latest_usage = response_obj.get("usage")
                         traffic.write(
                             {
@@ -1156,44 +1317,37 @@ def create_app(settings: Settings) -> FastAPI:
                             }
                         )
                         if event.event == "response.incomplete":
-                            # Truncated but legitimate output (e.g. token
-                            # limit), which chat clients read as "length".
-                            finish_reason = "length"
+                            # Stopped early: token limit ("length") or the
+                            # upstream's content filter ("content_filter").
+                            finish_reason = incomplete_finish_reason(response_obj)
+                        elif saw_tool_calls:
+                            finish_reason = "function_call" if legacy_functions else "tool_calls"
                         else:
-                            finish_reason = "tool_calls" if saw_tool_calls else "stop"
+                            finish_reason = "stop"
                         final_chunk = chat_completion_chunk(
                             response_id,
                             created_at,
                             model,
                             {},
                             finish_reason=finish_reason,
+                            include_usage=usage_requested,
                         )
                         yield f"data: {json.dumps(final_chunk, ensure_ascii=True)}\n\n".encode("utf-8")
-                        if usage_requested and latest_usage is not None:
-                            usage_chunk = chat_completion_chunk(
-                                response_id,
-                                created_at,
-                                model,
-                                {},
-                                finish_reason=None,
-                                usage=latest_usage,
-                            )
-                            yield f"data: {json.dumps(usage_chunk, ensure_ascii=True)}\n\n".encode("utf-8")
+                        usage = completion_usage_from_responses(latest_usage)
+                        if usage_requested and usage is not None:
+                            closing = usage_chunk("chat.completion.chunk", response_id, created_at, model, usage)
+                            yield f"data: {json.dumps(closing, ensure_ascii=True)}\n\n".encode("utf-8")
                         yield b"data: [DONE]\n\n"
                         finished = True
                 if not finished:
                     # The upstream died without any terminal event.
                     yield _INCOMPLETE_STREAM_EVENT
-                if conversation_id:
-                    store.touch_conversation(conversation_id, latest_response_id)
 
             return StreamingResponse(
                 event_stream(),
                 media_type="text/event-stream",
                 headers=response_headers,
             )
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f"Unknown conversation id `{body.get('conversation')}`.")
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
 
@@ -1222,6 +1376,8 @@ def create_app(settings: Settings) -> FastAPI:
                             code="provider_unavailable",
                         )
                     ignored_parameters = strip_unsupported_response_parameters(body)
+                    ignored_parameters += strip_unknown_parameters(body, CLAUDE_COMPLETION_PARAMETERS)
+                    reject_unhonored_parameters(body)
                     log_adaptation(request_id, ignored_parameters, reason=CLAUDE_ADAPTATION_REASON)
                     claude_headers = _adaptation_headers(ignored_parameters)
                     if not body.get("stream"):
@@ -1241,10 +1397,11 @@ def create_app(settings: Settings) -> FastAPI:
 
                     # Same eager-validation contract as the chat route.
                     claude_stream = claude_runtime.stream_completion(body, request_id)
+                    first_chunk = await _first_chunk(claude_stream)
 
                     async def claude_event_stream() -> AsyncIterator[bytes]:
                         try:
-                            async for chunk in claude_stream:
+                            async for chunk in _with_first(first_chunk, claude_stream):
                                 traffic.write(
                                     {
                                         "request_id": request_id,
@@ -1265,19 +1422,18 @@ def create_app(settings: Settings) -> FastAPI:
                         headers=claude_headers,
                     )
             ignored_parameters = strip_unsupported_response_parameters(body)
+            ignored_parameters += strip_unknown_parameters(body, COMPLETIONS_PARAMETERS)
+            reject_unhonored_parameters(body)
             payload, wants_stream, conversation_id = completions_to_responses(body)
             log_adaptation(request_id, ignored_parameters)
             response_headers = _adaptation_headers(ignored_parameters)
-            if conversation_id:
-                conversation = store.get_conversation(conversation_id)
-                if conversation["seed_items"] and not conversation["latest_response_id"]:
-                    payload["input"] = conversation["seed_items"] + payload["input"]
+            turn = begin_turn(conversation_id, payload)
             if not wants_stream:
                 response_payload = await collect_response_with_retry(
                     payload, request_id, conversation_id, request
                 )
-                if conversation_id:
-                    store.touch_conversation(conversation_id, response_payload.get("id"))
+                if turn:
+                    turn.complete(response_payload)
                 return logged_json(
                     request_id,
                     responses_to_completion(response_payload),
@@ -1294,7 +1450,8 @@ def create_app(settings: Settings) -> FastAPI:
                 response_id = f"cmpl_{uuid.uuid4().hex}"
                 created_at = int(time.time())
                 model = body.get("model", "unknown")
-                latest_response_id: str | None = None
+                usage_requested = stream_include_usage(body)
+                refused = False
                 finished = False
 
                 async def upstream_iter() -> AsyncIterator[SSEEvent]:
@@ -1310,11 +1467,18 @@ def create_app(settings: Settings) -> FastAPI:
                         parsed = json.loads(event.data)
                     except json.JSONDecodeError:
                         continue
+                    if turn:
+                        turn.observe(event.event, parsed)
                     if event.event == "response.created":
                         response_obj = parsed.get("response") or {}
                         response_id = response_obj.get("id", response_id)
-                        created_at = response_obj.get("created_at", created_at)
+                        created_at = created_timestamp(response_obj.get("created_at"), created_at)
                         model = response_obj.get("model", model)
+                        continue
+                    if event.event == "response.refusal.delta":
+                        # Completions has no refusal field; the finish
+                        # reason says the content was withheld.
+                        refused = True
                         continue
                     if event.event == "response.output_text.delta":
                         chunk = completion_chunk(
@@ -1323,6 +1487,7 @@ def create_app(settings: Settings) -> FastAPI:
                             model,
                             parsed.get("delta", ""),
                             finish_reason=None,
+                            include_usage=usage_requested,
                         )
                         yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
                         continue
@@ -1334,7 +1499,6 @@ def create_app(settings: Settings) -> FastAPI:
                         return
                     if event.event in ("response.completed", "response.incomplete"):
                         response_obj = parsed.get("response") or {}
-                        latest_response_id = response_obj.get("id")
                         traffic.write(
                             {
                                 "request_id": request_id,
@@ -1349,24 +1513,27 @@ def create_app(settings: Settings) -> FastAPI:
                             created_at,
                             model,
                             "",
-                            finish_reason="length" if event.event == "response.incomplete" else "stop",
+                            finish_reason="content_filter" if refused
+                            else incomplete_finish_reason(response_obj)
+                            if event.event == "response.incomplete" else "stop",
+                            include_usage=usage_requested,
                         )
                         yield f"data: {json.dumps(final_chunk, ensure_ascii=True)}\n\n".encode("utf-8")
+                        usage = completion_usage_from_responses(response_obj.get("usage"))
+                        if usage_requested and usage is not None:
+                            closing = usage_chunk("text_completion", response_id, created_at, model, usage)
+                            yield f"data: {json.dumps(closing, ensure_ascii=True)}\n\n".encode("utf-8")
                         yield b"data: [DONE]\n\n"
                         finished = True
                 if not finished:
                     # The upstream died without any terminal event.
                     yield _INCOMPLETE_STREAM_EVENT
-                if conversation_id:
-                    store.touch_conversation(conversation_id, latest_response_id)
 
             return StreamingResponse(
                 event_stream(),
                 media_type="text/event-stream",
                 headers=response_headers,
             )
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f"Unknown conversation id `{body.get('conversation')}`.")
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
 
@@ -1378,6 +1545,8 @@ def create_app(settings: Settings) -> FastAPI:
     async def completions_route_no_tools(request: Request) -> Response:
         return await _completions_route(request)
 
+    @app.api_route("/v1/conversations/{conversation_id}/items", methods=["GET", "POST"])
+    @app.api_route("/v1/conversations/{conversation_id}/items/{item_id}", methods=["GET", "DELETE"])
     @app.post("/v1/embeddings")
     @app.post("/v1/images/{operation}")
     @app.post("/v1/audio/{operation}")
@@ -1386,15 +1555,11 @@ def create_app(settings: Settings) -> FastAPI:
         request_id = _request_id(request)
         body = await request.body()
         await log_inbound(request_id, request, body)
-        payload = {
-            "error": {
-                "message": (
-                    "This subscription-backed server does not expose a verified upstream "
-                    "implementation for this route yet."
-                ),
-                "type": "unsupported_error",
-            }
-        }
-        return logged_json(request_id, payload, status_code=501)
+        payload = error_body(
+            "This subscription-backed server does not expose a verified upstream "
+            "implementation for this route yet.",
+            status_code=501, type_="unsupported_error",
+        )
+        return logged_json(request_id, payload, status_code=501, headers=NOT_RETRYABLE)
 
     return app

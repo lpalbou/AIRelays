@@ -348,6 +348,7 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 ## What AIRelays Exposes
 
 - `GET /v1/models`
+- `GET /v1/models/{model}`
 - `GET /v1/subscription/status` (OpenAI and `?provider=claude`)
 - `GET /v1/account/rate_limits`
 - `GET /v1/relay/status`
@@ -401,7 +402,15 @@ shapes on the chat route, normalizes them to the Responses upstream, and
 translates upstream `custom_tool_call` items back to chat-completions
 `tool_calls` on both streaming and non-streaming responses. Requests that
 mix `messages` and `input`, or tool outputs that do not reference a
-preceding assistant tool call in the same request, are rejected loudly.
+preceding assistant tool call in the same request (or an earlier turn of
+its `conversation`), are rejected loudly.
+
+**Unrecognized parameters are disclosed, not silently dropped.** On chat
+and completions, a parameter AIRelays does not recognize is removed and
+listed in `x-airelays-ignored-parameters` with the stripped ones.
+Parameters that would change the output and cannot be honored (`stop`,
+`logprobs`, `logit_bias`, `web_search_options`, `moderation`, and others
+listed in [docs/api.md](docs/api.md)) are rejected with a 422 instead.
 
 **Reasoning effort is forwarded, not invented.** `reasoning_effort` (chat
 completions) and `reasoning: {"effort": ...}` (responses) pass through to
@@ -447,7 +456,7 @@ OpenAI runtime:
 - local files and local conversations are supported
 - non-stream responses are reconstructed from streamed upstream events
 - `store=true` is rejected
-- output-token limit fields are rejected explicitly on the OpenAI-shaped text-generation routes
+- output-token limit fields are stripped and disclosed on the OpenAI-shaped text-generation routes
 
 Claude runtime:
 
@@ -456,8 +465,9 @@ Claude runtime:
 - stateless only
 - no `/v1/responses`
 - no files, images, audio, or tools
-- structured outputs on chat completions: `response_format` `json_schema` /
-  `json_object` map to the CLI's native `--json-schema` enforcement
+- structured outputs on chat completions: `response_format` `json_schema` maps
+  to the CLI's native `--json-schema` enforcement; `json_object` answers are
+  checked to be one JSON object
 - `reasoning_effort` maps to the CLI's `--effort` (low, medium, high, xhigh, max)
 - no AIRelays local conversation reuse
 - sampling parameters are stripped and disclosed, like on the OpenAI runtime

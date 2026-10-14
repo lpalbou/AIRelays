@@ -156,6 +156,42 @@ rotate, so AIRelays cannot copy the personal sign-in. Profiles already
 enrolled keep working, and switching or signing out Claude Code does not
 affect the relay.
 
+## A Claude request fails: which account or model is affected
+
+AIRelays decides what a Claude CLI failure affects before taking any account
+out of rotation, and the error message says which case applies:
+
+- **Your request** (a bad image, an unreachable URL, a prompt that is too
+  long): 422 or 413 explaining what to change. No account is paused.
+- **One model on one account**: the API does not serve that model to the
+  account (a "not found" or permission refusal while a live usage check shows
+  the account's sign-in works). Only that model is paused on that account
+  (`unavailable_models` in `/v1/relay/status`); other models keep working, and
+  another account is tried. If none can serve it, you get 404
+  `model_unavailable`; use another model from `/v1/models`.
+- **A passing sign-in refusal**: the CLI reported a sign-in error, but the
+  live usage check shows the sign-in works (for example a token that was just
+  renewed). Nothing is paused; another account is tried, and retrying usually
+  works.
+- **An account's usage limit or a temporary failure**: the account pauses
+  until its reset time (or `account_cooldown_seconds` when the reset is
+  unknown), or about 30 seconds after a temporary failure, and another account
+  is tried. The message lists each account's state, with `Retry-After`; a wait
+  over a minute also carries `x-should-retry: false`. When the check cannot
+  tell whether the sign-in works, the account pauses the same way.
+- **An account's sign-in**: the usage check confirms the sign-in was
+  rejected (an explicit authentication error, such as a revoked token). The
+  account is marked as needing a new sign-in, leaves rotation until you sign in again, and the message names
+  the command to run (see below).
+
+## `502 invalid_json_output` on a Claude model
+
+You asked for `response_format: {"type": "json_object"}` and the model's
+answer was not a single JSON object. AIRelays checks JSON-mode answers before
+returning them, so you never receive broken JSON with a success status. Retry
+the request, or send `json_schema` with a schema: the Claude CLI enforces
+named schemas natively.
+
 ## A Claude account needs to sign in again
 
 Use `airelays claude accounts` to find the account id, then
@@ -214,17 +250,26 @@ usually heavy system load or a long request burst.
 - if it persists, open the Console tab for relay output, or use Restart
 - Stop/Restart keep working: the app still manages the process
 
-## `422` on Claude routes
+## `404 model_not_found` or `422` on chat and completions
 
-The Claude runtime supports discovered aliases and concrete model ids, plus configured overrides, on text `chat.completions` and text `completions`.
+A `404` with code `model_not_found` means the model id is not available:
+confirm it appears in `/v1/models` (a discovered alias, concrete
+`claude-*` id, configured override, or an OpenAI model your account's
+catalog lists).
 
-Checks:
+A `422` names what the relay cannot honor. The Claude runtime supports text
+`chat.completions` and text `completions`. Checks:
 
-- confirm the model id appears in `/v1/models`, as a discovered alias,
-  concrete `claude-*` id, or configured Claude override
-- remove tools, files, images, audio, and `conversation`
+- remove tools, files, images, audio, and `conversation` on Claude models
   (`response_format` json_schema/json_object is supported on chat completions)
-- remove unsupported generation controls
+- remove `stop`, `logprobs`, `top_logprobs`, `logit_bias`,
+  `web_search_options` and `moderation`: neither upstream can honor them,
+  so AIRelays rejects them rather than returning output that ignores them
+- remove other unsupported generation controls
+
+If a request succeeds but behaves as if a parameter were missing, check the
+`x-airelays-ignored-parameters` response header: it lists every parameter
+AIRelays dropped, including ones it does not recognize.
 
 ## Cursor custom OpenAI endpoint errors
 

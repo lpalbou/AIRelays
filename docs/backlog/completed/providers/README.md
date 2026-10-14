@@ -22,3 +22,4 @@ These completed items record the initial provider-runtime expansion that turned 
 - [Architecture](../../../architecture.md)
 - [Configuration](../../../configuration.md)
 - [Disclaimer](../../../disclaimer.md)
+- [0026_chat_completions_usage_contract.md](0026_chat_completions_usage_contract.md): chat and completions report OpenAI's CompletionUsage on both runtimes, with spec-shaped streamed usage

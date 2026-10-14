@@ -24,7 +24,40 @@ from airelay.claude_auth import ClaudeProfile, account_identity, token_profile
 from airelay.claude_launch import ArgumentsTooLong, ClaudeLauncher, workdir
 from airelay.private_io import write_private
 from airelay.traffic import TrafficLogger, snapshot_body
-from airelay.transforms import chat_completion_chunk, completion_chunk
+from airelay.transforms import (
+    UNHONORED_CHAT_PARAMETERS,
+    UNSUPPORTED_UPSTREAM_PARAMETERS,
+    is_requested,
+    chat_completion_chunk,
+    completion_chunk,
+    completion_usage_from_anthropic,
+    stream_include_usage,
+    usage_chunk,
+)
+
+# Requested features the Claude runtime rejects (ADR 0001). Sampling
+# parameters (`temperature`, `top_p`, `presence_penalty`,
+# `frequency_penalty`) and output-token limits (`max_completion_tokens`,
+# `max_tokens`) are not listed: the app layer strips and discloses them
+# (x-airelays-ignored-parameters), the same documented adaptation the
+# OpenAI runtime applies, because the local claude CLI exposes no
+# equivalent controls and standard SDKs send them by default.
+# `response_format` is honored on chat (mapped to the CLI's --json-schema);
+# completions has no such parameter, so it is rejected there rather than
+# silently ignored.
+CLAUDE_CHAT_REJECTED = (
+    "tools", "functions", "tool_choice", "function_call", "conversation", "store",
+    "previous_response_id", "modalities", "audio", "prediction", "parallel_tool_calls",
+    "web_search_options", "moderation",
+)
+CLAUDE_COMPLETION_REJECTED = (
+    "best_of", "echo", "logprobs", "suffix", "conversation", "store", "stop", "response_format",
+)
+_CLAUDE_COMMON = ("model", "stream", "stream_options", "n", "reasoning_effort",
+                  *UNSUPPORTED_UPSTREAM_PARAMETERS, *UNHONORED_CHAT_PARAMETERS)
+# Everything else is dropped and disclosed by the app layer.
+CLAUDE_CHAT_PARAMETERS = frozenset({*_CLAUDE_COMMON, "messages", "response_format", *CLAUDE_CHAT_REJECTED})
+CLAUDE_COMPLETION_PARAMETERS = frozenset({*_CLAUDE_COMMON, "prompt", *CLAUDE_COMPLETION_REJECTED})
 
 
 class ProviderError(RuntimeError):
@@ -126,8 +159,11 @@ class ClaudeTextRequest:
     # own adaptive default.
     effort: str | None = None
     # Serialized JSON Schema for the CLI's --json-schema flag (from
-    # `response_format`); None means plain text output.
+    # `response_format.json_schema`); None means plain text output.
     output_schema: str | None = None
+    # `response_format: {"type": "json_object"}`: the answer must be one
+    # JSON object, checked locally (see _json_object_text).
+    json_mode: bool = False
 
 
 def _openai_model_record(model_id: str, catalog: dict[str, Any] | None = None) -> ProviderModel:
@@ -153,7 +189,7 @@ def _openai_model_record(model_id: str, catalog: dict[str, Any] | None = None) -
         stateful_conversations=True,
         reasoning_modes=modes,
         reasoning_default=default if isinstance(default, str) else None,
-        structured_output_types=("json_schema",),
+        structured_output_types=("json_schema", "json_object"),
         discovery_source="upstream_catalog" if catalog is not None else "configured",
         display_name=catalog.get("display_name") if catalog else None,
         account_availability=catalog.get("account_availability") if catalog else None,
@@ -321,13 +357,13 @@ def _chat_transcript(turns: list[dict[str, str]]) -> str:
 
 
 def _finish_reason(stop_reason: str | None) -> str:
-    if stop_reason == "max_tokens":
+    # Anthropic stop reasons: a token or context limit reads as "length",
+    # a refusal as "content_filter".
+    if stop_reason in ("max_tokens", "model_context_window_exceeded"):
         return "length"
+    if stop_reason == "refusal":
+        return "content_filter"
     return "stop"
-
-
-def _provided(value: Any) -> bool:
-    return value is not None and value is not False and value != [] and value != {}
 
 
 def _claude_effort(
@@ -373,10 +409,10 @@ def _claude_output_schema(body: dict[str, Any], route: str) -> str | None:
     if format_type == "text":
         return None
     if format_type == "json_object":
-        # OpenAI's json_object mode promises "a valid JSON object" without a
-        # caller schema; the equivalent native enforcement is the permissive
-        # object schema.
-        return json.dumps({"type": "object"}, ensure_ascii=True, separators=(",", ":"))
+        # Not a CLI schema: with a schema that names no fields, haiku models
+        # often fill in an empty `{}` (6 of 10 live runs). JSON mode is an
+        # instruction plus a local check instead (`json_mode`).
+        return None
     if format_type == "json_schema":
         schema_payload = response_format.get("json_schema")
         if not isinstance(schema_payload, dict):
@@ -424,6 +460,55 @@ def _claude_output_schema(body: dict[str, Any], route: str) -> str | None:
     )
 
 
+# Claude Code's built-in system prompt (an agent persona, about 3,000
+# tokens) applies whenever the CLI gets none; an OpenAI-compatible request
+# without a system message must not carry it, so one is always passed.
+CLAUDE_MINIMAL_SYSTEM_PROMPT = "."
+CLAUDE_JSON_MODE_INSTRUCTION = (
+    "Respond with a single valid JSON object only: no code fences, no text before or after it."
+)
+
+
+def _claude_system_prompt(parts: list[str], *, json_mode: bool = False) -> str:
+    text = "\n\n".join(part for part in parts if part.strip())
+    if json_mode:
+        text = f"{text}\n\n{CLAUDE_JSON_MODE_INSTRUCTION}" if text else CLAUDE_JSON_MODE_INSTRUCTION
+    return text or CLAUDE_MINIMAL_SYSTEM_PROMPT
+
+
+def _json_object_text(text: str) -> str | None:
+    """The answer of a JSON-mode run if it is one JSON object, without a
+    surrounding code fence; None otherwise."""
+    text = text.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.S | re.I)
+    if fenced:
+        text = fenced.group(1)
+    try:
+        value = json.loads(text, parse_constant=_reject_non_json_number)
+    except ValueError:
+        return None
+    return text if isinstance(value, dict) else None
+
+
+def _reject_non_json_number(name: str) -> Any:
+    raise ValueError(f"{name} is not valid JSON")  # NaN, Infinity
+
+
+def _json_mode_answer(text: str, finish_reason: str) -> str:
+    if finish_reason in ("length", "content_filter"):
+        # Cut short or refused: returned as is, with that finish_reason, as
+        # OpenAI does; retrying would not produce JSON.
+        return text
+    answer = _json_object_text(text)
+    if answer is None:
+        raise ProviderError(
+            502, "Claude did not return a valid JSON object for `response_format: {\"type\": \"json_object\"}` "
+            f"(it answered: {text.strip()[:200]!r}). Retry, or use `json_schema` with a schema for strict "
+            "enforcement.", code="invalid_json_output",
+        )
+    return answer
+
+
 def _claude_structured_content(payload: dict[str, Any]) -> str | None:
     """The JSON text a schema-enforced run produced. `structured_output` is
     the CLI's typed field for it; `result` carries the same JSON as a string
@@ -455,36 +540,61 @@ def _claude_error_detail(payload: dict[str, Any]) -> str | None:
 
 
 def _claude_failure(detail: str, payload: dict[str, Any] | None = None) -> ProviderError:
-    """Classify CLI failures without treating ordinary model output as errors."""
+    """Classify CLI failures without treating ordinary model output as errors.
+
+    The status the CLI reports ("API Error: 400 ...") decides; a number
+    quoted inside the message (an image URL that returned 403, a stack
+    trace line) never does. Keywords classify only status-less failures."""
     payload = payload or {}
     error = payload.get("error")
     marker = str(error.get("type") if isinstance(error, dict) else error or "")
     text = (marker + " " + detail).lower()
-    if any(word in text for word in ("invalid_request_error", "context_length_exceeded", "prompt is too long", "invalid model")):
+    if any(word in text for word in ("context_length_exceeded", "prompt is too long", "invalid model")):
         return ProviderError(422, detail, code="invalid_request_error")
-    if any(word in text for word in ("rate_limit", "usage_limit", "usage limit", "rate limit", "you've hit your limit", "you have hit your limit")) or re.search(r"\b429\b", text):
+    explicit = re.search(r"api error:?\s*(\d{3})", text)
+    status = int(explicit.group(1)) if explicit else None
+    if status is None:
+        if any(word in text for word in ("rate_limit", "usage_limit", "usage limit", "rate limit",
+                                         "you've hit your limit", "you have hit your limit")):
+            status = 429
+        elif any(word in text for word in ("authentication_error", "oauth token", "not logged in",
+                                           "please run /login", "invalid access token")):
+            status = 401
+        elif "permission_error" in text:
+            status = 403
+        elif "not_found_error" in text:
+            status = 404
+        elif "request_too_large" in text:
+            status = 413
+        elif "invalid_request_error" in text:
+            status = 400
+        elif "overloaded" in text:
+            status = 529
+    if status == 429:
         info = payload.get("rate_limit_info") or payload.get("rateLimitInfo") or {}
         reset = info.get("resetsAt") if isinstance(info, dict) else None
         delay = max(1.0, reset - time.time()) if isinstance(reset, (int, float)) and math.isfinite(reset) else None
         return ProviderError(429, detail, code="provider_quota_exhausted", retry_after_seconds=delay)
-    if any(word in text for word in ("authentication_error", "oauth token", "not logged in", "please run /login", "invalid access token")) or re.search(r"\b401\b", text):
-        return ProviderError(401, detail, code="provider_auth_error")
-    if "permission_error" in text or re.search(r"\b403\b", text):
-        return ProviderError(403, detail, code="provider_auth_error")
+    if status in (401, 403):
+        return ProviderError(status, detail, code="provider_auth_error")
+    if status == 404:
+        # The API does not serve this model to this account.
+        return ProviderError(404, detail, code="model_unavailable")
+    if status == 413:
+        return ProviderError(413, detail, code="request_too_large")
+    if status is not None and 400 <= status < 500:
+        # The request itself (bad image, unreachable URL, invalid field).
+        return ProviderError(422, detail, code="invalid_request_error")
+    if status is not None and status >= 500:
+        return ProviderError(503, detail, code="provider_overloaded")
     return ProviderError(502, detail, code="provider_failure")
 
 
-def _usage_from_claude_result(payload: dict[str, Any] | None) -> dict[str, int]:
-    usage = payload.get("usage") if isinstance(payload, dict) else None
-    if not isinstance(usage, dict):
-        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-    prompt_tokens = int(usage.get("input_tokens") or 0)
-    completion_tokens = int(usage.get("output_tokens") or 0)
-    return {
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": prompt_tokens + completion_tokens,
-    }
+def _usage_from_claude_result(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """CompletionUsage for a whole CLI run. Only the `result` event covers
+    every API call the CLI made (including schema enforcement turns), so it
+    is the single source; per-message usage would double count."""
+    return completion_usage_from_anthropic(payload.get("usage") if isinstance(payload, dict) else None)
 
 
 def _stderr_message(stderr: bytes, returncode: int) -> str:
@@ -750,6 +860,8 @@ class ClaudeCliRuntime:
         request = self._prepare_chat_request(body)
         result = await self._run_json(request, request_id)
         content = result.get("result", "")
+        if request.json_mode:
+            content = _json_mode_answer(content, _finish_reason(result.get("stop_reason")))
         if request.output_schema:
             # Schema-enforced runs must return the enforced JSON only; the
             # model's surrounding prose (if any) is not the answer. A run
@@ -763,7 +875,7 @@ class ClaudeCliRuntime:
                     code="provider_failure",
                 )
             content = structured_content
-        return {
+        payload: dict[str, Any] = {
             "id": f"chatcmpl_{uuid.uuid4().hex}",
             "object": "chat.completion",
             "created": int(time.time()),
@@ -774,12 +886,17 @@ class ClaudeCliRuntime:
                     "message": {
                         "role": "assistant",
                         "content": content,
+                        "refusal": None,
                     },
+                    "logprobs": None,
                     "finish_reason": _finish_reason(result.get("stop_reason")),
                 }
             ],
-            "usage": _usage_from_claude_result(result),
         }
+        usage = _usage_from_claude_result(result)
+        if usage is not None:
+            payload["usage"] = usage
+        return payload
 
     def stream_chat_completion(
         self,
@@ -802,13 +919,16 @@ class ClaudeCliRuntime:
         sent_role = False
         saw_text = False
         assistant_fallback = ""
-        last_usage: dict[str, int] | None = None
+        last_usage: dict[str, Any] | None = None
         finish_reason = "stop"
         # Schema-enforced runs: the enforced JSON streams as the CLI's
         # StructuredOutput tool-use block (`input_json_delta` fragments); any
         # text deltas around it are the model's prose, not the answer, and
         # must not reach a client that asked for JSON.
         structured = bool(request.output_schema)
+        # JSON mode: the answer is validated before it is sent, so text is
+        # buffered and delivered as one chunk.
+        json_buffer: list[str] | None = [] if request.json_mode else None
         # Under CLI 2.1.209 exactly one tool-use block exists per schema run;
         # if a future CLI ever streamed a second (e.g. an enforcement retry),
         # concatenating both would hand the client unparseable JSON, so only
@@ -832,6 +952,9 @@ class ClaudeCliRuntime:
                             text = delta.get("partial_json")
                         if not isinstance(text, str) or not text:
                             continue
+                        if json_buffer is not None:
+                            json_buffer.append(text)
+                            continue
                         saw_text = True
                         delta_payload: dict[str, Any] = {"content": text}
                         if not sent_role:
@@ -842,18 +965,11 @@ class ClaudeCliRuntime:
                             created_at,
                             request.public_model,
                             delta_payload,
+                            include_usage=request.include_usage,
                         )
                         yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
                     elif inner.get("type") == "message_delta":
                         finish_reason = _finish_reason((inner.get("delta") or {}).get("stop_reason"))
-                        usage = inner.get("usage")
-                        if isinstance(usage, dict):
-                            last_usage = {
-                                "prompt_tokens": int(usage.get("input_tokens") or 0),
-                                "completion_tokens": int(usage.get("output_tokens") or 0),
-                                "total_tokens": int(usage.get("input_tokens") or 0)
-                                + int(usage.get("output_tokens") or 0),
-                            }
                 elif event_type == "assistant" and not saw_text and not structured:
                     message = event.get("message") or {}
                     content = message.get("content") or []
@@ -885,6 +1001,11 @@ class ClaudeCliRuntime:
                         result_text = event.get("result")
                         if isinstance(result_text, str):
                             assistant_fallback = result_text
+        if json_buffer is not None:
+            assistant_fallback = _json_mode_answer("".join(json_buffer) or assistant_fallback, finish_reason)
+        # Logged before any yield: a client that disconnects after the last
+        # chunk must not cost the record of a fully billed run.
+        self._log_outbound_usage(request_id, request.public_model, last_usage)
         if assistant_fallback and not saw_text:
             delta_payload = {"role": "assistant", "content": assistant_fallback}
             chunk = chat_completion_chunk(
@@ -892,6 +1013,7 @@ class ClaudeCliRuntime:
                 created_at,
                 request.public_model,
                 delta_payload,
+                include_usage=request.include_usage,
             )
             yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
         final_chunk = chat_completion_chunk(
@@ -900,24 +1022,18 @@ class ClaudeCliRuntime:
             request.public_model,
             {},
             finish_reason=finish_reason,
+            include_usage=request.include_usage,
         )
         yield f"data: {json.dumps(final_chunk, ensure_ascii=True)}\n\n".encode("utf-8")
         if request.include_usage and last_usage is not None:
-            usage_chunk = chat_completion_chunk(
-                response_id,
-                created_at,
-                request.public_model,
-                {},
-                finish_reason=None,
-                usage=last_usage,
-            )
-            yield f"data: {json.dumps(usage_chunk, ensure_ascii=True)}\n\n".encode("utf-8")
+            closing = usage_chunk("chat.completion.chunk", response_id, created_at, request.public_model, last_usage)
+            yield f"data: {json.dumps(closing, ensure_ascii=True)}\n\n".encode("utf-8")
         yield b"data: [DONE]\n\n"
 
     async def create_completion(self, body: dict[str, Any], request_id: str) -> dict[str, Any]:
         request = self._prepare_completion_request(body)
         result = await self._run_json(request, request_id)
-        return {
+        payload: dict[str, Any] = {
             "id": f"cmpl_{uuid.uuid4().hex}",
             "object": "text_completion",
             "created": int(time.time()),
@@ -930,8 +1046,11 @@ class ClaudeCliRuntime:
                     "finish_reason": _finish_reason(result.get("stop_reason")),
                 }
             ],
-            "usage": _usage_from_claude_result(result),
         }
+        usage = _usage_from_claude_result(result)
+        if usage is not None:
+            payload["usage"] = usage
+        return payload
 
     def stream_completion(
         self,
@@ -951,6 +1070,7 @@ class ClaudeCliRuntime:
         created_at = int(time.time())
         saw_text = False
         assistant_fallback = ""
+        last_usage: dict[str, Any] | None = None
         finish_reason = "stop"
         async with aclosing(self._run_stream(request, request_id)) as events:
             async for event in events:
@@ -970,6 +1090,7 @@ class ClaudeCliRuntime:
                                 request.public_model,
                                 text,
                                 finish_reason=None,
+                                include_usage=request.include_usage,
                             )
                             yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
                     elif inner.get("type") == "message_delta":
@@ -986,11 +1107,15 @@ class ClaudeCliRuntime:
                     error_detail = _claude_error_detail(event)
                     if error_detail is not None:
                         raise _claude_failure(error_detail, event)
+                    last_usage = _usage_from_claude_result(event)
                     finish_reason = _finish_reason(event.get("stop_reason"))
                     if not assistant_fallback:
                         result_text = event.get("result")
                         if isinstance(result_text, str):
                             assistant_fallback = result_text
+        # Logged before any yield: a client that disconnects after the last
+        # chunk must not cost the record of a fully billed run.
+        self._log_outbound_usage(request_id, request.public_model, last_usage)
         if assistant_fallback and not saw_text:
             chunk = completion_chunk(
                 response_id,
@@ -998,6 +1123,7 @@ class ClaudeCliRuntime:
                 request.public_model,
                 assistant_fallback,
                 finish_reason=None,
+                include_usage=request.include_usage,
             )
             yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
         final_chunk = completion_chunk(
@@ -1006,36 +1132,20 @@ class ClaudeCliRuntime:
             request.public_model,
             "",
             finish_reason=finish_reason,
+            include_usage=request.include_usage,
         )
         yield f"data: {json.dumps(final_chunk, ensure_ascii=True)}\n\n".encode("utf-8")
+        if request.include_usage and last_usage is not None:
+            closing = usage_chunk("text_completion", response_id, created_at, request.public_model, last_usage)
+            yield f"data: {json.dumps(closing, ensure_ascii=True)}\n\n".encode("utf-8")
         yield b"data: [DONE]\n\n"
 
     def _prepare_chat_request(self, body: dict[str, Any]) -> ClaudeTextRequest:
         resolved = self._resolved_model_from_body(body)
         if body.get("n") not in {None, 1}:
             raise ProviderError(422, "The Claude runtime supports only `n=1`.", code="unsupported_for_provider")
-        # Sampling parameters (`temperature`, `top_p`, `presence_penalty`,
-        # `frequency_penalty`) and output-token limits (`max_completion_tokens`,
-        # `max_tokens`) are not listed here: the app layer strips and discloses
-        # them (x-airelays-ignored-parameters), the same documented adaptation
-        # the OpenAI runtime applies, because the local claude CLI exposes no
-        # equivalent controls and standard SDKs send them by default.
-        # `response_format` is honored (mapped to the CLI's --json-schema),
-        # so it is not rejected here either.
-        for field in (
-            "tools",
-            "functions",
-            "tool_choice",
-            "function_call",
-            "conversation",
-            "store",
-            "previous_response_id",
-            "modalities",
-            "audio",
-            "prediction",
-            "parallel_tool_calls",
-        ):
-            if _provided(body.get(field)):
+        for field in CLAUDE_CHAT_REJECTED:
+            if is_requested(field, body.get(field)):
                 raise ProviderError(
                     422,
                     f"The Claude runtime does not support `{field}` on `/v1/chat/completions`.",
@@ -1045,39 +1155,26 @@ class ClaudeCliRuntime:
         if not isinstance(messages, list) or not messages:
             raise ProviderError(422, "Chat completions requests must include a non-empty `messages` array.")
         system_parts, turns = _split_chat_messages(messages)
-        system_prompt = "\n\n".join(part for part in system_parts if part.strip()) or None
-        include_usage = bool((body.get("stream_options") or {}).get("include_usage"))
+        output_schema = _claude_output_schema(body, "/v1/chat/completions")
+        response_format = body.get("response_format")
+        json_mode = isinstance(response_format, dict) and response_format.get("type") == "json_object"
         return ClaudeTextRequest(
             public_model=resolved.public_id,
             upstream_model=resolved.upstream_id,
-            system_prompt=system_prompt,
+            system_prompt=_claude_system_prompt(system_parts, json_mode=json_mode),
             prompt=_chat_transcript(turns),
-            include_usage=include_usage,
+            include_usage=stream_include_usage(body),
             effort=_claude_effort(body, "/v1/chat/completions", self._models[resolved.public_id].reasoning_modes),
-            output_schema=_claude_output_schema(body, "/v1/chat/completions"),
+            output_schema=output_schema,
+            json_mode=json_mode,
         )
 
     def _prepare_completion_request(self, body: dict[str, Any]) -> ClaudeTextRequest:
         resolved = self._resolved_model_from_body(body)
         if body.get("n") not in {None, 1}:
             raise ProviderError(422, "The Claude runtime supports only `n=1`.", code="unsupported_for_provider")
-        # Sampling parameters and output-token limits are stripped and
-        # disclosed by the app layer instead of rejected here — see
-        # _prepare_chat_request for rationale. `response_format` is not part
-        # of the completions API; silently ignoring it would be silent
-        # degradation for a client that asked for enforced JSON, so it is
-        # rejected loudly (use /v1/chat/completions for structured outputs).
-        for field in (
-            "best_of",
-            "echo",
-            "logprobs",
-            "suffix",
-            "conversation",
-            "store",
-            "stop",
-            "response_format",
-        ):
-            if _provided(body.get(field)):
+        for field in CLAUDE_COMPLETION_REJECTED:
+            if is_requested(field, body.get(field)):
                 raise ProviderError(
                     422,
                     f"The Claude runtime does not support `{field}` on `/v1/completions`.",
@@ -1097,9 +1194,9 @@ class ClaudeCliRuntime:
         return ClaudeTextRequest(
             public_model=resolved.public_id,
             upstream_model=resolved.upstream_id,
-            system_prompt=None,
+            system_prompt=_claude_system_prompt([]),
             prompt=prompt,
-            include_usage=False,
+            include_usage=stream_include_usage(body),
             effort=_claude_effort(body, "/v1/completions", self._models[resolved.public_id].reasoning_modes),
         )
 
@@ -1110,9 +1207,9 @@ class ClaudeCliRuntime:
         resolved = self.resolve_model(model)
         if resolved is None:
             raise ProviderError(
-                422,
+                404,
                 f"Unknown Claude model `{model}`. Configure it under `[providers.claude].models` first.",
-                code="unsupported_for_provider",
+                code="model_not_found",
             )
         return resolved
 
@@ -1374,6 +1471,27 @@ class ClaudeCliRuntime:
                 return self._usage_snapshot()
         return self._stale_usage()
 
+    async def check_sign_in(self) -> bool | None:
+        """Ask Anthropic, through the CLI's usage query (no inference),
+        whether this account's sign-in still works: True, False, or None
+        when it cannot tell (setup token, CLI failure). Decides whether a
+        login-like failure was about the account or about one model."""
+        if not self.profile.managed:
+            return None
+        try:
+            answer = await self._control_request(
+                {"subtype": "get_usage", "skip_behaviors": True}, timeout=CLAUDE_CONTROL_TIMEOUT_SECONDS,
+            )
+        except ProviderError as error:
+            # Only an explicit rejection: suspending an account cannot be
+            # undone without a new sign-in, so ambiguity means "unknown".
+            text = error.detail.lower()
+            return False if re.search(r"api error:?\s*401", text) or "authentication_error" in text else None
+        # The CLI may answer from a saved snapshot when the usage endpoint
+        # fails (as with a revoked token); only live usage proves the sign-in.
+        live = answer.get("rate_limits_available") is True and _fresh_usage(answer.get("rate_limits"))
+        return True if live else None
+
     async def _refresh_usage(self) -> None:
         try:
             answer = await self._control_request(
@@ -1630,6 +1748,13 @@ class ClaudeCliRuntime:
             return None
         return payload if isinstance(payload, dict) else None
 
+    def _log_outbound_usage(self, request_id: str, model: str, usage: dict[str, Any] | None) -> None:
+        # Streams return no payload to the app layer, which logs this record
+        # for non-streaming requests.
+        if self._traffic is not None and usage is not None:
+            self._traffic.write({"request_id": request_id, "phase": "outbound_usage", "provider": "claude",
+                                 "model": model, "usage": usage})
+
     def _log_command(self, request_id: str, model: str, command: list[str], prompt: str) -> None:
         if self._traffic is None:
             return
@@ -1816,9 +1941,9 @@ class ProviderRegistry:
                 return resolved
             if model_id.startswith("claude:") or model_id.startswith("claude-"):
                 raise ProviderError(
-                    422,
+                    404,
                     f"Unknown Claude model `{model_id}`. Configure it under `[providers.claude].models` first.",
-                    code="unsupported_for_provider",
+                    code="model_not_found",
                 )
         elif model_id.startswith("claude:") or model_id.startswith("claude-"):
             raise ProviderError(
@@ -1864,7 +1989,26 @@ class ProviderRegistry:
             " If the upstream really serves this id but omits it from `/models`, "
             "add it to `[providers.openai].extra_models`."
         )
-        raise ProviderError(422, detail, code="unsupported_for_provider")
+        raise ProviderError(404, detail, code="model_not_found")
+
+    async def retrieve_model(self, model_id: str, request_id: str) -> dict[str, Any]:
+        """`GET /v1/models/{model}`: one listed model, matched
+        case-insensitively like admission. Unlike admission, it does not
+        fail open: an OpenAI catalog failure is raised, not answered with a
+        model nobody listed."""
+        if self._claude is not None:
+            await self._claude.refresh_models()
+        try:
+            resolved = self.resolve_model(model_id) if model_id else None
+        except ProviderError as error:
+            raise ProviderError(404, error.detail, code="model_not_found") from error
+        if resolved is not None and resolved.provider == "openai" and self._openai_backend is not None:
+            await self._openai_models_payload(request_id)
+        for model in (await self.list_models(request_id))["data"]:
+            if (resolved is not None and model["id"].lower() == resolved.public_id.lower()
+                    and model.get("airelays", {}).get("provider") == resolved.provider):
+                return model
+        raise ProviderError(404, f"The model `{model_id}` does not exist.", code="model_not_found")
 
     async def list_models(self, request_id: str, *, refresh: bool = False) -> dict[str, Any]:
         data: list[dict[str, Any]] = []

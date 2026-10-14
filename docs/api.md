@@ -49,13 +49,28 @@ adaptation records when the request shape itself is repaired:
   (`max_tokens`, `max_completion_tokens`, `max_output_tokens`) and
   caller-supplied end-user identifiers (`user`, `safety_identifier`) are
   also stripped because the verified subscription backend does not honor
-  them. The names of removed parameters are returned in the
+  them, as is `seed` (best-effort determinism in OpenAI's own API; neither
+  upstream supports it). The names of removed parameters are returned in the
   `x-airelays-ignored-parameters` response header and logged as a
   `compatibility_adaptation` traffic record with the reason. Generation
   runs with the upstream's own defaults. The same adaptation applies on
   the Claude routes: the local `claude` CLI exposes no sampling or token
   limit controls, so these parameters are stripped and disclosed there
   too instead of failing the request.
+- **Unrecognized parameters:** on `/v1/chat/completions` and
+  `/v1/completions` (both runtimes), a parameter AIRelays does not
+  recognize is dropped and listed in `x-airelays-ignored-parameters` like
+  the stripped ones, so nothing is ignored silently. This covers cache
+  hints such as `prompt_cache_retention`; on Claude models it also covers
+  `verbosity`, `prompt_cache_key`, `metadata` and `service_tier`. A
+  parameter sent as `null` means "not set" and is not listed. Names are
+  percent-encoded in the header (so any JSON key is a valid header value)
+  and the list is capped at about 2 KB, ending in `,...` when cut; the
+  traffic log keeps every name. `/v1/responses` forwards unrecognized
+  parameters to the upstream as-is.
+- **Verbosity and prompt caching:** on OpenAI models, chat
+  `verbosity` is forwarded as the Responses `text.verbosity`, and
+  `prompt_cache_key` is forwarded as-is.
 - **Reasoning effort:** `reasoning_effort` (chat completions and
   completions) and `reasoning.effort` (responses) are forwarded verbatim
   to OpenAI models; on `claude:*` models `reasoning_effort` maps to the
@@ -69,7 +84,19 @@ adaptation records when the request shape itself is repaired:
   adaptive default. An empty Claude modes list means no effort parameter
   is advertised for that model.
 - **Structured outputs:** `response_format.type=json_schema` is forwarded
-  (translated) to OpenAI models; on `claude:*` chat completions both
+  (translated) to OpenAI models. With `strict: true`, the schema is
+  rewritten to OpenAI's strict-mode form: every property becomes required,
+  optional ones accept `null`, and `additionalProperties` defaults to
+  `false` (a schema that sets it to anything else is rejected). Without
+  `strict: true` the schema is forwarded unchanged with `strict: false`,
+  OpenAI's default, sent explicitly because the upstream otherwise assumes
+  strict mode. The same applies to `text.format` on `/v1/responses`.
+  `response_format.type=json_object` is forwarded as the upstream's native
+  JSON mode (`text.format: {"type": "json_object"}`), with OpenAI's rule that
+  the messages must mention JSON enforced by the upstream. In JSON mode, chat
+  system and developer messages are sent as developer input messages rather
+  than `instructions`, so a system prompt that mentions JSON counts, as on
+  OpenAI. On `claude:*` chat completions both
   `json_schema` and `json_object` are honored via the claude CLI's native
   `--json-schema` enforcement. Supported types per model are published in
   `/v1/models` under `airelays.structured_output`.
@@ -83,16 +110,25 @@ adaptation records when the request shape itself is repaired:
   `custom_tool_call` items back into chat-completions `tool_calls` on both
   streaming and non-streaming responses. Mixed-shape requests that contain
   both `messages` and `input`, or tool outputs that do not reference a
-  preceding assistant tool call in the same request, are rejected loudly.
-- **Rejected loudly instead of adapted:** `store=true`, `n>1`, and
-  `best_of`/`echo`/`logprobs`/`suffix` on `/v1/completions`. These change
-  semantics in ways silent stripping would hide, so they return a clear
-  error.
+  preceding assistant tool call in the same request (or, with
+  `conversation`, an earlier turn), are rejected loudly.
+- **Rejected loudly instead of adapted:** `store=true`, `n>1`,
+  `best_of`/`echo`/`logprobs`/`suffix` on `/v1/completions`, and on both
+  chat and completions (both runtimes) a non-empty `stop`, a true
+  `logprobs`, a nonzero `top_logprobs`, or a non-empty `logit_bias`.
+  Neither upstream can honor them and dropping them would change the
+  output, so they return a clear 422 error. Chat `web_search_options`,
+  `moderation`, `audio`, `prediction` and non-text `modalities` are
+  rejected the same way; for the first four any non-null value counts,
+  since `web_search_options: {}` means "search with defaults". Default values (`null`, `false`, `0`, empty,
+  `best_of: 1`, `modalities: ["text"]`) are accepted on both runtimes;
+  on `/v1/completions`, an integer `logprobs` (including `0`) is a
+  request.
 - **OpenAI model admission:** when AIRelays can fetch the live ChatGPT
   Codex model catalog for the authenticated OpenAI account(s), OpenAI
   requests are forwarded only for model ids that appear in that catalog
   or in `[providers.openai].extra_models`. Other ids are rejected locally
-  with a clear 422 and suggestions from `/v1/models`, instead of failing
+  with 404 `model_not_found` and suggestions from `/v1/models`, instead of failing
   later upstream with an account-scoped unsupported-model error. In
   multi-account mode, the same cache is invalidated when the enrolled
   OpenAI account set changes, so admission follows the union of their
@@ -139,6 +175,10 @@ Returns an OpenAI-style models list built from the enabled provider runtimes.
 - With several OpenAI accounts, discovery returns the union of successful catalogs and preserves each model's metadata. `airelays.account_availability` reports `supported` and `total` account counts without disclosing account identities. A failed account catalog does not hide models returned by other accounts. Routing retains last-known membership during catalog outages rather than broadening a known subset.
 - `airelays.catalog_visibility` and `airelays.description` preserve upstream metadata. Entries marked `hide` appear as **upstream-hidden** in the desktop; AIRelays does not infer their underlying identity or promote them as recommended models.
 - Catalog discovery reports provider availability and capabilities; it does not generate a test response for every model. Account limits and upstream availability still apply when serving a request.
+
+`GET /v1/models/{model}` returns that model's entry from the list (ids match
+case-insensitively, as for requests), or 404 `model_not_found`. While the
+OpenAI catalog cannot be fetched, OpenAI ids return the catalog error instead.
 
 ## `GET /v1/subscription/status`
 
@@ -191,8 +231,9 @@ this process, usable as a lightweight activity signal. OpenAI model-list
 cache diagnostics live under `providers.openai.models_cache`.
 
 `providers.claude.accounts` lists AIRelays-owned Claude accounts with their
-`slug`, email, readiness, `managed_profile`, `oauth_token_source`, and request
-cooldown. `managed_profile` is `false` only for the setup-token account;
+`slug`, email, readiness, `managed_profile`, `oauth_token_source`, request
+cooldown, and `unavailable_models` (models the account cannot serve right now
+although its sign-in works, with seconds until AIRelays tries them again). `managed_profile` is `false` only for the setup-token account;
 `oauth_token_source` is `profile` or `file`. `providers.claude.balance` reports their selection
 strategy. A second ready profile of the same subscription carries
 `duplicate_of` and is counted once; an account whose identity differs from its
@@ -227,7 +268,8 @@ OpenAI runtime:
 Current OpenAI limits:
 
 - `store=true` rejected
-- output-token limit fields rejected explicitly
+- output-token limit fields stripped and disclosed (see
+  [Compatibility Adaptations](#compatibility-adaptations-read-this-first))
 
 Claude runtime:
 
@@ -244,6 +286,23 @@ OpenAI runtime:
 - tool support includes both OpenAI `function` tools and `custom` tools;
   AIRelays also accepts Cursor's flatter Responses-style `custom` tool
   shape on this route
+- `tool_choice` accepts `auto`, `none`, `required`, a named function or
+  custom tool, and `allowed_tools`
+- function tools run non-strict unless `function.strict` is `true`, as in
+  OpenAI's chat API; AIRelays sends `strict: false` explicitly because the
+  upstream otherwise assumes strict. `strict` must be a boolean here and in
+  `response_format.json_schema`
+- assistant messages may carry `content: null` alongside `tool_calls` or a
+  `refusal`, as OpenAI SDKs send them back
+- the deprecated `functions`/`function_call` interface is supported end
+  to end: replies carry `message.function_call` (streamed as
+  `delta.function_call`) with `finish_reason: "function_call"`, one call
+  per reply, and `role: "function"` messages answer the matching call by
+  `name`. Send either `tools` or `functions`, not both, and use `tools`
+  with `conversation`
+- file content parts use OpenAI's shape, `{"type": "file", "file": {...}}`,
+  with a local `file_id` from `POST /v1/files` or inline `file_data` plus
+  `filename`
 
 Claude runtime:
 
@@ -256,14 +315,13 @@ Claude runtime:
 - `reasoning_effort` supported (`low`, `medium`, `high`, `xhigh`, `max`),
   mapped to the CLI's `--effort` flag; omitted means the model's adaptive
   default
-- structured outputs supported: `response_format.type=json_schema` and
-  `json_object` map to the CLI's `--json-schema` flag (native schema
-  enforcement; `json_object` enforces the permissive `{"type": "object"}`
-  schema). The response `content` is the enforced JSON only — a run that
-  produces no schema-conforming output fails loudly instead of returning
-  prose. On streaming requests the JSON text streams as the content
-  deltas. Enforcement runs as an internal tool turn upstream, so
-  schema-enforced calls bill some additional output tokens. Unsupported
+- structured outputs supported: `response_format.type=json_schema` maps to
+  the CLI's `--json-schema` flag (native schema enforcement). The response
+  `content` is the enforced JSON only — a run that produces no
+  schema-conforming output fails loudly instead of returning prose. On
+  streaming requests the JSON text streams as the content deltas.
+  Enforcement runs as an internal tool turn upstream, so schema-enforced
+  calls bill some additional output tokens. Unsupported
   `response_format` shapes (including a missing `type`) are rejected with
   a 422; serialized schemas are capped at 200 KB (they travel on the local
   CLI's argv). Two documented leniencies versus OpenAI:
@@ -271,6 +329,16 @@ Claude runtime:
   `strict` is ignored because the CLI's native enforcement is always
   strict — clients can only get stricter behavior than asked, never
   weaker.
+  `json_object` asks the model, in the system prompt, for a single JSON
+  object and checks the answer before returning it (a surrounding code fence
+  is removed); an answer that is not one JSON object returns 502
+  `invalid_json_output` and does not pause any account. An answer cut short
+  (`finish_reason: "length"`) or refused (`content_filter`) is returned as is.
+  In JSON mode a streamed answer arrives as one content chunk, because it is
+  checked first.
+- every Claude request carries a system prompt: the client's, or a minimal
+  one when the client sends none, so the Claude CLI's own built-in agent
+  prompt never applies.
 - sampling parameters stripped and disclosed via
   `x-airelays-ignored-parameters` (the `claude` CLI has no sampling
   controls); other unsupported generation controls rejected locally
@@ -299,19 +367,133 @@ Claude runtime:
   `x-airelays-ignored-parameters`; other unsupported generation controls
   rejected locally
 
+## Errors
+
+Every error uses OpenAI's error object, with a `detail` copy of the message
+for existing AIRelays clients:
+
+```json
+{"error": {"message": "...", "type": "invalid_request_error", "param": null, "code": "model_not_found"}, "detail": "..."}
+```
+
+- `type` is `invalid_request_error` for client errors, `rate_limit_error`
+  for 429 and `server_error` for 5xx (authentication problems with the
+  upstream subscription use `authentication_error`)
+- unknown models return 404 with code `model_not_found`; unsupported
+  parameters and features return 422 (see ADR 0001)
+- a Claude answer in `json_object` mode that is not one JSON object returns
+  502 `invalid_json_output`; retrying usually helps, or use `json_schema`
+- a quota or cooldown rejection returns 429 with a `Retry-After` header when
+  the reset time is known (OpenAI SDKs then wait, or stop retrying when the
+  reset is more than two minutes away); a Claude CLI that is not signed in
+  returns 503, not 401, because the client's own credentials are fine
+- every response carries an `x-request-id` header, the id AIRelays uses in
+  its traffic log; OpenAI SDKs expose it as `request_id`
+- Claude streams start only once the CLI produces output, so failures before
+  the first token are real HTTP errors; failures after it arrive in-band as
+  `data: {"error": {...}}` without `[DONE]`
+
+## Finish reasons and refusals
+
+`finish_reason` is `stop`, `length`, `tool_calls`, `content_filter`, or
+`function_call` for requests using the deprecated `functions`. An
+upstream response cut short by its token limit reports `length`, and one
+stopped by the provider's content filter (OpenAI) or a refusal (Claude)
+reports `content_filter`. OpenAI refusals are returned in `message.refusal`
+(streamed as `delta.refusal`). Chat responses always include
+`choices[].logprobs` and `message.refusal`, `null` when not applicable.
+
+## Token usage on chat and completions
+
+`/v1/chat/completions` and `/v1/completions` report `usage` in OpenAI's
+Chat Completions shape on both runtimes:
+
+```json
+{
+  "prompt_tokens": 18,
+  "completion_tokens": 5,
+  "total_tokens": 23,
+  "prompt_tokens_details": {"cached_tokens": 4, "cache_write_tokens": 2},
+  "completion_tokens_details": {"reasoning_tokens": 1}
+}
+```
+
+- `prompt_tokens` counts every prompt token, cached ones included;
+  `prompt_tokens_details.cached_tokens` and `cache_write_tokens` break out
+  the tokens read from and written to the prompt cache
+  (`cache_write_tokens` is typed in recent openai-python releases; older
+  SDKs keep it as an extra field).
+  `total_tokens` is `prompt_tokens + completion_tokens`.
+- the details objects and their members appear only when the provider
+  reports them (the Claude runtime has no `completion_tokens_details`)
+- when a provider reports no readable usage, `usage` is omitted rather than
+  filled with zeros
+- streaming: with `stream_options: {"include_usage": true}`, every chunk
+  carries `"usage": null`, and one extra chunk with `"choices": []` and the
+  usage follows the chunk with `finish_reason`, before `data: [DONE]`.
+  Without it, chunks have no `usage` field. A stream that fails sends no
+  usage chunk.
+- `/v1/responses` returns the Responses API usage (`input_tokens`,
+  `output_tokens`, ...) unchanged
+- `stream_options` sent without `stream: true` has no effect; it is dropped
+  and listed in `x-airelays-ignored-parameters`
+- for the OpenAI runtime, traffic logs keep the upstream usage as reported
+  (`upstream_usage` and `outbound_usage` records). For Claude, the raw CLI
+  result is logged for non-streaming requests (`provider_response`) and
+  stream lines only when stream-line logging is enabled; Claude
+  `outbound_usage` records carry the translated usage
+
 ## `POST /v1/files`
 
 Local AIRelays file storage for the OpenAI runtime compatibility path.
+
+- `purpose` is a multipart form field, as OpenAI SDKs send it: one of
+  `assistants` (the default when omitted), `batch`, `fine-tune`, `vision`,
+  `user_data` or `evals`
+- `GET /v1/files` supports OpenAI's `after`, `limit` (1 to 10000, default
+  10000), `order` (`desc` by default) and `purpose` query parameters and
+  returns `first_id`, `last_id` and `has_more`, so SDK auto-pagination
+  works, including loops that delete each file as they go (a deleted file
+  still anchors `after` for a day)
+- `expires_after` is not supported and returns 422; delete files
+  explicitly
+- `GET /v1/files/{file_id}`, `GET /v1/files/{file_id}/content` and
+  `DELETE /v1/files/{file_id}` complete the set
 
 ## `POST /v1/conversations`
 
 Local AIRelays conversation storage for the OpenAI runtime compatibility path.
 
+- create a conversation, optionally with initial `items` (Responses input
+  items) and `metadata`; `GET`, `POST` (metadata update) and `DELETE`
+  `/v1/conversations/{id}` manage it
+- pass its id as `conversation` on `/v1/responses` (a string or
+  `{"id": ...}`), `/v1/chat/completions` or `/v1/completions`. The
+  conversation's items are prepended to each turn's input, and once a turn
+  succeeds its input and output items are appended, as in OpenAI's
+  conversations. A failed turn leaves the conversation unchanged
+- stored output items are the replayable ones: assistant messages, every
+  call the client answers (items with a `call_id`, such as function,
+  custom and local shell calls), and reasoning items that carry
+  `encrypted_content` (request it with
+  `include: ["reasoning.encrypted_content"]`). Other reasoning items and
+  server-side tool calls are not kept; their outcome is in the messages
+  that follow
+- local files are stored as `file_id` references and inlined on every
+  turn. Initial `items` are checked like a turn's input (the file exists
+  and fits its content part). Deleting a file that a conversation uses
+  makes its later turns fail with 422; start a new conversation
+- the conversation items API (`/v1/conversations/{id}/items`) is not
+  available and returns 501
+- on `/v1/chat/completions`, a `tool` message may answer a tool call made
+  in an earlier turn of the conversation
+
 The Claude runtime is stateless and does not use local conversations.
 
 ## Unsupported Routes
 
-These currently return `501 unsupported_error`:
+These currently return `501 unsupported_error`. Every 501 AIRelays returns
+carries `x-should-retry: false`, so OpenAI SDKs do not retry it:
 
 - embeddings
 - image generation

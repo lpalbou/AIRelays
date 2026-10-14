@@ -2075,6 +2075,7 @@ def test_chat_route_flattens_tools_before_upstream_request(tmp_path) -> None:
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
             },
+            "strict": False,
         }
     ]
     assert captured["payload"]["tool_choice"] == {  # type: ignore[index]
@@ -2185,7 +2186,8 @@ def test_chat_route_rejects_unknown_openai_model_when_catalog_is_available(tmp_p
             },
         )
 
-    assert response.status_code == 422
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "model_not_found"
     detail = response.json()["detail"]
     assert "Unsupported OpenAI model `gpt-5.4-medium-1m`" in detail
     assert "Use a model id from `/v1/models`." in detail
@@ -2211,7 +2213,8 @@ def test_responses_route_rejects_unknown_openai_model_when_catalog_is_available(
             },
         )
 
-    assert response.status_code == 422
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "model_not_found"
     detail = response.json()["detail"]
     assert "Unsupported OpenAI model `gpt-5.4-medium-1m`" in detail
     assert "Use a model id from `/v1/models`." in detail
@@ -2236,7 +2239,8 @@ def test_completions_route_rejects_unknown_openai_model_when_catalog_is_availabl
             },
         )
 
-    assert response.status_code == 422
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "model_not_found"
     detail = response.json()["detail"]
     assert "Unsupported OpenAI model `gpt-5.4-medium-1m`" in detail
     assert "Use a model id from `/v1/models`." in detail

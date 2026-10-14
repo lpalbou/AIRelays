@@ -4,6 +4,94 @@
 
 ### Fixed
 
+- `/v1/chat/completions` and `/v1/completions` report `usage` in OpenAI's Chat
+  Completions shape (`prompt_tokens`, `completion_tokens`, `total_tokens`,
+  `prompt_tokens_details`, `completion_tokens_details`). The OpenAI runtime
+  previously passed the Responses API names (`input_tokens`, `output_tokens`)
+  and an `attribution` block through, so clients reading the standard names
+  found no `prompt_tokens` or `completion_tokens`. `/v1/responses` is
+  unchanged.
+- Claude: `prompt_tokens` counts every prompt token, including the prompt
+  cache reads and writes the Claude CLI reports separately
+  (`prompt_tokens_details.cached_tokens` and `cache_write_tokens` break them
+  out). Missing usage is omitted instead of reported as zeros.
+- Streaming with `stream_options.include_usage` follows the spec on both
+  runtimes and both routes: chunks carry `"usage": null`, and the final usage
+  chunk has an empty `choices` list. `/v1/completions` streams now honour
+  `include_usage`.
+- A truncated non-streaming response reports `finish_reason: "length"`, like
+  the streaming path; output stopped by the provider's content filter or a
+  Claude refusal reports `content_filter`, and OpenAI refusals are returned
+  in `message.refusal` / `delta.refusal` instead of an empty answer.
+- Every error uses OpenAI's error object (`{"error": {message, type, param,
+  code}}`, with a `detail` copy); unknown models return 404
+  `model_not_found`; quota rejections carry `Retry-After`; a Claude CLI that
+  is not signed in returns 503 instead of 401.
+- Claude streams start only after the CLI produces output, so quota,
+  sign-in and launch failures arrive as HTTP errors clients can retry,
+  not as errors inside a 200 stream.
+- Chat responses include the required `choices[].logprobs` and
+  `message.refusal` fields (null), and `created` is always an integer.
+- `stop`, `logprobs`, `top_logprobs` and `logit_bias` on chat and
+  completions were silently ignored (or, for `stop` on completions, failed
+  upstream); non-empty values are now rejected with a clear 422 on both
+  runtimes. `seed` is stripped and listed in
+  `x-airelays-ignored-parameters`.
+- `stream_options` sent without `stream: true` is dropped and listed in
+  `x-airelays-ignored-parameters`.
+- Conversations keep their whole history: every turn on `/v1/responses`,
+  `/v1/chat/completions` and `/v1/completions` now sees the conversation's
+  earlier turns, not only its initial items, and a `tool` message may answer
+  a call from an earlier turn. Conversations store local files as `file_id`
+  references rather than file contents. Conversation deletes return
+  `object: "conversation.deleted"`.
+- The standard tool-call loop works: assistant messages sent back with
+  `content: null` and `tool_calls` (as OpenAI SDKs send them) are accepted.
+- `GET /v1/files` supports `after`, `limit`, `order` and `purpose` and
+  returns `first_id`, `last_id` and `has_more`, so SDK auto-pagination ends,
+  even while deleting files. Uploads read `purpose` from the form field the
+  SDKs send and reject unknown purposes and `expires_after`.
+- New `GET /v1/models/{model}`.
+- Chat accepts OpenAI's `file` content parts (`{"type": "file", "file":
+  {...}}`) and `tool_choice` of type `allowed_tools`, and forwards
+  `verbosity` and `prompt_cache_key` to OpenAI models.
+- The deprecated `functions` interface works end to end: replies carry
+  `message.function_call` with `finish_reason: "function_call"`, and
+  `role: "function"` messages are accepted.
+- Parameters AIRelays does not recognize on chat and completions are
+  listed in `x-airelays-ignored-parameters` (percent-encoded) instead of
+  being dropped silently; parameters sent as `null` are not listed.
+  `web_search_options` and `moderation` are rejected with a 422.
+  The Claude runtime accepts the same default values as the OpenAI runtime
+  (`best_of: 1`, `modalities: ["text"]`, empty `suffix`).
+- `json_schema` response formats are rewritten to strict-mode form only
+  when `strict: true`; other schemas are forwarded unchanged with
+  `strict: false`, OpenAI's default (the upstream otherwise assumed strict
+  mode and rejected them). Chat function tools likewise run non-strict
+  unless `function.strict` is `true`.
+- Upstream quota errors carry `Retry-After`, 501 responses tell OpenAI SDKs
+  not to retry, and every response has an `x-request-id` header.
+- `response_format: {"type": "json_object"}` works on GPT models (native JSON
+  mode; the messages, including the system prompt, must mention JSON, as on
+  OpenAI) and is listed in
+  `/v1/models` under `airelays.structured_output`.
+- Claude `json_object` answers are correct: some models answered an empty
+  `{}` or turned every value into a string. JSON mode on Claude now asks for
+  one JSON object and checks the answer (502 `invalid_json_output` if it is
+  not one); `json_schema` keeps the CLI's native enforcement.
+- Claude requests without a system message no longer carry the Claude CLI's
+  built-in agent prompt (about 3,000 tokens per request); a minimal system
+  prompt is sent instead, so short requests cost far fewer prompt tokens.
+- Claude failures no longer take accounts out of rotation by mistake. A
+  request error (bad image, unreachable URL) pauses nothing; a model one
+  account cannot serve pauses only that model on that account; a revoked
+  sign-in marks the account as needing a new sign-in instead of retrying it
+  every few minutes. Login-like CLI messages are checked against Anthropic
+  (live usage, no inference) before an account is blamed, and the status the
+  CLI reports decides the category, never a number quoted in the message. Error messages say which case applies, list
+  each account's state, and give the command to run or the time to wait.
+- Streamed Claude requests now record their token usage in the traffic log,
+  so the dashboard's traffic view shows it.
 - Windows: file uploads (`POST /v1/files`) no longer fail while moving the
   uploaded file into storage.
 - Windows with Python 3.11 or 3.12: OpenAI requests sent in quick succession
@@ -12,6 +100,21 @@
 
 ### Compatibility
 
+- Unknown models return 404 (was 422). Requests that set `stop`,
+  `logprobs`, `top_logprobs`, `logit_bias`, `web_search_options` or
+  `moderation` now fail instead of silently ignoring them.
+- `json_schema` formats without `strict: true` now run in non-strict mode,
+  as on OpenAI, and are no longer rewritten, so optional properties stay
+  optional. Send `strict: true` for strict-mode enforcement.
+- Claude requests without a system message now run with a minimal system
+  prompt instead of the Claude CLI's agent prompt; add your own system
+  message if you relied on that persona.
+- Conversation objects no longer include `seed_items`. The deprecated
+  `functions` cannot be combined with `conversation`.
+- Clients that read `input_tokens`/`output_tokens` from chat or completions
+  responses must read `prompt_tokens`/`completion_tokens`. Claude
+  `prompt_tokens` values are larger than before because cached prompt tokens
+  are now counted.
 - Desktop installers were not published for 0.16.1; 0.16.2 is the first
   desktop release with the 0.16.1 changes below.
 

@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, Response
 
 from airelay.config import Settings
 from airelay.traffic import TrafficLogger
+from airelay.errors import error_body
 
 
 @dataclass(slots=True)
@@ -47,13 +48,7 @@ def _error_response(
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     return JSONResponse(
-        {
-            "error": {
-                "message": message,
-                "type": error_type,
-                "code": code,
-            }
-        },
+        error_body(message, status_code=status_code, code=code, type_=error_type),
         status_code=status_code,
         headers=headers,
     )

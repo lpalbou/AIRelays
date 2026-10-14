@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Any
 
 
+# How long a deleted file still anchors `GET /v1/files?after=<id>`.
+FILE_TOMBSTONE_SECONDS = 24 * 3600
+
+
 class AppStore:
     def __init__(self, data_dir: Path) -> None:
         self._data_dir = data_dir
@@ -33,7 +37,8 @@ class AppStore:
                     bytes INTEGER NOT NULL,
                     sha256 TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
-                    storage_path TEXT NOT NULL
+                    storage_path TEXT NOT NULL,
+                    deleted_at INTEGER
                 );
 
                 CREATE TABLE IF NOT EXISTS conversations (
@@ -46,6 +51,9 @@ class AppStore:
                 );
                 """
             )
+            columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(files)")}
+            if "deleted_at" not in columns:
+                self._conn.execute("ALTER TABLE files ADD COLUMN deleted_at INTEGER")
             self._conn.commit()
 
     def create_file(
@@ -106,7 +114,7 @@ class AppStore:
             row = self._conn.execute(
                 """
                 SELECT COUNT(*) AS file_count, COALESCE(SUM(bytes), 0) AS total_bytes
-                FROM files
+                FROM files WHERE deleted_at IS NULL
                 """
             ).fetchone()
         return {
@@ -121,21 +129,50 @@ class AppStore:
             ).fetchone()
         return {"conversation_count": int(row["conversation_count"])}
 
-    def list_files(self) -> list[dict[str, Any]]:
+    def list_files(
+        self, *, after: str | None = None, limit: int = 10_000, order: str = "desc",
+        purpose: str | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """One page of files by creation time (ties in upload order) and
+        whether more follow. `after` is the last file id of the previous
+        page, which may have been deleted since (list-and-delete loops); an
+        unknown id raises KeyError."""
+        direction, compare = ("DESC", "<") if order == "desc" else ("ASC", ">")
+        clauses: list[str] = ["deleted_at IS NULL"]
+        params: list[Any] = []
         with self._lock:
-            rows = self._conn.execute("SELECT * FROM files ORDER BY created_at DESC").fetchall()
-        return [self._row_to_file(row) for row in rows]
+            if after is not None:
+                cursor = self._conn.execute(
+                    "SELECT created_at, rowid FROM files WHERE id = ?", (after,)
+                ).fetchone()
+                if cursor is None:
+                    raise KeyError(after)
+                clauses.append(f"(created_at, rowid) {compare} (?, ?)")
+                params.extend(cursor)
+            if purpose is not None:
+                clauses.append("purpose = ?")
+                params.append(purpose)
+            order_by = f"ORDER BY created_at {direction}, rowid {direction}"
+            rows = self._conn.execute(
+                f"SELECT * FROM files WHERE {' AND '.join(clauses)} {order_by} LIMIT ?",
+                (*params, limit + 1),
+            ).fetchall()
+        return [self._row_to_file(row) for row in rows[:limit]], len(rows) > limit
 
     def get_file(self, file_id: str) -> dict[str, Any]:
         with self._lock:
-            row = self._conn.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
+            row = self._conn.execute(
+                "SELECT * FROM files WHERE id = ? AND deleted_at IS NULL", (file_id,)
+            ).fetchone()
         if row is None:
             raise KeyError(file_id)
         return self._row_to_file(row)
 
     def get_file_bytes(self, file_id: str) -> tuple[dict[str, Any], bytes]:
         with self._lock:
-            row = self._conn.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
+            row = self._conn.execute(
+                "SELECT * FROM files WHERE id = ? AND deleted_at IS NULL", (file_id,)
+            ).fetchone()
         if row is None:
             raise KeyError(file_id)
         file_record = self._row_to_file(row)
@@ -143,11 +180,17 @@ class AppStore:
         return file_record, data
 
     def delete_file(self, file_id: str) -> bool:
+        """Removes the content and keeps a short-lived tombstone row, so a
+        list cursor pointing at the deleted file still finds its place."""
+        now = int(time.time())
         with self._lock:
-            row = self._conn.execute("SELECT storage_path FROM files WHERE id = ?", (file_id,)).fetchone()
+            row = self._conn.execute(
+                "SELECT storage_path FROM files WHERE id = ? AND deleted_at IS NULL", (file_id,)
+            ).fetchone()
             if row is None:
                 return False
-            self._conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
+            self._conn.execute("UPDATE files SET deleted_at = ? WHERE id = ?", (now, file_id))
+            self._conn.execute("DELETE FROM files WHERE deleted_at < ?", (now - FILE_TOMBSTONE_SECONDS,))
             self._conn.commit()
         Path(row["storage_path"]).unlink(missing_ok=True)
         return True
@@ -155,19 +198,21 @@ class AppStore:
     def create_conversation(
         self,
         metadata: dict[str, Any] | None = None,
-        seed_items: list[dict[str, Any]] | None = None,
+        items: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         created_at = int(time.time())
         conversation_id = f"conv_{uuid.uuid4().hex}"
         payload = json.dumps(metadata or {}, ensure_ascii=True)
-        seed_payload = json.dumps(seed_items or [], ensure_ascii=True)
+        items_payload = json.dumps(items or [], ensure_ascii=True)
         with self._lock:
+            # `seed_items_json` holds the conversation's running item list
+            # (initial items plus every completed turn).
             self._conn.execute(
                 """
                 INSERT INTO conversations (id, metadata_json, seed_items_json, latest_response_id, created_at, updated_at)
                 VALUES (?, ?, ?, NULL, ?, ?)
                 """,
-                (conversation_id, payload, seed_payload, created_at, created_at),
+                (conversation_id, payload, items_payload, created_at, created_at),
             )
             self._conn.commit()
         return self.get_conversation(conversation_id)
@@ -175,7 +220,8 @@ class AppStore:
     def get_conversation(self, conversation_id: str) -> dict[str, Any]:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
+                "SELECT id, metadata_json, latest_response_id, created_at, updated_at FROM conversations WHERE id = ?",
+                (conversation_id,),
             ).fetchone()
         if row is None:
             raise KeyError(conversation_id)
@@ -197,16 +243,33 @@ class AppStore:
             self._conn.commit()
         return self.get_conversation(conversation_id)
 
-    def touch_conversation(self, conversation_id: str, latest_response_id: str | None) -> None:
+    def conversation_items(self, conversation_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT seed_items_json FROM conversations WHERE id = ?", (conversation_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(conversation_id)
+        return json.loads(row["seed_items_json"] or "[]")
+
+    def append_conversation_items(
+        self, conversation_id: str, items: list[dict[str, Any]], latest_response_id: str | None
+    ) -> None:
         updated_at = int(time.time())
         with self._lock:
+            row = self._conn.execute(
+                "SELECT seed_items_json FROM conversations WHERE id = ?", (conversation_id,)
+            ).fetchone()
+            if row is None:
+                return  # deleted while the turn was running
+            history = json.loads(row["seed_items_json"] or "[]") + items
             self._conn.execute(
                 """
                 UPDATE conversations
-                SET latest_response_id = COALESCE(?, latest_response_id), updated_at = ?
+                SET seed_items_json = ?, latest_response_id = COALESCE(?, latest_response_id), updated_at = ?
                 WHERE id = ?
                 """,
-                (latest_response_id, updated_at, conversation_id),
+                (json.dumps(history, ensure_ascii=True), latest_response_id, updated_at, conversation_id),
             )
             self._conn.commit()
 
@@ -239,5 +302,4 @@ class AppStore:
             "updated_at": row["updated_at"],
             "latest_response_id": row["latest_response_id"],
             "metadata": json.loads(row["metadata_json"]),
-            "seed_items": json.loads(row["seed_items_json"] or "[]"),
         }

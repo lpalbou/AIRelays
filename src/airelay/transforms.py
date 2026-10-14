@@ -4,8 +4,9 @@ import base64
 import copy
 import json
 import mimetypes
+import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterator
 
 from airelay.store import AppStore
 
@@ -40,20 +41,87 @@ UNSUPPORTED_UPSTREAM_PARAMETERS = (
     "max_tokens",
     "user",
     "safety_identifier",
+    # Best-effort determinism in OpenAI's own API; the upstreams have none.
+    "seed",
 )
+
+# Chat/Completions controls neither upstream can honor. Dropping them would
+# silently change the output (ADR 0001), so they are rejected instead.
+UNHONORED_CHAT_PARAMETERS = ("stop", "logprobs", "top_logprobs", "logit_bias")
+
+
+# Every parameter the translated chat and completions routes understand:
+# translated, stripped and disclosed, or rejected. Anything else is dropped
+# and disclosed with the stripped parameters (strip_unknown_parameters), so
+# a parameter AIRelays does not know never disappears silently. The last
+# three chat entries and `conversation` are AIRelays extensions.
+CHAT_PARAMETERS = frozenset({
+    "model", "messages", "stream", "stream_options", "n", "store", "metadata", "service_tier",
+    "tools", "tool_choice", "parallel_tool_calls", "functions", "function_call",
+    "response_format", "reasoning_effort", "verbosity", "prompt_cache_key",
+    "audio", "modalities", "prediction", "web_search_options", "moderation",
+    *UNSUPPORTED_UPSTREAM_PARAMETERS, *UNHONORED_CHAT_PARAMETERS,
+    "conversation", "instructions", "include",
+})
+COMPLETIONS_PARAMETERS = frozenset({
+    "model", "prompt", "stream", "stream_options", "n", "store", "metadata",
+    "best_of", "echo", "suffix", "reasoning_effort",
+    *UNSUPPORTED_UPSTREAM_PARAMETERS, *UNHONORED_CHAT_PARAMETERS,
+    "conversation", "instructions",
+})
+
+
+# Feature switches whose empty object is still a request: OpenAI documents
+# `web_search_options: {}` as "search with defaults".
+_ANY_VALUE_REQUESTS = frozenset({"web_search_options", "audio", "prediction", "moderation"})
 
 
 class TranslationError(ValueError):
     pass
 
 
+def strip_unknown_parameters(payload: dict[str, Any], known: frozenset[str]) -> list[str]:
+    """Drop parameters outside `known`; return the non-null ones for
+    disclosure (null means "not set")."""
+    unknown = sorted(name for name in payload if name not in known)
+    return [name for name in unknown if payload.pop(name) is not None]
+
+
 def strip_unsupported_response_parameters(payload: dict[str, Any]) -> list[str]:
     ignored: list[str] = []
     for name in UNSUPPORTED_UPSTREAM_PARAMETERS:
-        if name in payload:
-            payload.pop(name, None)
+        if name in payload and payload.pop(name) is not None:
             ignored.append(name)
+    # OpenAI: "Only set this when you set `stream: true`". Without streaming
+    # it has no effect, so it is dropped and disclosed rather than ignored.
+    if "stream_options" in payload and not payload.get("stream"):
+        if payload.pop("stream_options") is not None:
+            ignored.append("stream_options")
     return ignored
+
+
+def is_requested(name: str, value: Any) -> bool:
+    """Whether a parameter asks for something, as opposed to restating the
+    default many clients send (null, false, 0, empty, `best_of: 1`,
+    `modalities: ["text"]`). Legacy completions `logprobs` is an integer
+    where 0 still asks for the sampled token's logprob."""
+    if name == "logprobs" and isinstance(value, int) and not isinstance(value, bool):
+        return True
+    if name in _ANY_VALUE_REQUESTS:
+        return value is not None
+    if value in (None, False, 0, "", [], {}):
+        return False
+    return not ((name == "best_of" and value == 1) or (name == "modalities" and value == ["text"]))
+
+
+def reject_unhonored_parameters(payload: dict[str, Any]) -> None:
+    named = [name for name in UNHONORED_CHAT_PARAMETERS if is_requested(name, payload.get(name))]
+    if named:
+        listed = ", ".join(f"`{name}`" for name in named)
+        raise TranslationError(
+            f"{listed} cannot be honored by AIRelays' upstreams and would change the output; "
+            "remove it from the request."
+        )
 
 
 def _schema_allows_null(schema: Any) -> bool:
@@ -187,9 +255,17 @@ def _translate_function_tool(function: Any) -> dict[str, Any]:
     }
     if "description" in function:
         translated["description"] = function.get("description")
-    if "strict" in function:
-        translated["strict"] = function.get("strict")
+    # Chat's default is non-strict; the Responses upstream defaults to strict.
+    translated["strict"] = _strict_flag(function.get("strict"), "function.strict")
     return translated
+
+
+def _strict_flag(value: Any, name: str) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise TranslationError(f"`{name}` must be a boolean.")
+    return value
 
 
 def _translate_custom_tool_format(format_value: Any) -> dict[str, Any]:
@@ -261,6 +337,19 @@ def _translate_chat_tool_choice(value: Any) -> Any:
         raise TranslationError("`tool_choice` must be a string or object.")
 
     tool_type = value.get("type")
+    if tool_type == "allowed_tools":
+        allowed = value.get("allowed_tools")
+        if not isinstance(allowed, dict) or allowed.get("mode") not in {"auto", "required"}:
+            raise TranslationError(
+                "`tool_choice.allowed_tools` requires `mode` (`auto` or `required`) and `tools`."
+            )
+        tools = allowed.get("tools")
+        if not isinstance(tools, list) or not tools:
+            raise TranslationError("`tool_choice.allowed_tools.tools` must be a non-empty array.")
+        if not all(isinstance(tool, dict) and tool.get("type") in {"function", "custom"} for tool in tools):
+            raise TranslationError("`tool_choice.allowed_tools.tools` entries must be function or custom tools.")
+        return {"type": "allowed_tools", "mode": allowed["mode"],
+                "tools": [_translate_chat_tool_choice(tool) for tool in tools]}
     if tool_type == "custom":
         name: Any = value.get("name")
         if not isinstance(name, str):
@@ -282,8 +371,6 @@ def _translate_chat_tool_choice(value: Any) -> Any:
 
 
 def _translate_legacy_function_call(value: Any) -> Any:
-    if value is None:
-        return None
     if isinstance(value, str):
         if value in {"auto", "none"}:
             return value
@@ -296,14 +383,20 @@ def _translate_legacy_function_call(value: Any) -> Any:
     return {"type": "function", "name": name}
 
 
+def uses_legacy_functions(body: dict[str, Any]) -> bool:
+    """Whether a chat request uses the deprecated `functions` interface,
+    whose replies carry `message.function_call` instead of `tool_calls`."""
+    return is_requested("functions", body.get("functions"))
+
+
 def _translate_chat_response_format(response_format: dict[str, Any]) -> dict[str, Any] | None:
     response_format_type = response_format.get("type")
     if response_format_type == "text":
         return None
     if response_format_type == "json_object":
-        raise TranslationError(
-            "`response_format.type=json_object` is not yet verified against the subscription backend."
-        )
+        # Native JSON mode (verified live); the upstream applies OpenAI's own
+        # rule that the input must mention JSON.
+        return {"type": "json_object"}
     if response_format_type != "json_schema":
         raise TranslationError("Unsupported `response_format` value.")
     schema_payload = response_format.get("json_schema")
@@ -320,8 +413,17 @@ def _translate_chat_response_format(response_format: dict[str, Any]) -> dict[str
         raise TranslationError(
             "`response_format.json_schema.schema` must be an object."
         )
-    translated["schema"] = _normalize_json_schema_object_constraints(translated["schema"])
+    _apply_strictness(translated)
     return translated
+
+
+def _apply_strictness(schema_format: dict[str, Any]) -> None:
+    """OpenAI's `strict` defaults to false, but the upstream treats a missing
+    `strict` as strict mode, so it is always sent explicitly. Strict schemas
+    are rewritten to OpenAI's strict-mode form; others are left as given."""
+    schema_format["strict"] = _strict_flag(schema_format.get("strict"), "strict")
+    if schema_format["strict"]:
+        schema_format["schema"] = _normalize_json_schema_object_constraints(schema_format["schema"])
 
 
 def _normalize_responses_text_format(text_format: Any) -> dict[str, Any]:
@@ -331,9 +433,7 @@ def _normalize_responses_text_format(text_format: Any) -> dict[str, Any]:
     if format_type == "text":
         return copy.deepcopy(text_format)
     if format_type == "json_object":
-        raise TranslationError(
-            "`text.format.type=json_object` is not yet verified against the subscription backend."
-        )
+        return {"type": "json_object"}
     if format_type != "json_schema":
         raise TranslationError("Unsupported `text.format.type` value.")
 
@@ -342,7 +442,7 @@ def _normalize_responses_text_format(text_format: Any) -> dict[str, Any]:
         raise TranslationError("`text.format.name` must be a non-empty string.")
     if not isinstance(translated.get("schema"), dict):
         raise TranslationError("`text.format.schema` must be an object.")
-    translated["schema"] = _normalize_json_schema_object_constraints(translated["schema"])
+    _apply_strictness(translated)
     return translated
 
 
@@ -441,15 +541,12 @@ def _expand_local_file(content_item: dict[str, Any], store: AppStore) -> list[di
     try:
         file_record, raw = store.get_file_bytes(file_id)
     except KeyError as exc:
-        raise TranslationError(
-            f"Unknown local file id `{file_id}`. Upload it first with `POST /v1/files`."
-        ) from exc
+        raise UnknownLocalFileError(file_id) from exc
+    _check_file_fits(content_item, file_record)
     content_type = file_record["content_type"]
     filename = file_record["filename"]
     kind = content_item.get("type")
     if kind in {"input_image", "image_url"}:
-        if not content_type.startswith("image/"):
-            raise TranslationError(f"File `{filename}` is not an image.")
         return [
             {
                 "type": "input_image",
@@ -465,21 +562,69 @@ def _expand_local_file(content_item: dict[str, Any], store: AppStore) -> list[di
                 "file_data": _data_url(content_type, raw),
             }
         ]
-    if _is_text_file(content_type):
-        if len(raw) > INLINE_TEXT_FILE_MAX_BYTES:
+    text = raw.decode("utf-8", errors="replace")
+    return [
+        {
+            "type": "input_text",
+            "text": f"Uploaded file `{filename}` ({content_type}):\n\n{text}",
+        }
+    ]
+
+
+def _check_file_fits(part: dict[str, Any], record: dict[str, Any]) -> None:
+    """Whether a stored file can fill this content part; checked when a
+    request or conversation references it and again when it is inlined."""
+    content_type, filename = record["content_type"], record["filename"]
+    kind = part.get("type")
+    if kind in {"input_image", "image_url"}:
+        if not content_type.startswith("image/"):
+            raise TranslationError(f"File `{filename}` is not an image.")
+    elif kind not in {"input_file", "file"}:
+        if not _is_text_file(content_type):
             raise TranslationError(
-                f"File `{filename}` is too large to inline as text without truncation."
+                f"File `{filename}` with content type `{content_type}` is not supported by the subscription backend."
             )
-        text = raw.decode("utf-8", errors="replace")
-        return [
-            {
-                "type": "input_text",
-                "text": f"Uploaded file `{filename}` ({content_type}):\n\n{text}",
-            }
-        ]
-    raise TranslationError(
-        f"File `{filename}` with content type `{content_type}` is not supported by the subscription backend."
-    )
+        if record["bytes"] > INLINE_TEXT_FILE_MAX_BYTES:
+            raise TranslationError(f"File `{filename}` is too large to inline as text without truncation.")
+
+
+class UnknownLocalFileError(TranslationError):
+    def __init__(self, file_id: str) -> None:
+        super().__init__(f"Unknown local file id `{file_id}`. Upload it first with `POST /v1/files`.")
+        self.file_id = file_id
+
+
+def _local_file_parts(items: list[Any]) -> Iterator[dict[str, Any]]:
+    for item in items:
+        if isinstance(item, dict) and isinstance(item.get("content"), list):
+            for part in item["content"]:
+                if isinstance(part, dict) and isinstance(part.get("file_id"), str) and part["file_id"]:
+                    yield part
+
+
+def _check_local_files(items: list[Any], store: AppStore) -> None:
+    for part in _local_file_parts(items):
+        try:
+            record = store.get_file(part["file_id"])
+        except KeyError as exc:
+            raise UnknownLocalFileError(part["file_id"]) from exc
+        _check_file_fits(part, record)
+
+
+def expand_local_files(payload: dict[str, Any], store: AppStore) -> None:
+    """Inline local file references (`file_id` from `POST /v1/files`), which
+    the upstream cannot resolve, into the final upstream `input`. Translation
+    keeps the references so conversations store them, not the file bytes;
+    the input items themselves are not modified."""
+    expanded: list[Any] = []
+    for item in payload["input"]:
+        if isinstance(item, dict) and any(_local_file_parts([item])):
+            parts: list[dict[str, Any]] = []
+            for part in item["content"]:
+                parts.extend(_expand_local_file(part, store) if isinstance(part, dict) else [part])
+            item = {**item, "content": parts}
+        expanded.append(item)
+    payload["input"] = expanded
 
 
 def _normalize_responses_input(payload: dict[str, Any], store: AppStore) -> dict[str, Any]:
@@ -492,13 +637,11 @@ def _normalize_responses_input(payload: dict[str, Any], store: AppStore) -> dict
         content = message.get("content")
         if not isinstance(content, list):
             continue
-        expanded: list[dict[str, Any]] = []
-        for item in content:
+        for index, item in enumerate(content):
             if not isinstance(item, dict):
                 raise TranslationError("Each content item must be an object.")
-            normalized_item = _normalize_input_file_item(item)
-            expanded.extend(_expand_local_file(normalized_item, store))
-        message["content"] = expanded
+            content[index] = _normalize_input_file_item(item)
+    _check_local_files(input_items, store)
     return normalized
 
 
@@ -546,7 +689,13 @@ def _responses_message(
 ) -> dict[str, Any] | None:
     text_part_type = "output_text" if role == "assistant" else "input_text"
     parts: list[dict[str, Any]]
-    if isinstance(content, str):
+    if content is None:
+        # Assistant messages carrying only `tool_calls` or a `refusal` have
+        # null content (OpenAI sends it, and so does AIRelays).
+        if role != "assistant":
+            raise TranslationError(f"`{role}` messages require `content`.")
+        parts = []
+    elif isinstance(content, str):
         parts = [{"type": text_part_type, "text": content}] if content else []
     elif isinstance(content, list):
         parts = []
@@ -573,12 +722,8 @@ def _responses_message(
                 if isinstance(image_url, dict):
                     file_id = image_url.get("file_id")
                     if isinstance(file_id, str):
-                        parts.extend(
-                            _expand_local_file(
-                                {"type": "image_url", "file_id": file_id, "detail": image_url.get("detail", "auto")},
-                                _STORE_PLACEHOLDER,
-                            )
-                        )
+                        parts.append({"type": "input_image", "file_id": file_id,
+                                      "detail": image_url.get("detail", "auto")})
                     else:
                         parts.append(
                             {
@@ -590,9 +735,12 @@ def _responses_message(
                 else:
                     raise TranslationError("`image_url` must be an object.")
                 continue
+            if kind == "file" and isinstance(item.get("file"), dict):
+                parts.extend(_chat_file_part(item["file"]))
+                continue
             file_id = item.get("file_id")
             if isinstance(file_id, str):
-                parts.extend(_expand_local_file({"type": kind, "file_id": file_id}, _STORE_PLACEHOLDER))
+                parts.append({"type": kind, "file_id": file_id})
                 continue
             raise TranslationError(f"Unsupported chat content part `{kind}`.")
     else:
@@ -604,6 +752,20 @@ def _responses_message(
     if not parts:
         return None
     return {"type": "message", "role": role, "content": parts}
+
+
+def _chat_file_part(file: dict[str, Any]) -> list[dict[str, Any]]:
+    """OpenAI's chat file part, `{"type": "file", "file": {...}}`: a local
+    `file_id`, or inline `file_data` with its `filename`."""
+    file_id = file.get("file_id")
+    if isinstance(file_id, str) and file_id:
+        return [{"type": "input_file", "file_id": file_id}]
+    if isinstance(file.get("file_data"), str) and file["file_data"]:
+        item = {"type": "input_file", "file_data": file["file_data"]}
+        if file.get("filename") is not None:
+            item["filename"] = file["filename"]
+        return [_normalize_input_file_item(item)]
+    raise TranslationError("`file` content parts require `file.file_id` or `file.file_data`.")
 
 
 def _translate_chat_tool_call(tool_call: Any, fallback_index: int) -> tuple[dict[str, Any], str]:
@@ -660,33 +822,22 @@ def response_item_to_chat_tool_call(item: Any) -> dict[str, Any] | None:
     return None
 
 
-class _StorePlaceholder:
-    def __init__(self) -> None:
-        self._store: AppStore | None = None
-
-    def bind(self, store: AppStore) -> None:
-        self._store = store
-
-    def get_file_bytes(self, file_id: str) -> tuple[dict[str, Any], bytes]:
-        if self._store is None:
-            raise RuntimeError("Store placeholder is not bound.")
-        return self._store.get_file_bytes(file_id)
-
-
-_STORE_PLACEHOLDER = _StorePlaceholder()
-
-
 def chat_completions_to_responses(
     body: dict[str, Any],
     store: AppStore,
     allow_tools: bool,
 ) -> tuple[dict[str, Any], bool, str | None]:
-    _STORE_PLACEHOLDER.bind(store)
-    unsupported = [name for name in ("audio", "modalities", "prediction") if name in body]
+    unsupported = [name for name in ("audio", "modalities", "prediction", "web_search_options", "moderation")
+                   if is_requested(name, body.get(name))]
     if unsupported:
         raise TranslationError(
             f"Unsupported chat.completions parameters for the subscription backend: {', '.join(unsupported)}"
         )
+    legacy_functions = uses_legacy_functions(body)
+    if legacy_functions and body.get("tools"):
+        raise TranslationError("Use either `tools` or the deprecated `functions`, not both.")
+    if legacy_functions and body.get("conversation") is not None:
+        raise TranslationError("The deprecated `functions` cannot be combined with `conversation`; use `tools`.")
     if body.get("n") not in {None, 1}:
         raise TranslationError("Only `n=1` is supported.")
     if not allow_tools and (body.get("tools") or body.get("functions")):
@@ -705,9 +856,18 @@ def chat_completions_to_responses(
     if not isinstance(model, str) or not model:
         raise TranslationError("Chat completions requests must include a `model` string.")
 
+    conversation_id = body.get("conversation")
+    if conversation_id is not None and not isinstance(conversation_id, str):
+        raise TranslationError("`conversation` must be a string when provided.")
+
     input_items: list[dict[str, Any]] = []
     instruction_parts: list[str] = []
-    tool_call_types: dict[str, str] = {}
+    # Tool results may answer calls made earlier in the conversation.
+    tool_call_types = _conversation_tool_calls(store, conversation_id)
+    # Deprecated interface: `function` messages answer calls by name.
+    legacy_calls: dict[str, str] = {}
+    response_format = body.get("response_format")
+    json_mode = isinstance(response_format, dict) and response_format.get("type") == "json_object"
     top_level_instructions = body.get("instructions")
     if isinstance(top_level_instructions, str) and top_level_instructions.strip():
         instruction_parts.append(top_level_instructions)
@@ -717,8 +877,25 @@ def chat_completions_to_responses(
         role = message.get("role")
         if role in {"system", "developer"}:
             content_text = _content_to_text(message.get("content"))
-            if content_text:
+            if content_text and json_mode:
+                # OpenAI's JSON mode needs "json" in the messages, and the
+                # upstream does not count `instructions`; as developer input
+                # the system prompt counts, as it does on OpenAI's chat API.
+                input_items.append({"type": "message", "role": "developer",
+                                    "content": [{"type": "input_text", "text": content_text}]})
+            elif content_text:
                 instruction_parts.append(content_text)
+            continue
+        if role == "function":
+            name = message.get("name")
+            call_id = legacy_calls.pop(name, None) if isinstance(name, str) else None
+            if call_id is None:
+                raise TranslationError(
+                    "`function` messages must answer a preceding assistant `function_call` with the same `name`."
+                )
+            input_items.append(
+                {"type": "function_call_output", "call_id": call_id, "output": _content_to_text(message.get("content"))}
+            )
             continue
         if role in {"user", "assistant"}:
             text_message = _responses_message(
@@ -748,6 +925,15 @@ def chat_completions_to_responses(
         else:
             raise TranslationError(f"Unsupported message role `{role}`.")
 
+        function_call = message.get("function_call")
+        if function_call is not None:
+            if role != "assistant" or not isinstance(function_call, dict) or not function_call.get("name"):
+                raise TranslationError("`function_call` must be an assistant message's `{name, arguments}`.")
+            call_id = f"call_fn_{len(input_items)}"
+            input_items.append({"type": "function_call", "call_id": call_id, "name": function_call["name"],
+                                "arguments": function_call.get("arguments", "{}")})
+            legacy_calls[function_call["name"]] = call_id
+
         tool_calls = message.get("tool_calls")
         if tool_calls:
             if role != "assistant":
@@ -762,7 +948,7 @@ def chat_completions_to_responses(
     tools = body.get("tools")
     if tools is not None:
         tools = _translate_chat_tools(tools)
-    elif "functions" in body:
+    elif legacy_functions:
         functions = body.get("functions")
         if not isinstance(functions, list):
             raise TranslationError("`functions` must be an array when provided.")
@@ -771,11 +957,12 @@ def chat_completions_to_responses(
     tool_choice = body.get("tool_choice")
     if tool_choice is not None:
         tool_choice = _translate_chat_tool_choice(tool_choice)
-    elif "function_call" in body:
-        tool_choice = _translate_legacy_function_call(body.get("function_call"))
+    elif body.get("function_call") is not None:
+        tool_choice = _translate_legacy_function_call(body["function_call"])
     else:
         tool_choice = "auto" if tools else "none"
 
+    _check_local_files(input_items, store)
     instructions = "\n\n".join(part for part in instruction_parts if part.strip())
     payload: dict[str, Any] = {
         "model": model,
@@ -783,19 +970,12 @@ def chat_completions_to_responses(
         "input": input_items,
         "tools": tools or [],
         "tool_choice": tool_choice,
-        "parallel_tool_calls": body.get("parallel_tool_calls", True),
+        # The deprecated interface returns a single `function_call`.
+        "parallel_tool_calls": False if legacy_functions else body.get("parallel_tool_calls", True),
         "store": False,
         "stream": True,
         "include": body.get("include", []),
     }
-    if "temperature" in body:
-        payload["temperature"] = body["temperature"]
-    if "top_p" in body:
-        payload["top_p"] = body["top_p"]
-    if "presence_penalty" in body:
-        payload["presence_penalty"] = body["presence_penalty"]
-    if "frequency_penalty" in body:
-        payload["frequency_penalty"] = body["frequency_penalty"]
     if "metadata" in body:
         payload["metadata"] = body["metadata"]
     if "service_tier" in body:
@@ -804,8 +984,11 @@ def chat_completions_to_responses(
     # presence alone must not forward `reasoning: {"effort": null}` upstream.
     if body.get("reasoning_effort") is not None:
         payload["reasoning"] = {"effort": body["reasoning_effort"]}
+    if body.get("prompt_cache_key") is not None:
+        payload["prompt_cache_key"] = body["prompt_cache_key"]
+    if body.get("verbosity") is not None:
+        payload["text"] = {"verbosity": body["verbosity"]}
 
-    response_format = body.get("response_format")
     if isinstance(response_format, dict):
         translated_format = _translate_chat_response_format(response_format)
         if translated_format is not None:
@@ -813,10 +996,29 @@ def chat_completions_to_responses(
             payload["text"]["format"] = translated_format
 
     wants_stream = bool(body.get("stream"))
-    conversation_id = body.get("conversation")
-    if conversation_id is not None and not isinstance(conversation_id, str):
-        raise TranslationError("`conversation` must be a string when provided.")
     return payload, wants_stream, conversation_id
+
+
+def _conversation_tool_calls(store: AppStore, conversation_id: str | None) -> dict[str, str]:
+    """call_id -> tool kind for the calls stored in a conversation."""
+    if not conversation_id:
+        return {}
+    try:
+        items = store.conversation_items(conversation_id)
+    except KeyError:
+        return {}  # the route answers 404 for the unknown conversation
+    kinds = {"function_call": "function", "custom_tool_call": "custom"}
+    return {item["call_id"]: kinds[item["type"]] for item in items
+            if isinstance(item, dict) and item.get("type") in kinds and isinstance(item.get("call_id"), str)}
+
+
+def normalize_conversation_items(items: Any, store: AppStore) -> list[dict[str, Any]]:
+    """Initial conversation items, normalized like a Responses `input`."""
+    if items is None:
+        return []
+    if not isinstance(items, list):
+        raise TranslationError("`items` must be an array when provided.")
+    return _normalize_responses_input({"input": items}, store)["input"]
 
 
 def chat_route_request_to_responses(
@@ -824,19 +1026,23 @@ def chat_route_request_to_responses(
     store: AppStore,
     allow_tools: bool,
 ) -> tuple[dict[str, Any], bool, str | None]:
-    has_messages = "messages" in body
-    has_input = "input" in body
-    if has_messages and has_input:
-        raise TranslationError(
-            "Chat route requests must use either chat.completions `messages` or Responses `input`, not both."
-        )
-    if has_input:
+    if is_responses_shape(body):
         return prepare_response_request(body, store, allow_tools)
     return chat_completions_to_responses(body, store, allow_tools)
 
 
+def is_responses_shape(body: dict[str, Any]) -> bool:
+    """Whether a chat-route body is Responses-shaped (Cursor sends these).
+    A body mixing both shapes is ambiguous and rejected."""
+    if "messages" in body and "input" in body:
+        raise TranslationError(
+            "Chat route requests must use either chat.completions `messages` or Responses `input`, not both."
+        )
+    return "input" in body
+
+
 def completions_to_responses(body: dict[str, Any]) -> tuple[dict[str, Any], bool, str | None]:
-    unsupported = [name for name in ("best_of", "echo", "logprobs", "suffix") if name in body]
+    unsupported = [name for name in ("best_of", "echo", "logprobs", "suffix") if is_requested(name, body.get(name))]
     if unsupported:
         raise TranslationError(
             f"Unsupported completions parameters for the subscription backend: {', '.join(unsupported)}"
@@ -877,16 +1083,6 @@ def completions_to_responses(body: dict[str, Any]) -> tuple[dict[str, Any], bool
         "stream": True,
         "include": [],
     }
-    if "temperature" in body:
-        payload["temperature"] = body["temperature"]
-    if "top_p" in body:
-        payload["top_p"] = body["top_p"]
-    if "presence_penalty" in body:
-        payload["presence_penalty"] = body["presence_penalty"]
-    if "frequency_penalty" in body:
-        payload["frequency_penalty"] = body["frequency_penalty"]
-    if "stop" in body:
-        payload["stop"] = body["stop"]
     if "metadata" in body:
         payload["metadata"] = body["metadata"]
     # The completions route serves the same reasoning models as chat; the
@@ -1070,8 +1266,9 @@ def _timestamp_to_iso8601(timestamp: int | None) -> str | None:
         return None
 
 
-def responses_to_chat_completion(response: dict[str, Any]) -> dict[str, Any]:
+def responses_to_chat_completion(response: dict[str, Any], *, legacy_functions: bool = False) -> dict[str, Any]:
     text_parts: list[str] = []
+    refusal_parts: list[str] = []
     tool_calls: list[dict[str, Any]] = []
     for item in response.get("output", []):
         if item.get("type") == "message":
@@ -1080,37 +1277,64 @@ def responses_to_chat_completion(response: dict[str, Any]) -> dict[str, Any]:
                     text = part.get("text")
                     if isinstance(text, str):
                         text_parts.append(text)
+                elif part.get("type") == "refusal":
+                    refusal = part.get("refusal")
+                    if isinstance(refusal, str):
+                        refusal_parts.append(refusal)
         tool_call = response_item_to_chat_tool_call(item)
         if tool_call is not None:
             tool_calls.append(tool_call)
+    # `refusal` and `logprobs` are required (nullable) by the spec.
     assistant_message: dict[str, Any] = {
         "role": "assistant",
         "content": "".join(text_parts) or None,
+        "refusal": "".join(refusal_parts) or None,
     }
     finish_reason = "stop"
-    if tool_calls:
+    legacy_call = next((call for call in tool_calls if call["type"] == "function"), None)
+    if legacy_functions and legacy_call is not None:
+        # The deprecated interface carries one call as `message.function_call`.
+        assistant_message["function_call"] = dict(legacy_call["function"])
+        finish_reason = "function_call"
+    elif tool_calls:
         assistant_message["tool_calls"] = tool_calls
         if not text_parts:
             assistant_message["content"] = None
         finish_reason = "tool_calls"
-    return {
+    if response.get("status") == "incomplete":
+        finish_reason = incomplete_finish_reason(response)
+    return _with_usage({
         "id": response.get("id"),
         "object": "chat.completion",
-        "created": response.get("created_at"),
+        "created": created_timestamp(response.get("created_at"), int(time.time())),
         "model": response.get("model"),
         "choices": [
             {
                 "index": 0,
                 "message": assistant_message,
+                "logprobs": None,
                 "finish_reason": finish_reason,
             }
         ],
-        "usage": response.get("usage"),
-    }
+    }, completion_usage_from_responses(response.get("usage")))
+
+
+def incomplete_finish_reason(response: dict[str, Any]) -> str:
+    """finish_reason for a Responses result that stopped early."""
+    details = response.get("incomplete_details")
+    reason = details.get("reason") if isinstance(details, dict) else None
+    return "content_filter" if reason == "content_filter" else "length"
+
+
+def created_timestamp(value: Any, default: int) -> int:
+    """`created` is an integer in the chat/completions schemas; the
+    Responses `created_at` is a number."""
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else default
 
 
 def responses_to_completion(response: dict[str, Any]) -> dict[str, Any]:
     text_parts: list[str] = []
+    refused = False
     for item in response.get("output", []):
         if item.get("type") != "message":
             continue
@@ -1119,21 +1343,28 @@ def responses_to_completion(response: dict[str, Any]) -> dict[str, Any]:
                 text = part.get("text")
                 if isinstance(text, str):
                     text_parts.append(text)
-    return {
+            elif part.get("type") == "refusal":
+                refused = True
+    if refused:
+        finish_reason = "content_filter"
+    elif response.get("status") == "incomplete":
+        finish_reason = incomplete_finish_reason(response)
+    else:
+        finish_reason = "stop"
+    return _with_usage({
         "id": response.get("id"),
         "object": "text_completion",
-        "created": response.get("created_at"),
+        "created": created_timestamp(response.get("created_at"), int(time.time())),
         "model": response.get("model"),
         "choices": [
             {
                 "text": "".join(text_parts),
                 "index": 0,
                 "logprobs": None,
-                "finish_reason": "stop",
+                "finish_reason": finish_reason,
             }
         ],
-        "usage": response.get("usage"),
-    }
+    }, completion_usage_from_responses(response.get("usage")))
 
 
 def chat_completion_chunk(
@@ -1142,7 +1373,8 @@ def chat_completion_chunk(
     model: str,
     delta: dict[str, Any],
     finish_reason: str | None = None,
-    usage: dict[str, Any] | None = None,
+    *,
+    include_usage: bool = False,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "id": response_id,
@@ -1157,8 +1389,8 @@ def chat_completion_chunk(
             }
         ],
     }
-    if usage is not None:
-        payload["usage"] = usage
+    if include_usage:
+        payload["usage"] = None
     return payload
 
 
@@ -1168,8 +1400,10 @@ def completion_chunk(
     model: str,
     text: str,
     finish_reason: str | None = None,
+    *,
+    include_usage: bool = False,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "id": response_id,
         "object": "text_completion",
         "created": created_at,
@@ -1183,3 +1417,97 @@ def completion_chunk(
             }
         ],
     }
+    if include_usage:
+        payload["usage"] = None
+    return payload
+
+
+def stream_include_usage(body: dict[str, Any]) -> bool:
+    """Whether a streaming request asked for the final usage chunk."""
+    options = body.get("stream_options")
+    return isinstance(options, dict) and options.get("include_usage") is True
+
+
+def usage_chunk(object_: str, response_id: str, created_at: int, model: str,
+                usage: dict[str, Any]) -> dict[str, Any]:
+    """The extra last chunk `stream_options.include_usage` asks for: after the
+    finish_reason chunk, before `[DONE]`, with an empty `choices` list."""
+    return {"id": response_id, "object": object_, "created": created_at, "model": model,
+            "choices": [], "usage": usage}
+
+
+# ----- usage: the Chat/Completions `CompletionUsage` contract -----
+# Upstreams report usage in their own dialect; clients of the chat and
+# completions routes get OpenAI's CompletionUsage only. Unknown upstream keys
+# (e.g. `attribution`) are dropped here and kept in the traffic logs. Usage
+# that cannot be read is omitted, never reported as zeros (ADR 0001).
+
+
+def _count(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _details(**members: Any) -> dict[str, int] | None:
+    kept = {name: count for name, value in members.items() if (count := _count(value)) is not None}
+    return kept or None
+
+
+def _completion_usage(prompt: int, completion: int, prompt_details: dict[str, int] | None = None,
+                      completion_details: dict[str, int] | None = None) -> dict[str, Any]:
+    usage: dict[str, Any] = {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": prompt + completion,
+    }
+    if prompt_details:
+        usage["prompt_tokens_details"] = prompt_details
+    if completion_details:
+        usage["completion_tokens_details"] = completion_details
+    return usage
+
+
+def completion_usage_from_responses(usage: Any) -> dict[str, Any] | None:
+    """Responses API usage as CompletionUsage. Responses `input_tokens`
+    already include cached and cache-write tokens."""
+    if not isinstance(usage, dict):
+        return None
+    prompt, completion = _count(usage.get("input_tokens")), _count(usage.get("output_tokens"))
+    if prompt is None or completion is None:
+        return None
+    inputs = usage.get("input_tokens_details")
+    outputs = usage.get("output_tokens_details")
+    inputs = inputs if isinstance(inputs, dict) else {}
+    outputs = outputs if isinstance(outputs, dict) else {}
+    return _completion_usage(
+        prompt, completion,
+        _details(cached_tokens=inputs.get("cached_tokens"), cache_write_tokens=inputs.get("cache_write_tokens")),
+        _details(reasoning_tokens=outputs.get("reasoning_tokens")),
+    )
+
+
+def completion_usage_from_anthropic(usage: Any) -> dict[str, Any] | None:
+    """Anthropic Messages usage (the Claude CLI's) as CompletionUsage.
+    Anthropic `input_tokens` exclude cache reads and writes; CompletionUsage
+    counts every prompt token in `prompt_tokens`."""
+    if not isinstance(usage, dict):
+        return None
+    uncached, completion = _count(usage.get("input_tokens")), _count(usage.get("output_tokens"))
+    if uncached is None or completion is None:
+        return None
+    # Anthropic types the cache counts as nullable (null = none); a present
+    # but unreadable count would make prompt_tokens a guess.
+    raw_read, raw_write = usage.get("cache_read_input_tokens"), usage.get("cache_creation_input_tokens")
+    read, write = _count(raw_read), _count(raw_write)
+    if (raw_read is not None and read is None) or (raw_write is not None and write is None):
+        return None
+    return _completion_usage(
+        uncached + (read or 0) + (write or 0), completion,
+        _details(cached_tokens=read, cache_write_tokens=write),
+    )
+
+
+def _with_usage(payload: dict[str, Any], usage: dict[str, Any] | None) -> dict[str, Any]:
+    # `usage` is optional in the spec: omit it rather than send null.
+    if usage is not None:
+        payload["usage"] = usage
+    return payload

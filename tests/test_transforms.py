@@ -10,6 +10,7 @@ from airelay.transforms import (
     chat_completions_to_responses,
     chat_route_request_to_responses,
     completions_to_responses,
+    expand_local_files,
     normalize_models_payload,
     prepare_response_request,
     responses_to_chat_completion,
@@ -148,6 +149,7 @@ def test_prepare_response_request_rewrites_local_pdf_file_id_as_input_file(
         store,
         allow_tools=True,
     )
+    expand_local_files(payload, store)
 
     assert payload["input"][0]["content"] == [
         {
@@ -271,6 +273,7 @@ def test_prepare_response_request_normalizes_nested_required_keys_in_text_format
                 "format": {
                     "type": "json_schema",
                     "name": "nested_schema",
+                    "strict": True,
                     "schema": {
                         "type": "object",
                         "properties": {
@@ -328,6 +331,7 @@ def test_prepare_response_request_rejects_true_additional_properties_in_text_for
                     "format": {
                         "type": "json_schema",
                         "name": "bad_schema",
+                        "strict": True,
                         "schema": {
                             "type": "object",
                             "properties": {"answer": {"type": "string"}},
@@ -342,17 +346,17 @@ def test_prepare_response_request_rejects_true_additional_properties_in_text_for
         )
 
 
-def test_prepare_response_request_rejects_json_object_text_format(store: AppStore) -> None:
-    with pytest.raises(TranslationError, match="json_object"):
-        prepare_response_request(
-            {
-                "model": "gpt-5.4-mini",
-                "input": "hello",
-                "text": {"format": {"type": "json_object"}},
-            },
-            store,
-            allow_tools=True,
-        )
+def test_prepare_response_request_forwards_json_object_text_format(store: AppStore) -> None:
+    payload, _, _ = prepare_response_request(
+        {
+            "model": "gpt-5.4-mini",
+            "input": "Answer in JSON.",
+            "text": {"format": {"type": "json_object"}},
+        },
+        store,
+        allow_tools=True,
+    )
+    assert payload["text"]["format"] == {"type": "json_object"}
 
 
 def test_prepare_response_request_rejects_tools_on_no_tools_route(store: AppStore) -> None:
@@ -523,6 +527,7 @@ def test_chat_completions_to_responses_flattens_function_tools_and_tool_choice(
             "name": "web_search",
             "description": "Search the web.",
             "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+            "strict": False,
         }
     ]
     assert payload["tool_choice"] == {"type": "function", "name": "web_search"}
@@ -759,6 +764,7 @@ def test_chat_completions_to_responses_flattens_legacy_functions_and_function_ca
             "name": "lookup",
             "description": "Look up data.",
             "parameters": {"type": "object", "properties": {"id": {"type": "string"}}},
+            "strict": False,
         }
     ]
     assert payload["tool_choice"] == {"type": "function", "name": "lookup"}
@@ -877,19 +883,19 @@ def test_chat_completions_to_responses_rejects_legacy_functions_on_no_tools_rout
         )
 
 
-def test_chat_completions_to_responses_rejects_unverified_json_object_response_format(
+def test_chat_completions_to_responses_maps_json_object_to_native_json_mode(
     store: AppStore,
 ) -> None:
-    with pytest.raises(TranslationError, match="json_object"):
-        chat_completions_to_responses(
-            {
-                "model": "gpt-5.4-mini",
-                "messages": [{"role": "user", "content": "hello"}],
-                "response_format": {"type": "json_object"},
-            },
-            store,
-            allow_tools=True,
-        )
+    payload, _, _ = chat_completions_to_responses(
+        {
+            "model": "gpt-5.4-mini",
+            "messages": [{"role": "user", "content": "Answer in JSON."}],
+            "response_format": {"type": "json_object"},
+        },
+        store,
+        allow_tools=True,
+    )
+    assert payload["text"]["format"] == {"type": "json_object"}
 
 
 def test_chat_completions_to_responses_maps_json_schema_response_format(store: AppStore) -> None:
@@ -936,6 +942,7 @@ def test_chat_completions_to_responses_normalizes_nested_object_schemas(store: A
                 "type": "json_schema",
                 "json_schema": {
                     "name": "nested_schema",
+                    "strict": True,
                     "schema": {
                         "type": "object",
                         "properties": {
@@ -986,6 +993,7 @@ def test_chat_completions_to_responses_normalizes_optional_properties_to_nullabl
                 "type": "json_schema",
                 "json_schema": {
                     "name": "nullable_schema",
+                    "strict": True,
                     "schema": {
                         "type": "object",
                         "properties": {
@@ -1023,6 +1031,7 @@ def test_chat_completions_to_responses_normalizes_nested_required_keys(
                 "type": "json_schema",
                 "json_schema": {
                     "name": "nested_required_schema",
+                    "strict": True,
                     "schema": {
                         "type": "object",
                         "properties": {
@@ -1082,6 +1091,7 @@ def test_chat_completions_to_responses_rejects_true_additional_properties(store:
                     "type": "json_schema",
                     "json_schema": {
                         "name": "bad_schema",
+                        "strict": True,
                         "schema": {
                             "type": "object",
                             "properties": {"answer": {"type": "string"}},

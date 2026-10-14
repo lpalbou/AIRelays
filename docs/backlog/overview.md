@@ -6,9 +6,9 @@ AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provi
 
 ## Counts
 
-- Planned: 3
+- Planned: 4
 - Proposed: 4
-- Completed: 9
+- Completed: 10
 - Deprecated: 1
 - Recurrent: 0
 
@@ -25,6 +25,7 @@ Planned track [cross-platform runtime](planned/platform/README.md) (ADR 0008): 0
 - [0022_relay_lifecycle_and_single_instance_tray.md](planned/platform/0022_relay_lifecycle_and_single_instance_tray.md)
 - [0023_headless_service_install.md](planned/platform/0023_headless_service_install.md)
 - [0024_signed_installers.md](planned/platform/0024_signed_installers.md)
+- [0027_images_and_claude_tools.md](planned/providers/0027_images_and_claude_tools.md) — images on both runtimes and tool calls on Claude models (0.17.0)
 
 ## Proposed Work
 
@@ -43,6 +44,7 @@ Planned track [cross-platform runtime](planned/platform/README.md) (ADR 0008): 0
   - [0001_provider_runtime_registry_for_subscription_relays.md](completed/providers/0001_provider_runtime_registry_for_subscription_relays.md)
   - [0010_experimental_claude_subscription_cli_adapter.md](completed/providers/0010_experimental_claude_subscription_cli_adapter.md)
   - [0011_claude_runtime_mainline_graduation.md](completed/providers/0011_claude_runtime_mainline_graduation.md)
+  - [0026_chat_completions_usage_contract.md](completed/providers/0026_chat_completions_usage_contract.md)
 - [Multi-account pool](completed/accounts/README.md)
   - [0012_balanced_multi_account_routing_and_pool_hardening.md](completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening.md)
   - [0013_openai_usage_probe_caching_and_single_flight.md](completed/accounts/0013_openai_usage_probe_caching_and_single_flight.md)
@@ -61,6 +63,7 @@ Planned track [cross-platform runtime](planned/platform/README.md) (ADR 0008): 0
 | 0019 | Longest-window balancing and weekly token tally | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0019_longest_window_balancing_and_weekly_tally.md` | 2026-07-28 | Completed | Windows identified by duration after the upstream payload became plan-dependent; balancing and the "more" token tally key on each account's longest (weekly) window; fabricated idle 5h row removed. | Two-agent adversarial pass; `pytest -q` (208, 15 new); Playwright mock render; live check after install |
 | 0020 | Relay-owned Claude accounts and CLI-sourced usage | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0020_relay_owned_claude_accounts.md` | 2026-10-10 | Completed | Claude routes only through AIRelays-owned profiles and an optional inference-only setup token; the personal Claude Code sign-in is never used or signed out; usage comes from Claude Code's `get_usage` with stale readings marked and excluded from routing (ADR 0007). | `pytest` 417 passed; desktop browser, node and `cargo check` green; live `get_usage` check against a real profile |
 | 0025 | Uniform cross-platform runtime, first slice | (worked directly; recorded post-completion) | `docs/backlog/completed/platform/0025_uniform_cross_platform_runtime_first_slice.md` | 2026-10-11 | Completed | File-only private credentials with a cross-process refresh lock, one `claude` launcher, isolated bundled interpreter, valid macOS signing, tests on three OSes (ADR 0008). | Three per-OS adversarial reviews; `pytest` 444 passed on 3.11–3.13; `cargo test`; desktop browser tests; MkDocs/build/twine green |
+| 0026 | Chat Completions usage contract and OpenAI conformance | (worked directly; recorded post-completion) | `docs/backlog/completed/providers/0026_chat_completions_usage_contract.md` | 2026-10-11 | Completed | Chat and completions report OpenAI's CompletionUsage on both runtimes (Claude counts cached prompt tokens); spec-shaped streamed usage; `/v1/responses` unchanged. | Three adversarial reviews; 85 contract/conformance tests; `pytest` 529 on 3.11–3.13; live schema validation (0 failures) and openai-python 3.29.0 checks |
 
 ## Deprecated Work
 
