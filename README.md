@@ -4,6 +4,7 @@
 
 - The default runtime uses an AIRelays-owned ChatGPT subscription login.
 - The Claude runtime balances your own subscription accounts through AIRelays-owned local `claude` CLI profiles; your personal Claude Code sign-in is never used or changed.
+- Both serve the same OpenAI-compatible endpoint; see [docs/capabilities.md](docs/capabilities.md) for what works on each.
 - AIRelays protects the relay with its own bearer token by default.
 - Traffic is logged to JSONL files with automatic rotation and retention (7 days, 1 GiB total by default).
 
@@ -388,10 +389,10 @@ sampling defaults, which cannot be overridden. The Claude routes
 apply the same adaptation — the local `claude` CLI has no sampling
 controls — so the same SDK calls work against `claude:*` models too.
 
-**Output-token limits are removed.** The subscription upstreams do not
-honor client-set output caps (`max_tokens`, `max_completion_tokens`,
-`max_output_tokens`), so AIRelays strips them instead of failing the
-request; responses run to the model's natural stop.
+**Output-token limits are honoured.** `max_completion_tokens`, `max_tokens`
+and `max_output_tokens` are enforced on both account types: GPT models apply
+the limit upstream (minimum 16), and a Claude run stops at the limit. A cut
+answer reports `finish_reason: "length"`, as on OpenAI.
 
 **Cursor BYOK chat-route compatibility is normalized locally.** Some
 current Cursor builds send malformed OpenAI-compatible requests to
@@ -450,26 +451,29 @@ Retries appear in the traffic log as `retry_backoff` records.
 
 ## Compatibility Boundary
 
+The full side-by-side matrix of what works on GPT models and on Claude models
+is in [docs/capabilities.md](docs/capabilities.md).
+
 OpenAI runtime:
 
 - first-class routes: `/v1/responses`, `/v1/chat/completions`, `/v1/completions`
 - local files and local conversations are supported
 - non-stream responses are reconstructed from streamed upstream events
 - `store=true` is rejected
-- output-token limit fields are stripped and disclosed on the OpenAI-shaped text-generation routes
+- output-token limits are enforced upstream (minimum 16)
 
 Claude runtime:
 
 - discovered Claude aliases and concrete model ids, plus configured overrides
-- supported routes: text `/v1/chat/completions` and text `/v1/completions`
-- stateless only
-- no `/v1/responses`
-- no files, images, audio, or tools
+- supported routes: `/v1/chat/completions`, `/v1/completions` and `/v1/responses`
+- images, PDFs and text files as input; local files and conversations
+- function tool calls are returned to your application, which runs them;
+  AIRelays never runs a tool (forced calls are refused; strict tools run non-strict)
+- no audio
 - structured outputs on chat completions: `response_format` `json_schema` maps
   to the CLI's native `--json-schema` enforcement; `json_object` answers are
   checked to be one JSON object
 - `reasoning_effort` maps to the CLI's `--effort` (low, medium, high, xhigh, max)
-- no AIRelays local conversation reuse
 - sampling parameters are stripped and disclosed, like on the OpenAI runtime
 
 ## Security Defaults

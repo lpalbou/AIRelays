@@ -23,3 +23,4 @@ These completed items record the initial provider-runtime expansion that turned 
 - [Configuration](../../../configuration.md)
 - [Disclaimer](../../../disclaimer.md)
 - [0026_chat_completions_usage_contract.md](0026_chat_completions_usage_contract.md): chat and completions report OpenAI's CompletionUsage on both runtimes, with spec-shaped streamed usage
+- [0027_images_and_claude_tools.md](0027_images_and_claude_tools.md): Claude models gain images, files, conversations, `/v1/responses` and tool calls (returned to the client, never run)

@@ -1,10 +1,11 @@
-# Planned: Images, files, conversations, `/v1/responses` and tool calls on Claude models (0.17.0)
+# Completed: Images, files, conversations, `/v1/responses` and tool calls on Claude models (0.17.0)
 
 ## Metadata
 
 - Created: 2026-10-14
-- Status: Planned
-- Target: 0.17.0
+- Status: Completed
+- Completed: 2026-10-15
+- Release: 0.17.0
 
 ## Context
 
@@ -109,3 +110,34 @@ messaging socket while running.
 
 - Fake-CLI tests for every trap above; opt-in live tests with 8x8 images and
   a tool round trip; an adversarial audit; local redeploy before release.
+
+## Outcome
+
+- One Claude runner (stream-json in and out, one user message per run,
+  non-streaming drains the same stream), `airelay.claude_content` for the
+  transcript with media in place, `airelay.media` for the image and document
+  check shared with the GPT path, `airelay.chat_responses` for
+  `/v1/responses` and conversation items over the chat path, and
+  `airelay.claude_tool_stub` / `airelay.claude_tool_guard` for tool calls.
+- Tool safety as recorded above, plus: tool runs require the stub's tools in
+  the init report (502 `cli_tools_unavailable` otherwise), a call to any
+  undefined tool stops the run, the stop at the call is bounded, and failures
+  that say nothing about an account never pause one (`NO_PAUSE_CODES`).
+- `strict: true` tools run non-strict and are disclosed; forced calls,
+  `parallel_tool_calls: false` and non-function tools are refused.
+- Follow-up: verify the `PreToolUse` hook command line on Windows (it fails
+  open there if the CLI's hook shell rejects it; the stub stays the
+  guarantee).
+
+## Final validation
+
+- Two adversarial audit rounds (tool safety first), all findings fixed.
+- `pytest` 605 passed on Python 3.11, 3.12 and 3.13.
+- Live, through the official openai SDK against the local build: 28/28
+  user-style checks on GPT and Claude (images, PDFs inline and by `file_id`,
+  tool round trips streamed and not, `/v1/responses` with tools and JSON
+  mode, conversations across routes and from GPT to Claude, refusals).
+- Live validation against openai-openapi: chat, completions, tool calls,
+  Responses objects and every Responses stream event, 0 failures (the
+  spec's non-null `usage`/`user` on in-progress responses aside, which
+  OpenAI's own upstream also sends as null).

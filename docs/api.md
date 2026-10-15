@@ -33,6 +33,9 @@ age limit but leaves size enforcement enabled. See
 [configuration](configuration.md#traffic-log-retention) for bounds, precedence,
 rotation behavior, migration, and CLI/tray controls.
 
+For a side-by-side summary of what works on GPT models and on Claude models,
+see [Capabilities](capabilities.md).
+
 ## Compatibility Adaptations (read this first)
 
 The verified upstream is the ChatGPT subscription backend, not the public
@@ -45,18 +48,25 @@ adaptation records when the request shape itself is repaired:
 - **Removed unsupported parameters:** `temperature`, `top_p`,
   `presence_penalty`, and `frequency_penalty` are stripped before the
   upstream call because the upstream rejects them
-  (`"Unsupported parameter: temperature"`). Output-token limit fields
-  (`max_tokens`, `max_completion_tokens`, `max_output_tokens`) and
-  caller-supplied end-user identifiers (`user`, `safety_identifier`) are
-  also stripped because the verified subscription backend does not honor
-  them, as is `seed` (best-effort determinism in OpenAI's own API; neither
-  upstream supports it). The names of removed parameters are returned in the
+  (`"Unsupported parameter: temperature"`). Caller-supplied end-user
+  identifiers (`user`, `safety_identifier`) are also stripped because the
+  verified subscription backend does not honor them, as is `seed`
+  (best-effort determinism in OpenAI's own API; neither upstream supports
+  it). The names of removed parameters are returned in the
   `x-airelays-ignored-parameters` response header and logged as a
   `compatibility_adaptation` traffic record with the reason. Generation
   runs with the upstream's own defaults. The same adaptation applies on
-  the Claude routes: the local `claude` CLI exposes no sampling or token
-  limit controls, so these parameters are stripped and disclosed there
-  too instead of failing the request.
+  the Claude routes: the local `claude` CLI exposes no sampling controls,
+  so these parameters are stripped and disclosed there too instead of
+  failing the request.
+- **Output-token limits:** `max_completion_tokens` (preferred) and
+  `max_tokens` on chat and completions, and `max_output_tokens` on
+  `/v1/responses`, are honoured on both runtimes. GPT models receive them as
+  the upstream's `max_output_tokens`, which enforces them (values below 16
+  get the upstream's own 400). On Claude models each CLI model call is capped
+  and the run stops when the first one reaches the limit, before the CLI
+  would continue on its own. A cut answer reports `finish_reason: "length"`
+  (`status: "incomplete"` on `/v1/responses`).
 - **Unrecognized parameters:** on `/v1/chat/completions` and
   `/v1/completions` (both runtimes), a parameter AIRelays does not
   recognize is dropped and listed in `x-airelays-ignored-parameters` like
@@ -268,12 +278,27 @@ OpenAI runtime:
 Current OpenAI limits:
 
 - `store=true` rejected
-- output-token limit fields stripped and disclosed (see
+- output-token limits enforced upstream (see
   [Compatibility Adaptations](#compatibility-adaptations-read-this-first))
 
 Claude runtime:
 
-- rejected explicitly on this route
+- the same request and response shapes, streamed (`response.created`,
+  `response.output_text.delta`, `function_call` items,
+  `response.completed`) or not, translated to the Claude runtime's chat
+  path: `input` (text, `input_image`, `input_file`, `function_call` and
+  `function_call_output` items), `instructions`, function `tools`,
+  `tool_choice`, `text.format` (`json_schema`, `json_object`) and
+  `reasoning.effort`
+- `conversation` works as on GPT models; `previous_response_id`,
+  `store: true`, `background` and stored prompts are refused (Claude
+  models keep no responses: use `conversation`)
+- function tools run non-strict, since Claude has no strict tool mode
+  (`strict: true` is listed in `x-airelays-ignored-parameters`). Server-side
+  tools (web search, file search)
+  are not available on Claude models
+- other unsupported fields, such as `reasoning.summary`, are dropped and
+  listed in `x-airelays-ignored-parameters`
 
 ## `POST /v1/chat/completions`
 
@@ -307,11 +332,32 @@ OpenAI runtime:
 Claude runtime:
 
 - discovered Claude aliases and concrete model ids, plus configured overrides
-- text-only `system`, `developer`, `user`, and `assistant` messages
+- `system`, `developer`, `user`, `assistant` and `tool` messages
 - `stream=true|false`
-- no tools
-- no files, images, or audio
-- no AIRelays local conversation reuse
+- images (`image_url`: a PNG, JPEG, GIF or WebP data URL, an http(s) URL,
+  or a local `file_id`) and documents (`file` parts: PDF or UTF-8 text, as
+  `file_data` or a local `file_id`), in any user message; an image or
+  document Claude cannot read returns 422, never a silently degraded answer.
+  `detail` has no Claude equivalent
+- function tools: Claude decides which of the client's tools to call, and
+  the calls come back as OpenAI `tool_calls` with
+  `finish_reason: "tool_calls"`; the client runs its tools and sends the
+  results back as `tool` messages, as with GPT models. AIRelays never runs
+  a tool: the CLI's built-in tools are off, the client's tools are only
+  descriptions behind a helper that executes nothing, every call is denied
+  before execution, and the run stops at the call. The CLI's startup report
+  is checked on every request, and a request stops if any tool appears that
+  AIRelays did not define (see [Tool calls on Claude models](#tool-calls-on-claude-models)).
+  Refused with 422 because Claude cannot honour them: a forced call
+  (`tool_choice` `required` or a named tool), `parallel_tool_calls: false`,
+  non-function tools, and `parameters` that are not an object schema.
+  `strict: true` tools run non-strict, listed in
+  `x-airelays-ignored-parameters` (Claude has no strict tool mode). A
+  request whose tools the CLI could not load fails with 502
+  `cli_tools_unavailable` instead of answering without them; the
+  `/no-tools/` routes refuse tools as on GPT models
+- `conversation` works as on GPT models
+- no audio
 - `reasoning_effort` supported (`low`, `medium`, `high`, `xhigh`, `max`),
   mapped to the CLI's `--effort` flag; omitted means the model's adaptive
   default
@@ -356,9 +402,9 @@ OpenAI runtime:
 Claude runtime:
 
 - discovered Claude aliases and concrete model ids, plus configured overrides
-- text-only prompt-in, text-out
+- text prompt in, text out (images, documents and tools are on
+  `/v1/chat/completions` and `/v1/responses`)
 - `stream=true|false`
-- no files, images, audio, or tools
 - `reasoning_effort` supported (same modes and mapping as chat completions)
 - `response_format` rejected loudly (not part of the completions API;
   ignoring it would silently hand unenforced text to a client that asked
@@ -488,7 +534,30 @@ Local AIRelays conversation storage for the OpenAI runtime compatibility path.
 - on `/v1/chat/completions`, a `tool` message may answer a tool call made
   in an earlier turn of the conversation
 
-The Claude runtime is stateless and does not use local conversations.
+Conversations work on Claude models too (chat completions and
+`/v1/responses`), and one conversation can continue across models and
+runtimes. Claude cannot replay other models' reasoning items, so they are
+skipped on Claude turns, and a conversation holding GPT `custom` tool calls
+cannot continue on a Claude model (422).
+
+## Tool calls on Claude models
+
+The `claude` CLI is an agent that would normally run tools itself. AIRelays
+uses it so that Claude only decides which tool to call, and the client runs
+it, exactly as with OpenAI:
+
+| Safeguard | What it does |
+|---|---|
+| Built-in tools off | The CLI starts with no shell, file, web or agent tools. |
+| Descriptions only | The client's tools reach the CLI through a helper inside AIRelays that lists them and answers every call with "not executed"; it can run nothing. |
+| Startup check | Every request checks the CLI's own list of available tools; anything AIRelays did not define stops the request. |
+| Pre-execution deny | The CLI asks a check before running any tool, and the answer is always "deny". |
+| Stop at the call | The run is interrupted as soon as Claude has made its calls. |
+
+The first two make running a tool impossible; the other three add defence
+in depth. The CLI itself still starts its usual helper programs on every
+Claude request (a read-only `git` check of its empty working folder, `ps`,
+`ioreg` and, on macOS, the keychain reader for its sign-in).
 
 ## Unsupported Routes
 

@@ -6,10 +6,13 @@ import json
 import math
 import os
 import re
+import shlex
 import subprocess
+import sys
 import threading
 import time
 import uuid
+import contextlib
 from contextlib import aclosing
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -21,13 +24,23 @@ from airelay.auth import AuthManager
 from airelay.backend import ChatGptCodexBackend
 from airelay.config import Settings
 from airelay.claude_auth import ClaudeProfile, account_identity, token_profile
+from airelay.claude_content import (
+    ClaudeContentError,
+    conversation_from_chat,
+    conversation_from_prompt,
+    transcript_text,
+    user_line,
+)
+from airelay import claude_tool_guard, claude_tool_stub
 from airelay.claude_launch import ArgumentsTooLong, ClaudeLauncher, workdir
 from airelay.private_io import write_private
 from airelay.traffic import TrafficLogger, snapshot_body
 from airelay.transforms import (
     UNHONORED_CHAT_PARAMETERS,
     UNSUPPORTED_UPSTREAM_PARAMETERS,
+    TranslationError,
     is_requested,
+    output_token_limit,
     chat_completion_chunk,
     completion_chunk,
     completion_usage_from_anthropic,
@@ -37,8 +50,7 @@ from airelay.transforms import (
 
 # Requested features the Claude runtime rejects (ADR 0001). Sampling
 # parameters (`temperature`, `top_p`, `presence_penalty`,
-# `frequency_penalty`) and output-token limits (`max_completion_tokens`,
-# `max_tokens`) are not listed: the app layer strips and discloses them
+# `frequency_penalty`) are not listed: the app layer strips and discloses them
 # (x-airelays-ignored-parameters), the same documented adaptation the
 # OpenAI runtime applies, because the local claude CLI exposes no
 # equivalent controls and standard SDKs send them by default.
@@ -46,14 +58,16 @@ from airelay.transforms import (
 # completions has no such parameter, so it is rejected there rather than
 # silently ignored.
 CLAUDE_CHAT_REJECTED = (
-    "tools", "functions", "tool_choice", "function_call", "conversation", "store",
-    "previous_response_id", "modalities", "audio", "prediction", "parallel_tool_calls",
+    "functions", "function_call", "conversation", "store",
+    "previous_response_id", "modalities", "audio", "prediction",
     "web_search_options", "moderation",
 )
 CLAUDE_COMPLETION_REJECTED = (
     "best_of", "echo", "logprobs", "suffix", "conversation", "store", "stop", "response_format",
 )
-_CLAUDE_COMMON = ("model", "stream", "stream_options", "n", "reasoning_effort",
+_CLAUDE_COMMON = ("model", "stream", "stream_options", "n", "reasoning_effort", "tools", "tool_choice",
+                  "max_completion_tokens", "max_tokens",
+                  "parallel_tool_calls",
                   *UNSUPPORTED_UPSTREAM_PARAMETERS, *UNHONORED_CHAT_PARAMETERS)
 # Everything else is dropped and disclosed by the app layer.
 CLAUDE_CHAT_PARAMETERS = frozenset({*_CLAUDE_COMMON, "messages", "response_format", *CLAUDE_CHAT_REJECTED})
@@ -134,6 +148,10 @@ class ProviderModel:
                 "capabilities": {
                     "routes": self.routes,
                     "stateful_conversations": self.stateful_conversations,
+                    # Both runtimes: function tool calls, images and documents
+                    # (PDF, text) as input.
+                    "tool_calls": True,
+                    "inputs": ["text", "image", "document"],
                 },
                 "reasoning": {
                     "parameter": "reasoning_effort",
@@ -153,7 +171,9 @@ class ClaudeTextRequest:
     public_model: str
     upstream_model: str
     system_prompt: str | None
-    prompt: str
+    # The one stream-json user message: transcript text with images and
+    # documents in place (see airelay.claude_content).
+    content: tuple[dict[str, Any], ...]
     include_usage: bool
     # Reasoning depth for the CLI's --effort flag; None uses the model's
     # own adaptive default.
@@ -164,6 +184,27 @@ class ClaudeTextRequest:
     # `response_format: {"type": "json_object"}`: the answer must be one
     # JSON object, checked locally (see _json_object_text).
     json_mode: bool = False
+    # Images and documents sent; the CLI's replay must show all of them.
+    media_count: int = 0
+    # The client's function tools as MCP definitions, served by
+    # airelay.claude_tool_stub; Claude's calls are returned, never run.
+    tools: tuple[dict[str, Any], ...] = ()
+    # The client's output-token limit: each CLI model call is capped
+    # (CLAUDE_CODE_MAX_OUTPUT_TOKENS) and the run stops when the first one
+    # reaches it, before the CLI's own continuation calls.
+    max_output_tokens: int | None = None
+
+    @property
+    def allowed_tools(self) -> frozenset[str]:
+        """Tool names the CLI may report. `StructuredOutput` is the CLI's own
+        `--json-schema` enforcement, which runs nothing."""
+        names = {CLAUDE_TOOL_PREFIX + tool["name"] for tool in self.tools}
+        return frozenset(names | ({"StructuredOutput"} if self.output_schema else set()))
+
+    @property
+    def prompt(self) -> str:
+        """The transcript text, for logs (media summarised)."""
+        return transcript_text(list(self.content))
 
 
 def _openai_model_record(model_id: str, catalog: dict[str, Any] | None = None) -> ProviderModel:
@@ -275,85 +316,13 @@ def _suggest_openai_models(
 
 def _claude_routes() -> dict[str, bool]:
     return {
-        "responses": False,
+        "responses": True,
         "chat_completions": True,
         "completions": True,
-        "files": False,
-        "conversations": False,
+        "files": True,
+        "conversations": True,
         "subscription_status": False,
     }
-
-
-def _content_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        raise ProviderError(
-            422,
-            "The Claude runtime supports only string or text-part message content.",
-            code="unsupported_for_provider",
-        )
-    parts: list[str] = []
-    for part in content:
-        if not isinstance(part, dict):
-            raise ProviderError(
-                422,
-                "The Claude runtime supports only text content parts.",
-                code="unsupported_for_provider",
-            )
-        kind = part.get("type")
-        if kind not in {"text", "input_text", "output_text"}:
-            raise ProviderError(
-                422,
-                f"The Claude runtime does not support message content part `{kind}`.",
-                code="unsupported_for_provider",
-            )
-        text = part.get("text", "")
-        if isinstance(text, str):
-            parts.append(text)
-    return "".join(parts)
-
-
-def _split_chat_messages(messages: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, str]]]:
-    system_parts: list[str] = []
-    turns: list[dict[str, str]] = []
-    for message in messages:
-        role = message.get("role")
-        if role in {"system", "developer"}:
-            text = _content_text(message.get("content"))
-            if text:
-                system_parts.append(text)
-            continue
-        if role not in {"user", "assistant"}:
-            raise ProviderError(
-                422,
-                "The Claude runtime supports only system, developer, user, and assistant messages.",
-                code="unsupported_for_provider",
-            )
-        if message.get("tool_calls"):
-            raise ProviderError(
-                422,
-                "The Claude runtime does not support tool calls.",
-                code="unsupported_for_provider",
-            )
-        turns.append({"role": role, "text": _content_text(message.get("content"))})
-    if not turns:
-        raise ProviderError(
-            422,
-            "The Claude runtime requires at least one user or assistant turn.",
-            code="unsupported_for_provider",
-        )
-    return system_parts, turns
-
-
-def _chat_transcript(turns: list[dict[str, str]]) -> str:
-    if len(turns) == 1 and turns[0]["role"] == "user":
-        return turns[0]["text"]
-    lines: list[str] = []
-    for turn in turns:
-        prefix = "Assistant:" if turn["role"] == "assistant" else "Human:"
-        lines.append(f"{prefix} {turn['text']}")
-    return "\n\n".join(lines) + "\n\nAssistant:"
 
 
 def _finish_reason(stop_reason: str | None) -> str:
@@ -597,6 +566,185 @@ def _usage_from_claude_result(payload: dict[str, Any] | None) -> dict[str, Any] 
     return completion_usage_from_anthropic(payload.get("usage") if isinstance(payload, dict) else None)
 
 
+CLAUDE_STREAM_LINE_LIMIT = 64 * 1024 * 1024
+CLAUDE_MAX_MEDIA_BYTES = 32 * 1024 * 1024
+# The CLI names a tool from the `airelays` MCP server `mcp__airelays__<name>`;
+# the API caps tool names at 64 characters, prefix included.
+CLAUDE_TOOL_PREFIX = "mcp__airelays__"
+_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,%d}" % (64 - len(CLAUDE_TOOL_PREFIX)))
+
+
+def _claude_tools(body: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    """OpenAI function tools as MCP definitions for the tool stub. Options
+    the CLI cannot honour are refused rather than ignored."""
+    tools = body.get("tools")
+    if not is_requested("tools", tools):
+        return ()
+    if not isinstance(tools, list):
+        raise ProviderError(422, "`tools` must be an array.", code="invalid_request_error")
+    choice = body.get("tool_choice")
+    allowed: set[str] | None = None
+    if choice == "none":
+        return ()
+    if isinstance(choice, dict) and choice.get("type") == "allowed_tools" \
+            and (choice.get("allowed_tools") or {}).get("mode") == "auto":
+        allowed = {((t.get("function") or t).get("name")) for t in (choice["allowed_tools"].get("tools") or [])
+                   if isinstance(t, dict)}
+    elif choice not in (None, "auto"):
+        raise ProviderError(422, "Claude models cannot be forced to call a tool; use `tool_choice` `auto` or "
+                            "`none`.", code="unsupported_for_provider")
+    if body.get("parallel_tool_calls") is False:
+        raise ProviderError(422, "Claude models may call several tools at once; `parallel_tool_calls: false` "
+                            "cannot be honoured.", code="unsupported_for_provider")
+    definitions: dict[str, dict[str, Any]] = {}
+    for tool in tools:
+        if not isinstance(tool, dict) or tool.get("type") != "function":
+            raise ProviderError(422, "Claude models support only `function` tools.", code="unsupported_for_provider")
+        function = tool.get("function") if isinstance(tool.get("function"), dict) else tool
+        name = function.get("name")
+        if not isinstance(name, str) or not _TOOL_NAME.fullmatch(name):
+            raise ProviderError(422, f"Tool names on Claude models must be 1-{64 - len(CLAUDE_TOOL_PREFIX)} "
+                                "letters, digits, `_` or `-`.", code="invalid_request_error")
+        if name in definitions:
+            raise ProviderError(422, f"Duplicate tool name `{name}`.", code="invalid_request_error")
+        parameters = function.get("parameters")
+        if parameters is not None and (not isinstance(parameters, dict) or parameters.get("type", "object") != "object"):
+            # The CLI silently drops every tool when one schema is not an object.
+            raise ProviderError(422, f"Tool `{name}`: `parameters` must be a JSON Schema of type `object`.",
+                                code="invalid_request_error")
+        definitions[name] = {"name": name, "description": function.get("description") or "",
+                             # `type` made explicit: the CLI drops every tool when it is missing.
+                             "inputSchema": {"type": "object", "properties": {}, **(parameters or {})}}
+    return tuple(d for n, d in definitions.items() if allowed is None or n in allowed)
+
+
+def _tool_arguments(cwd: Path, tools: tuple[dict[str, Any], ...]) -> list[str]:
+    """CLI arguments that make the client's tools visible, never runnable:
+    the tool stub serves their definitions, and a `PreToolUse` check
+    denies every call (defence in depth; see airelay.claude_tool_guard)."""
+    stub, guard = (str(Path(module.__file__).resolve()) for module in (claude_tool_stub, claude_tool_guard))
+    write_private(cwd / "tools.json", json.dumps(list(tools)))
+    write_private(cwd / "mcp.json", json.dumps({"mcpServers": {"airelays": {
+        "command": sys.executable, "args": ["-I", stub, str(cwd / "tools.json")]}}}))
+    write_private(cwd / "settings.json", json.dumps({"hooks": {"PreToolUse": [{"matcher": "", "hooks": [
+        {"type": "command", "command": _command_line([sys.executable, "-I", guard])}]}]}}))
+    return ["--mcp-config", str(cwd / "mcp.json"), "--settings", str(cwd / "settings.json")]
+
+
+def _claude_output_limit(body: dict[str, Any]) -> int | None:
+    try:
+        return output_token_limit(body)
+    except TranslationError as exc:
+        raise ProviderError(422, str(exc), code="invalid_request_error") from exc
+
+
+def claude_ignored_tool_options(body: dict[str, Any]) -> list[str]:
+    """Tool options Claude runs without, for disclosure: it has no strict
+    tool mode, so `strict: true` tools run non-strict."""
+    tools = body.get("tools") if isinstance(body.get("tools"), list) else []
+    strict = any(isinstance(t, dict) and ((t.get("function") if isinstance(t.get("function"), dict) else t).get("strict")
+                                          is True) for t in tools)
+    return ["tools.function.strict"] if strict else []
+
+
+def _command_line(argv: list[str]) -> str:
+    return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+
+
+INTERRUPT_LINE = (json.dumps({"type": "control_request", "request_id": "airelays-stop",
+                              "request": {"subtype": "interrupt"}}) + "\n").encode("utf-8")
+
+
+class _ToolCalls:
+    """Where AIRelays stops a Claude run, read from the stream: Claude's calls
+    to the client's tools (each tool_use block: start, argument fragments,
+    stop) at `stop_reason: "tool_use"`, or the output limit at
+    `stop_reason: "max_tokens"`; with the text and usage of that model call."""
+
+    def __init__(self, allowed: frozenset[str], *, limited: bool = False) -> None:
+        self.allowed = allowed
+        self.limited = limited
+        self.stop_reason = "tool_use"
+        self.calls: list[dict[str, Any]] = []
+        self.text: list[str] = []
+        self.usage: dict[str, Any] = {}
+        self._open: dict[int, dict[str, Any]] = {}
+
+    def observe(self, event: dict[str, Any]) -> bool:
+        if event.get("type") != "stream_event":
+            return False
+        inner = event.get("event") or {}
+        kind = inner.get("type")
+        if kind == "message_start":
+            self.usage = dict(((inner.get("message") or {}).get("usage")) or {})
+        elif kind == "content_block_start":
+            block = inner.get("content_block") or {}
+            if block.get("type") == "tool_use":
+                if block.get("name") not in self.allowed:
+                    raise ProviderError(502, f"Claude called a tool AIRelays did not define (`{block.get('name')}`); "
+                                        "the request was stopped.", code="cli_unexpected_tools")
+                if str(block["name"]).startswith(CLAUDE_TOOL_PREFIX):
+                    self._open[inner.get("index")] = {"id": block.get("id"), "name": block["name"], "arguments": ""}
+        elif kind == "content_block_delta":
+            delta = inner.get("delta") or {}
+            if delta.get("type") == "input_json_delta" and inner.get("index") in self._open:
+                self._open[inner["index"]]["arguments"] += delta.get("partial_json") or ""
+            elif delta.get("type") == "text_delta" and isinstance(delta.get("text"), str):
+                self.text.append(delta["text"])
+        elif kind == "content_block_stop" and inner.get("index") in self._open:
+            self.calls.append(self._open.pop(inner["index"]))
+        elif kind == "message_delta":
+            self.usage.update(inner.get("usage") or {})
+            self.stop_reason = (inner.get("delta") or {}).get("stop_reason") or ""
+            return (self.stop_reason == "tool_use" and bool(self.calls)) or \
+                (self.stop_reason == "max_tokens" and self.limited)
+        return False
+
+    def result(self) -> dict[str, Any]:
+        """A `result` event for a run stopped at its tool calls."""
+        tool_calls = [{"id": call["id"], "type": "function", "function": {
+            "name": call["name"].removeprefix(CLAUDE_TOOL_PREFIX), "arguments": call["arguments"] or "{}"}}
+            for call in self.calls]
+        return {"type": "result", "subtype": "success", "is_error": False, "result": "".join(self.text),
+                "stop_reason": self.stop_reason, "usage": self.usage, "tool_calls": tool_calls}
+
+
+def _check_cli_event(event: dict[str, Any], request: ClaudeTextRequest) -> None:
+    """Guards on what the CLI reports about itself, for every request.
+
+    The startup report must list no tool AIRelays did not define: with
+    built-in tools off there are none, so anything else means the CLI
+    changed and the request stops before a tool could run. The CLI's echo of
+    our message must still hold every image and document: it silently
+    replaces media it cannot read with a text notice."""
+    if event.get("type") == "system" and event.get("subtype") == "init":
+        offered = set(event.get("tools") or [])
+        missing = {CLAUDE_TOOL_PREFIX + tool["name"] for tool in request.tools} - offered
+        if missing:
+            # The stub did not start or a definition was dropped: answering
+            # without the client's tools would be silent degradation.
+            raise ProviderError(
+                502, "The Claude CLI could not load the request's tools "
+                f"({', '.join(sorted(name.removeprefix(CLAUDE_TOOL_PREFIX) for name in missing))}); the request was "
+                "stopped. Check that the relay's Python can run AIRelays' tool helper.", code="cli_tools_unavailable",
+            )
+        unexpected = [tool for tool in offered if tool not in request.allowed_tools]
+        if unexpected:
+            raise ProviderError(
+                502, f"The Claude CLI offered tools AIRelays did not define ({', '.join(map(str, unexpected))}); "
+                "the request was stopped before any tool could run.", code="cli_unexpected_tools",
+            )
+    if event.get("type") == "user" and event.get("isReplay") and request.media_count:
+        content = (event.get("message") or {}).get("content") or []
+        kept = sum(1 for block in content if isinstance(block, dict) and block.get("type") in ("image", "document"))
+        if kept < request.media_count:
+            raise ProviderError(
+                422, f"Claude could not read {request.media_count - kept} of the {request.media_count} images or "
+                "documents in this request (for example a CMYK JPEG or an animated image). Convert them to a "
+                "standard PNG, JPEG or PDF and retry.", code="invalid_request_error",
+            )
+
+
 def _stderr_message(stderr: bytes, returncode: int) -> str:
     text = stderr.decode("utf-8", errors="replace").strip()
     return text or f"claude exited with code {returncode}"
@@ -674,7 +822,7 @@ class ClaudeCliRuntime:
                 owned_by="airelays-claude-subscription",
                 upstream_id=upstream_id,
                 routes=_claude_routes(),
-                stateful_conversations=False,
+                stateful_conversations=True,
                 reasoning_modes=CLAUDE_REASONING_MODES,
                 reasoning_default=None,
                 structured_output_types=("json_schema", "json_object"),
@@ -860,9 +1008,10 @@ class ClaudeCliRuntime:
         request = self._prepare_chat_request(body)
         result = await self._run_json(request, request_id)
         content = result.get("result", "")
-        if request.json_mode:
+        tool_calls = result.get("tool_calls")
+        if request.json_mode and not tool_calls:
             content = _json_mode_answer(content, _finish_reason(result.get("stop_reason")))
-        if request.output_schema:
+        if request.output_schema and not tool_calls and result.get("stop_reason") != "max_tokens":
             # Schema-enforced runs must return the enforced JSON only; the
             # model's surrounding prose (if any) is not the answer. A run
             # that produced no conforming JSON is a provider failure, not an
@@ -872,7 +1021,7 @@ class ClaudeCliRuntime:
                 raise ProviderError(
                     502,
                     "The Claude CLI returned no schema-conforming output for a `response_format` request.",
-                    code="provider_failure",
+                    code="invalid_structured_output",
                 )
             content = structured_content
         payload: dict[str, Any] = {
@@ -885,11 +1034,12 @@ class ClaudeCliRuntime:
                     "index": 0,
                     "message": {
                         "role": "assistant",
-                        "content": content,
+                        "content": None if tool_calls and not content else content,
                         "refusal": None,
+                        **({"tool_calls": tool_calls} if tool_calls else {}),
                     },
                     "logprobs": None,
-                    "finish_reason": _finish_reason(result.get("stop_reason")),
+                    "finish_reason": "tool_calls" if tool_calls else _finish_reason(result.get("stop_reason")),
                 }
             ],
         }
@@ -934,6 +1084,7 @@ class ClaudeCliRuntime:
         # concatenating both would hand the client unparseable JSON, so only
         # the first block's fragments are forwarded.
         tool_use_blocks = 0
+        schema_block: Any = None  # the stream index of the first StructuredOutput block
         async with aclosing(self._run_stream(request, request_id)) as events:
             async for event in events:
                 event_type = event.get("type")
@@ -941,14 +1092,16 @@ class ClaudeCliRuntime:
                     inner = event.get("event") or {}
                     if inner.get("type") == "content_block_start":
                         block = inner.get("content_block") or {}
-                        if block.get("type") == "tool_use":
+                        if block.get("type") == "tool_use" and block.get("name") == "StructuredOutput":
                             tool_use_blocks += 1
+                            if tool_use_blocks == 1:
+                                schema_block = inner.get("index")
                     if inner.get("type") == "content_block_delta":
                         delta = inner.get("delta") or {}
                         text: Any = None
                         if delta.get("type") == "text_delta" and not structured:
                             text = delta.get("text")
-                        elif delta.get("type") == "input_json_delta" and structured and tool_use_blocks <= 1:
+                        elif delta.get("type") == "input_json_delta" and structured and inner.get("index") == schema_block:
                             text = delta.get("partial_json")
                         if not isinstance(text, str) or not text:
                             continue
@@ -987,14 +1140,27 @@ class ClaudeCliRuntime:
                         raise _claude_failure(error_detail, event)
                     last_usage = _usage_from_claude_result(event)
                     finish_reason = _finish_reason(event.get("stop_reason"))
-                    if structured:
+                    tool_calls = event.get("tool_calls") or []
+                    if tool_calls:
+                        finish_reason = "tool_calls"
+                        structured, json_buffer = False, None  # a tool turn carries calls, not the answer
+                        for index, call in enumerate(tool_calls):
+                            delta_payload = {"tool_calls": [{"index": index, **call}]}
+                            if not sent_role:
+                                delta_payload["role"] = "assistant"
+                                sent_role = True
+                            chunk = chat_completion_chunk(response_id, created_at, request.public_model,
+                                                          delta_payload, include_usage=request.include_usage)
+                            yield f"data: {json.dumps(chunk, ensure_ascii=True)}\n\n".encode("utf-8")
+                        saw_text = True
+                    elif structured and event.get("stop_reason") != "max_tokens":
                         if not saw_text:
                             structured_fallback = _claude_structured_content(event)
                             if structured_fallback is None:
                                 raise ProviderError(
                                     502,
                                     "The Claude CLI returned no schema-conforming output for a `response_format` request.",
-                                    code="provider_failure",
+                                    code="invalid_structured_output",
                                 )
                             assistant_fallback = structured_fallback
                     elif not assistant_fallback:
@@ -1154,7 +1320,14 @@ class ClaudeCliRuntime:
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
             raise ProviderError(422, "Chat completions requests must include a non-empty `messages` array.")
-        system_parts, turns = _split_chat_messages(messages)
+        try:
+            conversation = conversation_from_chat(messages)
+        except ClaudeContentError as exc:
+            raise ProviderError(422, str(exc), code="invalid_request_error") from exc
+        system_parts = conversation.system_parts
+        if sum(len(json.dumps(block)) for block in conversation.blocks if block["type"] != "text") > CLAUDE_MAX_MEDIA_BYTES:
+            raise ProviderError(413, f"Images and documents in one Claude request are limited to "
+                                f"{CLAUDE_MAX_MEDIA_BYTES // (1024 * 1024)} MB (encoded).", code="request_too_large")
         output_schema = _claude_output_schema(body, "/v1/chat/completions")
         response_format = body.get("response_format")
         json_mode = isinstance(response_format, dict) and response_format.get("type") == "json_object"
@@ -1162,11 +1335,14 @@ class ClaudeCliRuntime:
             public_model=resolved.public_id,
             upstream_model=resolved.upstream_id,
             system_prompt=_claude_system_prompt(system_parts, json_mode=json_mode),
-            prompt=_chat_transcript(turns),
+            content=tuple(conversation.blocks),
+            media_count=conversation.media_count,
             include_usage=stream_include_usage(body),
             effort=_claude_effort(body, "/v1/chat/completions", self._models[resolved.public_id].reasoning_modes),
             output_schema=output_schema,
             json_mode=json_mode,
+            tools=_claude_tools(body),
+            max_output_tokens=_claude_output_limit(body),
         )
 
     def _prepare_completion_request(self, body: dict[str, Any]) -> ClaudeTextRequest:
@@ -1195,9 +1371,10 @@ class ClaudeCliRuntime:
             public_model=resolved.public_id,
             upstream_model=resolved.upstream_id,
             system_prompt=_claude_system_prompt([]),
-            prompt=prompt,
+            content=tuple(conversation_from_prompt(prompt).blocks),
             include_usage=stream_include_usage(body),
             effort=_claude_effort(body, "/v1/completions", self._models[resolved.public_id].reasoning_modes),
+            max_output_tokens=_claude_output_limit(body),
         )
 
     def _resolved_model_from_body(self, body: dict[str, Any]) -> ResolvedModel:
@@ -1214,56 +1391,20 @@ class ClaudeCliRuntime:
         return resolved
 
     async def _run_json(self, request: ClaudeTextRequest, request_id: str) -> dict[str, Any]:
-        async with self._semaphore:
-            with workdir() as cwd:
-                env = self._subprocess_env()
-                command = await self._inference_command(request, stream=False, cwd=cwd, env=env)
-                self._log_command(request_id, request.public_model, command, request.prompt)
-                process = await self._spawn(
-                    command,
-                    cwd=cwd,
-                    env=env,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                try:
-                    stdout, stderr = await asyncio.wait_for(
-                        process.communicate(request.prompt.encode("utf-8")),
-                        timeout=self._settings.claude_timeout_seconds,
-                    )
-                except asyncio.TimeoutError as exc:
-                    await _end_process(process)
-                    raise ProviderError(
-                        504,
-                        "Claude CLI timed out while generating a response.",
-                        code="provider_timeout",
-                    ) from exc
-                except BaseException:
-                    await _end_process(process)
-                    raise
-        self._log_result(request_id, stdout)
-        if process.returncode == 127:
-            self._launcher.refresh()  # e.g. `env node` no longer resolves
-        if process.returncode != 0:
-            # The CLI often exits nonzero with the real error (e.g. a 401
-            # for an invalid token) as JSON on stdout; prefer that message
-            # over the opaque "exited with code N" stderr fallback.
-            try:
-                parsed = json.loads(stdout.decode("utf-8"))
-            except json.JSONDecodeError:
-                parsed = None
-            if isinstance(parsed, dict) and parsed.get("result"):
-                raise _claude_failure(str(parsed["result"]), parsed)
-            raise _claude_failure(_stderr_message(stderr, process.returncode))
-        try:
-            parsed = json.loads(stdout.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise ProviderError(502, "Claude CLI returned invalid JSON.", code="provider_failure") from exc
-        error_detail = _claude_error_detail(parsed)
+        """A whole run's `result` event, read from the same stream as
+        streaming requests (one runner, one parser)."""
+        result: dict[str, Any] | None = None
+        async with aclosing(self._run_stream(request, request_id)) as events:
+            async for event in events:
+                if event.get("type") == "result":
+                    result = event
+        if result is None:  # pragma: no cover - _run_stream raises first
+            raise ProviderError(502, "Claude stream ended without a result.", code="provider_failure")
+        self._log_result(request_id, json.dumps(result, ensure_ascii=False).encode("utf-8"))
+        error_detail = _claude_error_detail(result)
         if error_detail is not None:
-            raise _claude_failure(error_detail, parsed)
-        return parsed
+            raise _claude_failure(error_detail, result)
+        return result
 
     async def _run_stream(
         self,
@@ -1273,6 +1414,8 @@ class ClaudeCliRuntime:
         async with self._semaphore:
             with workdir() as cwd:
                 env = self._subprocess_env()
+                if request.max_output_tokens is not None:
+                    env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(request.max_output_tokens)
                 command = await self._inference_command(request, stream=True, cwd=cwd, env=env)
                 self._log_command(request_id, request.public_model, command, request.prompt)
                 process = await self._spawn(
@@ -1282,15 +1425,22 @@ class ClaudeCliRuntime:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    # A final `assistant`/`result` event carries the whole
+                    # answer on one line; images echoed back can be MBs.
+                    limit=CLAUDE_STREAM_LINE_LIMIT,
                 )
 
                 stderr_task = asyncio.create_task(process.stderr.read())
-                saw_result = False
+                saw_result = saw_init = False
                 try:
                     assert process.stdin is not None
-                    process.stdin.write(request.prompt.encode("utf-8"))
+                    process.stdin.write(user_line(list(request.content)))
                     await process.stdin.drain()
-                    process.stdin.close()
+                    stoppable = bool(request.tools) or request.max_output_tokens is not None
+                    if not stoppable:
+                        process.stdin.close()  # stoppable runs keep it open to interrupt
+                    calls = _ToolCalls(request.allowed_tools, limited=request.max_output_tokens is not None) \
+                        if stoppable else None
                     assert process.stdout is not None
                     while True:
                         raw_line = await asyncio.wait_for(
@@ -1309,6 +1459,11 @@ class ClaudeCliRuntime:
                             continue
                         if not isinstance(event, dict):
                             continue
+                        if request.tools and not saw_init and event.get("type") != "system":
+                            raise ProviderError(502, "The Claude CLI did not report its tools; the request was stopped.",
+                                                code="cli_tools_unavailable")
+                        saw_init = saw_init or (event.get("type") == "system" and event.get("subtype") == "init")
+                        _check_cli_event(event, request)
                         saw_result = saw_result or event.get("type") == "result"
                         info = event.get("rate_limit_info") or event.get("rateLimitInfo") or {}
                         if event.get("type") == "rate_limit_event" and info.get("status") == "rejected":
@@ -1320,13 +1475,37 @@ class ClaudeCliRuntime:
                         if event.get("type") == "stream_event" and (event.get("event") or {}).get("type") == "error":
                             inner = event["event"]
                             raise _claude_failure(str((inner.get("error") or {}).get("message") or "Claude stream failed."), inner)
+                        if event.get("type") == "user":
+                            continue  # the CLI's own echo of our message
+                        if calls is not None and calls.observe(event):
+                            # Claude asked for tools, or reached the output
+                            # limit: stop the run before the CLI acts on the
+                            # calls or starts a continuation call.
+                            try:
+                                process.stdin.write(INTERRUPT_LINE)
+                                await process.stdin.drain()
+                                process.stdin.close()
+                            except (BrokenPipeError, ConnectionResetError):
+                                pass  # the CLI already ended
+                            saw_result = True
+                            yield event
+                            yield calls.result()
+                            # The calls are in hand: give the CLI a moment to
+                            # end on its own, then `finally` stops it (gracefully).
+                            with contextlib.suppress(asyncio.TimeoutError, ValueError):
+                                await asyncio.wait_for(process.stdout.read(), timeout=CLAUDE_EXIT_GRACE_SECONDS)
+                            return
                         yield event
+                        if saw_result:
+                            if not process.stdin.is_closing():
+                                process.stdin.close()
+                            break
                     async with asyncio.timeout(self._settings.claude_timeout_seconds):
                         returncode = await process.wait()
                         stderr = await stderr_task
                     if returncode == 127:
                         self._launcher.refresh()
-                    if returncode != 0:
+                    if returncode != 0 and not saw_result:
                         raise _claude_failure(_stderr_message(stderr, returncode))
                     if not saw_result:
                         raise ProviderError(502, "Claude stream ended without a result.", code="provider_failure")
@@ -1336,6 +1515,9 @@ class ClaudeCliRuntime:
                         "Claude CLI timed out while streaming a response.",
                         code="provider_timeout",
                     ) from exc
+                except ValueError as exc:  # a stream line over CLAUDE_STREAM_LINE_LIMIT
+                    raise ProviderError(502, "The Claude CLI produced an output line too large to read.",
+                                        code="cli_output_too_large") from exc
                 finally:
                     await _end_process(process)
                     await stderr_task
@@ -1363,10 +1545,14 @@ class ClaudeCliRuntime:
             command.extend(["--effort", request.effort])
         if request.output_schema:
             command.extend(["--json-schema", request.output_schema])
-        if stream:
-            command.extend(["--output-format", "stream-json", "--include-partial-messages", "--verbose"])
-        else:
-            command.extend(["--output-format", "json"])
+        # One structured input path for every request (text, images,
+        # documents); stream-json input requires stream-json output.
+        command.extend(["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
+        if stream or request.tools:
+            # Tool runs stop at the call boundary (`message_delta`).
+            command.append("--include-partial-messages")
+        if request.media_count:
+            command.append("--replay-user-messages")
         return command
 
     async def _inference_command(self, request: ClaudeTextRequest, *, stream: bool, cwd: str,
@@ -1377,7 +1563,10 @@ class ClaudeCliRuntime:
         if request.system_prompt and await self._launcher.supports_system_prompt_file(env=env, cwd=self.profile.root):
             prompt_file = os.path.join(cwd, "system-prompt.txt")
             write_private(Path(prompt_file), request.system_prompt)
-        return self._build_command(request, stream=stream, system_prompt_file=prompt_file)
+        command = self._build_command(request, stream=stream, system_prompt_file=prompt_file)
+        if request.tools:
+            command += _tool_arguments(Path(cwd), request.tools)
+        return command
 
     async def _spawn(self, args: list[str], *, cwd: str, env: dict[str, str],
                      **kwargs: Any) -> asyncio.subprocess.Process:

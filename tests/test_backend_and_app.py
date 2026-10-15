@@ -520,7 +520,7 @@ def test_responses_route_reports_unknown_local_file_as_422(tmp_path) -> None:
     assert "Unknown local file id `file_missing`" in response.json()["detail"]
 
 
-def test_responses_route_strips_max_output_tokens_locally(tmp_path) -> None:
+def test_responses_route_forwards_max_output_tokens(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)
     captured: dict[str, object] = {}
@@ -555,8 +555,8 @@ def test_responses_route_strips_max_output_tokens_locally(tmp_path) -> None:
         )
 
     assert response.status_code == 200
-    assert response.headers["x-airelays-ignored-parameters"] == "max_output_tokens"
-    assert "max_output_tokens" not in captured["payload"]
+    assert "x-airelays-ignored-parameters" not in response.headers
+    assert captured["payload"]["max_output_tokens"] == 20  # honoured upstream
 
 
 def test_responses_route_strips_user_locally(tmp_path) -> None:
@@ -598,7 +598,7 @@ def test_responses_route_strips_user_locally(tmp_path) -> None:
     assert "user" not in captured["payload"]
 
 
-def test_chat_completions_route_strips_max_completion_tokens_locally(tmp_path) -> None:
+def test_chat_completions_route_forwards_max_completion_tokens(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)
     captured: dict[str, object] = {}
@@ -633,8 +633,8 @@ def test_chat_completions_route_strips_max_completion_tokens_locally(tmp_path) -
         )
 
     assert response.status_code == 200
-    assert response.headers["x-airelays-ignored-parameters"] == "max_completion_tokens"
-    assert "max_completion_tokens" not in captured["payload"]
+    assert "x-airelays-ignored-parameters" not in response.headers
+    assert captured["payload"]["max_output_tokens"] == 20  # honoured upstream
 
 
 def test_chat_route_strips_user_locally(tmp_path) -> None:
@@ -715,7 +715,7 @@ def test_chat_route_responses_shape_strips_user_locally(tmp_path) -> None:
     assert "user" not in captured["payload"]
 
 
-def test_completions_route_strips_max_tokens_locally(tmp_path) -> None:
+def test_completions_route_forwards_max_tokens(tmp_path) -> None:
     settings = make_settings(tmp_path)
     app = create_app(settings)
     captured: dict[str, object] = {}
@@ -750,8 +750,8 @@ def test_completions_route_strips_max_tokens_locally(tmp_path) -> None:
         )
 
     assert response.status_code == 200
-    assert response.headers["x-airelays-ignored-parameters"] == "max_tokens"
-    assert "max_tokens" not in captured["payload"]
+    assert "x-airelays-ignored-parameters" not in response.headers
+    assert captured["payload"]["max_output_tokens"] == 20  # honoured upstream
 
 
 def test_completions_route_strips_user_locally(tmp_path) -> None:
@@ -2924,29 +2924,13 @@ def test_models_route_returns_claude_models_when_openai_auth_is_missing(tmp_path
     assert structured["types"] == ["json_schema", "json_object"]
 
 
-def test_responses_route_rejects_claude_models_locally(tmp_path) -> None:
-    settings = make_settings(
-        tmp_path,
-        require_bearer_auth=True,
-        enable_claude=True,
-        claude_models=("claude:sonnet",),
-    )
-    settings.write_bearer_token("relay-token")
-    app = create_app(settings)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/v1/responses",
-            headers={"authorization": "Bearer relay-token"},
-            json={
-                "model": "claude:sonnet",
-                "input": "hello",
-                "stream": False,
-            },
-        )
-
+def test_responses_route_refuses_what_claude_cannot_honour(tmp_path) -> None:
+    settings = make_settings(tmp_path, enable_claude=True, claude_models=("claude:sonnet",))
+    with TestClient(create_app(settings)) as client:
+        response = client.post("/v1/responses", json={"model": "claude:sonnet", "input": "hi",
+                                                       "previous_response_id": "resp_1"})
     assert response.status_code == 422
-    assert "/v1/chat/completions" in response.json()["detail"]
+    assert "conversation" in response.json()["detail"]
 
 
 def test_chat_completions_route_dispatches_claude_model(tmp_path) -> None:
@@ -3301,7 +3285,7 @@ def test_protected_route_accepts_valid_bearer_token_for_local_route(tmp_path) ->
     assert response.json()["object"] == "conversation"
 
 
-def test_openai_only_local_routes_reject_when_openai_runtime_is_disabled(tmp_path) -> None:
+def test_local_routes_reject_when_no_runtime_is_enabled(tmp_path) -> None:
     settings = make_settings(
         tmp_path,
         require_bearer_auth=False,
@@ -3314,9 +3298,9 @@ def test_openai_only_local_routes_reject_when_openai_runtime_is_disabled(tmp_pat
         conversations_response = client.post("/v1/conversations", json={"metadata": {"name": "demo"}})
 
     assert files_response.status_code == 501
-    assert "OpenAI runtime is enabled" in files_response.json()["detail"]
+    assert "OpenAI or the Claude runtime" in files_response.json()["detail"]
     assert conversations_response.status_code == 501
-    assert "OpenAI runtime is enabled" in conversations_response.json()["detail"]
+    assert "OpenAI or the Claude runtime" in conversations_response.json()["detail"]
 
 
 def test_wrong_token_attempts_trigger_temporary_ip_block(tmp_path) -> None:

@@ -47,15 +47,16 @@ airelays serve --no-auth --port 8080
 
 ## Does AIRelays support Claude?
 
-Yes, in a constrained text-only form.
+Yes, through the same OpenAI-compatible endpoint as GPT models.
 
 - discovered Claude aliases and concrete model ids, plus configured overrides
 - local `claude` CLI only
-- text `chat.completions`
-- text `completions`
+- `chat.completions`, `completions` and `responses`
+- images, PDFs and text files as input; local files and conversations
+- function tool calls returned to your application, which runs them;
+  AIRelays never runs a tool (see [docs/api.md](api.md#tool-calls-on-claude-models))
 - follows the relay's protected or open local authentication mode
 - loopback-only
-- stateless
 
 ## How do I log in to the Claude runtime?
 
@@ -145,10 +146,12 @@ connection details and the authentication/network access controls.
 
 ## Are output-token limits enforced?
 
-No. AIRelays strips unsupported output-token limits such as `max_tokens`,
-`max_completion_tokens`, and `max_output_tokens` on both runtimes and reports
-them through the `x-airelays-ignored-parameters` response header. It does not
-silently truncate generated output. See [API Notes](api.md).
+Yes, on both account types. `max_completion_tokens`, `max_tokens` (chat and
+completions) and `max_output_tokens` (`/v1/responses`) are enforced by the
+providers themselves: GPT models apply the limit upstream (the minimum is 16),
+and on Claude models the run stops when the model reaches the limit. An answer
+cut by the limit reports `finish_reason: "length"` (`status: "incomplete"` on
+`/v1/responses`), as on OpenAI. See [Capabilities](capabilities.md).
 
 ## Why did I get `401` and then `429`?
 

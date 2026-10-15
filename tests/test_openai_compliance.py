@@ -736,3 +736,131 @@ def test_long_waits_tell_sdks_not_to_retry(tmp_path) -> None:
     response = _post(tmp_path, "/v1/chat/completions", {**CLAUDE_CHAT, "stream": True},
                      setup=lambda state: setattr(state.providers.claude, "stream_chat_completion", failing))
     assert response.headers["retry-after"] == "280" and response.headers["x-should-retry"] == "false"
+
+
+# ----- 0.17.0: Claude models on /v1/responses, with tools, files and conversations -----
+
+def _claude_app(tmp_path, results):
+    """An app whose Claude runtime answers from `results` and records what it was sent."""
+    app = create_app(make_settings(tmp_path, enable_claude=True, claude_models=("claude:sonnet",)))
+    client = TestClient(app)
+    client.__enter__()
+    sent = []
+    runtime = app.state.providers.claude
+
+    async def create(body, request_id):
+        sent.append(body)
+        return next(results)
+
+    async def stream(body, request_id):
+        sent.append(body)
+        for chunk in next(results):
+            yield f"data: {json.dumps(chunk)}\n\n".encode() if chunk != "[DONE]" else b"data: [DONE]\n\n"
+
+    runtime.create_chat_completion = create
+    runtime.stream_chat_completion = stream
+    return client, sent
+
+
+def _chat(content=None, tool_calls=None, finish="stop"):
+    message = {"role": "assistant", "content": content, "refusal": None}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    return {"id": "c", "object": "chat.completion", "created": 1, "model": "claude:sonnet",
+            "choices": [{"index": 0, "message": message, "logprobs": None, "finish_reason": finish}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13,
+                      "prompt_tokens_details": {"cached_tokens": 4}}}
+
+
+CALL = {"id": "toolu_1", "type": "function", "function": {"name": "get_weather", "arguments": '{"city": "Paris"}'}}
+
+
+def test_responses_on_claude_translate_both_ways(tmp_path) -> None:
+    client, sent = _claude_app(tmp_path, iter([_chat(tool_calls=[CALL], finish="tool_calls"), _chat("21C, sunny")]))
+    body = {"model": "claude:sonnet", "instructions": "Be brief.", "input": "Weather in Paris?",
+            "tools": [{"type": "function", "name": "get_weather", "parameters": {"type": "object"}}],
+            "text": {"format": {"type": "json_object"}}, "reasoning": {"effort": "low"}}
+    first = client.post("/v1/responses", json=body).json()
+    assert sent[0]["messages"] == [{"role": "system", "content": "Be brief."},
+                                   {"role": "user", "content": "Weather in Paris?"}]
+    assert sent[0]["tools"][0]["function"]["name"] == "get_weather"
+    assert sent[0]["response_format"] == {"type": "json_object"} and sent[0]["reasoning_effort"] == "low"
+    assert first["object"] == "response" and first["status"] == "completed"
+    assert first["output"] == [{"id": first["output"][0]["id"], "type": "function_call", "status": "completed",
+                                "call_id": "toolu_1", "name": "get_weather", "arguments": '{"city": "Paris"}'}]
+    assert first["usage"] == {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 4}, "output_tokens": 3,
+                              "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 13}
+    second = client.post("/v1/responses", json={**body, "input": [
+        {"type": "message", "role": "user", "content": "Weather in Paris?"},
+        {"type": "function_call", "call_id": "toolu_1", "name": "get_weather", "arguments": '{"city": "Paris"}'},
+        {"type": "function_call_output", "call_id": "toolu_1", "output": "21C"}]}).json()
+    assert [m["role"] for m in sent[1]["messages"]] == ["system", "user", "assistant", "tool"]
+    assert second["output"][0]["content"][0] == {"type": "output_text", "text": "21C, sunny", "annotations": []}
+    client.__exit__(None, None, None)
+
+
+def test_responses_stream_on_claude(tmp_path) -> None:
+    chunks = [{"choices": [{"index": 0, "delta": {"role": "assistant", "content": "Hel"}}]},
+              {"choices": [{"index": 0, "delta": {"content": "lo"}}]},
+              {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+              {"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}}, "[DONE]"]
+    client, sent = _claude_app(tmp_path, iter([chunks]))
+    response = client.post("/v1/responses", json={"model": "claude:sonnet", "input": "hi", "stream": True})
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    kinds = [event["type"] for event in events]
+    assert kinds[:2] == ["response.created", "response.in_progress"] and kinds[-1] == "response.completed"
+    assert "".join(e["delta"] for e in events if e["type"] == "response.output_text.delta") == "Hello"
+    assert [e["sequence_number"] for e in events] == list(range(len(events)))
+    assert events[-1]["response"]["usage"]["input_tokens"] == 5
+    assert sent[0]["stream_options"] == {"include_usage": True}
+    client.__exit__(None, None, None)
+
+
+def test_claude_conversations_and_local_files(tmp_path) -> None:
+    client, sent = _claude_app(tmp_path, iter([_chat("Noted, Zorblat."), _chat("Your name is Zorblat.")]))
+    file_id = client.post("/v1/files", files={"file": ("notes.txt", b"secret: mango", "text/plain")},
+                          data={"purpose": "user_data"}).json()["id"]
+    conversation_id = client.post("/v1/conversations", json={}).json()["id"]
+    first = client.post("/v1/chat/completions", json={"model": "claude:sonnet", "conversation": conversation_id,
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "I am Zorblat."},
+                                                   {"type": "file", "file": {"file_id": file_id}}]}]})
+    assert first.status_code == 200
+    part = sent[0]["messages"][0]["content"][1]
+    assert part["type"] == "file" and part["file"]["file_data"].startswith("data:text/plain;base64,")
+    second = client.post("/v1/responses", json={"model": "claude:sonnet", "input": "Who am I?",
+                                                "conversation": conversation_id}).json()
+    roles = [m["role"] for m in sent[1]["messages"]]
+    assert roles == ["user", "assistant", "user"] and second["output"][0]["content"][0]["text"] == "Your name is Zorblat."
+    stored = json.dumps(client.app.state.store.conversation_items(conversation_id))
+    assert file_id in stored and "base64" not in stored  # references, not file contents
+    client.__exit__(None, None, None)
+
+
+def test_no_tools_route_refuses_tools_on_claude(tmp_path) -> None:
+    client, sent = _claude_app(tmp_path, iter([]))
+    response = client.post("/no-tools/v1/chat/completions", json={"model": "claude:sonnet", "messages": [
+        {"role": "user", "content": "hi"}], "tools": [{"type": "function", "function": {"name": "f"}}]})
+    _assert_error(response, 422)
+    assert sent == []
+    client.__exit__(None, None, None)
+
+
+def test_claude_requests_cap_the_size_of_referenced_files(tmp_path, monkeypatch) -> None:
+    import airelay.transforms as transforms
+
+    monkeypatch.setattr(transforms, "INLINE_FILES_MAX_BYTES", 10)
+    client, sent = _claude_app(tmp_path, iter([]))
+    file_id = client.post("/v1/files", files={"file": ("big.txt", b"x" * 64, "text/plain")}).json()["id"]
+    response = client.post("/v1/chat/completions", json={"model": "claude:sonnet", "messages": [
+        {"role": "user", "content": [{"type": "file", "file": {"file_id": file_id}}]}]})
+    _assert_error(response, 413, "request_too_large")
+    client.__exit__(None, None, None)
+
+
+def test_files_and_conversations_serve_claude_only_setups(tmp_path) -> None:
+    app = create_app(make_settings(tmp_path, enable_openai_provider=False, enable_claude=True,
+                                   claude_models=("claude:sonnet",)))
+    with TestClient(app) as client:
+        upload = client.post("/v1/files", files={"file": ("a.txt", b"hi", "text/plain")})
+        assert upload.status_code == 200 and client.get("/v1/files").json()["data"][0]["id"] == upload.json()["id"]
+        assert client.post("/v1/conversations", json={}).status_code == 200

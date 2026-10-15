@@ -192,6 +192,44 @@ returning them, so you never receive broken JSON with a success status. Retry
 the request, or send `json_schema` with a schema: the Claude CLI enforces
 named schemas natively.
 
+## A Claude request with tools fails with `502 cli_tools_unavailable`
+
+The Claude CLI could not load the request's tools, so AIRelays stopped the
+request instead of answering without them.
+
+- check each tool's `parameters`: it must be a JSON Schema of type `object`
+  (other shapes are refused with `422`)
+- the tool helper is a small file inside the installed AIRelays package,
+  started with the relay's own Python: if the installation was moved or
+  partly removed, reinstall AIRelays (or the desktop app)
+- retry the request; the error names the tools that were missing
+
+`502 cli_unexpected_tools` means the CLI reported or attempted a tool that
+AIRelays did not define. The request was stopped before anything ran; update
+AIRelays and the Claude CLI, then retry. Neither error pauses an account.
+
+## `422` for an image or document
+
+Both runtimes check images and documents before any upstream call.
+
+- images must be PNG, JPEG, GIF or WebP, as a base64 `data:` URL, an http(s)
+  URL, or a `file_id` from `POST /v1/files`; a wrong declared type is
+  corrected automatically
+- documents (`file` parts) must be PDFs or UTF-8 text files
+- on Claude models, "Claude could not read N of the M images or documents"
+  means the CLI could not process a file (for example a CMYK JPEG or an
+  animated image): convert it to a standard PNG, JPEG or PDF and retry
+
+## An answer stops early with `finish_reason: "length"`
+
+The request set an output-token limit (`max_completion_tokens`,
+`max_tokens`, or `max_output_tokens` on `/v1/responses`), and the model
+reached it. Both account types enforce the limit, as OpenAI does.
+
+- raise the limit, or remove it to let the model finish
+- on GPT models the minimum is 16; lower values return the upstream's `400`
+- check your client's defaults: some SDK helpers set a small `max_tokens`
+
 ## A Claude account needs to sign in again
 
 Use `airelays claude accounts` to find the account id, then
@@ -257,11 +295,13 @@ confirm it appears in `/v1/models` (a discovered alias, concrete
 `claude-*` id, configured override, or an OpenAI model your account's
 catalog lists).
 
-A `422` names what the relay cannot honor. The Claude runtime supports text
-`chat.completions` and text `completions`. Checks:
+A `422` names what the relay cannot honor. Checks:
 
-- remove tools, files, images, audio, and `conversation` on Claude models
-  (`response_format` json_schema/json_object is supported on chat completions)
+- on Claude models: remove audio, a forced tool call (`tool_choice`
+  `required` or a named tool), `parallel_tool_calls: false`, `strict: true`
+  tools, non-function tools, and `previous_response_id` (use
+  `conversation`); an image Claude cannot read (corrupt, CMYK, animated)
+  must be converted to a standard PNG, JPEG or PDF
 - remove `stop`, `logprobs`, `top_logprobs`, `logit_bias`,
   `web_search_options` and `moderation`: neither upstream can honor them,
   so AIRelays rejects them rather than returning output that ignores them
@@ -329,10 +369,13 @@ When the Claude runtime is enabled:
 - update the client to the correct relay token
 - rotate the token if needed
 
-## `413` on uploads
+## `413` on uploads or requests with files
 
 - confirm the file is below the per-file upload ceiling
 - confirm the relay has not reached the total stored-upload quota
+- `413 request_too_large` on a Claude request: the images and documents in
+  one request (inline or by `file_id`) are limited to 32 MB in total, the
+  Claude API's request limit; split the files across requests
 
 ## `502` / `429` with `server_is_overloaded` or `usage_limit_reached`, or slow answers while the upstream is degraded
 

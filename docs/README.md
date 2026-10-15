@@ -8,6 +8,8 @@
   - config file shape, environment overrides, provider toggles, and traffic-log retention
 - [Security](security.md)
   - relay auth, open local relay mode, and Claude guardrails
+- [Capabilities](capabilities.md)
+  - what works on GPT models and on Claude models, side by side
 - [API Notes](api.md)
   - supported routes and provider-scoped limits
 - [Architecture](architecture.md)

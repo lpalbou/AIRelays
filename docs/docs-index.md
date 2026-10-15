@@ -5,6 +5,8 @@
 - [Configuration](configuration.md)
   - paths, provider settings, and traffic-log retention
 - [Security](security.md)
+- [Capabilities](capabilities.md)
+  - what works on GPT models and on Claude models, side by side
 - [API Notes](api.md)
 - [Architecture](architecture.md)
 - [Subscription Status](subscription-status.md)

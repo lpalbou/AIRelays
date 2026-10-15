@@ -74,6 +74,11 @@ def _scope_matches(extra: dict[str, Any], model: str) -> bool:
     return model == value or model.startswith(value + "-") or model.startswith(value + "[")
 
 
+# Failures that say nothing about an account: no pause, no other account.
+NO_PAUSE_CODES = frozenset({"invalid_json_output", "invalid_structured_output", "cli_unexpected_tools",
+                            "cli_tools_unavailable", "cli_output_too_large"})
+
+
 def _label(account: _Account) -> str:
     """How messages name an account: its sign-in email, else its id."""
     return (account.runtime._last_probe or {}).get("email") or account.runtime.profile.slug
@@ -333,8 +338,8 @@ class ClaudeAccountPool:
                     "failing, use another model from `/v1/models`.", code="provider_unavailable",
                 )
             return True, error  # the check could not tell; `_verify_sign_in` paused the account
-        if error.code == "invalid_json_output":
-            return False, error  # the model's answer, not the account
+        if error.code in NO_PAUSE_CODES:
+            return False, error  # the model's answer, the request or the CLI install, not the account
         if error.code == "model_unavailable":
             self._block_model(account, model, request_id)
             return True, error

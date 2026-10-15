@@ -555,7 +555,7 @@ async def test_real_subprocesses_use_distinct_profiles_and_scrub_token(pool, set
     script.write_text('''
 import json, os, sys
 sys.stdin.read()
-print(json.dumps({"result": os.environ["CLAUDE_CONFIG_DIR"],
+print(json.dumps({"type": "result", "result": os.environ["CLAUDE_CONFIG_DIR"],
                   "is_error": "CLAUDE_CODE_OAUTH_TOKEN" in os.environ}))
 ''')
     use_fake_cli(settings, script)

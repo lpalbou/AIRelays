@@ -195,7 +195,7 @@ def test_prepare_response_request_normalizes_raw_base64_input_file_to_data_url(
     ]
 
 
-def test_prepare_response_request_strips_max_output_tokens(store: AppStore) -> None:
+def test_prepare_response_request_forwards_max_output_tokens(store: AppStore) -> None:
     payload, wants_stream, conversation_id = prepare_response_request(
         {
             "model": "gpt-5.4-mini",
@@ -208,7 +208,7 @@ def test_prepare_response_request_strips_max_output_tokens(store: AppStore) -> N
 
     assert wants_stream is False
     assert conversation_id is None
-    assert "max_output_tokens" not in payload
+    assert payload["max_output_tokens"] == 20
 
 
 def test_prepare_response_request_accepts_conversation_object_id(store: AppStore) -> None:
@@ -1121,7 +1121,7 @@ def test_completions_to_responses_supports_legacy_prompt_shape() -> None:
     assert payload["input"][0]["content"][0]["text"] == "Say hello."
 
 
-def test_chat_completions_to_responses_ignores_max_completion_tokens(store: AppStore) -> None:
+def test_chat_completions_to_responses_maps_max_completion_tokens(store: AppStore) -> None:
     payload, wants_stream, conversation_id = chat_completions_to_responses(
         {
             "model": "gpt-5.4-mini",
@@ -1134,10 +1134,10 @@ def test_chat_completions_to_responses_ignores_max_completion_tokens(store: AppS
 
     assert wants_stream is False
     assert conversation_id is None
-    assert "max_completion_tokens" not in payload
+    assert "max_completion_tokens" not in payload and payload["max_output_tokens"] == 32
 
 
-def test_completions_to_responses_ignores_max_tokens() -> None:
+def test_completions_to_responses_maps_max_tokens() -> None:
     payload, wants_stream, conversation_id = completions_to_responses(
         {
             "model": "gpt-5.4-mini",
@@ -1148,7 +1148,7 @@ def test_completions_to_responses_ignores_max_tokens() -> None:
 
     assert wants_stream is False
     assert conversation_id is None
-    assert "max_tokens" not in payload
+    assert "max_tokens" not in payload and payload["max_output_tokens"] == 32
 
 
 def test_strip_unsupported_response_parameters_removes_sampling_token_and_identity_fields() -> None:
@@ -1158,7 +1158,6 @@ def test_strip_unsupported_response_parameters_removes_sampling_token_and_identi
         "top_p": 0.9,
         "presence_penalty": 0,
         "frequency_penalty": 0,
-        "max_output_tokens": 32,
         "user": "cursor-user",
         "safety_identifier": "hash-123",
     }
@@ -1170,7 +1169,6 @@ def test_strip_unsupported_response_parameters_removes_sampling_token_and_identi
         "top_p",
         "presence_penalty",
         "frequency_penalty",
-        "max_output_tokens",
         "user",
         "safety_identifier",
     ]

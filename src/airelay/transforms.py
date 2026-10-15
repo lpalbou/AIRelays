@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
+from airelay.media import MediaError, image_from_url, sniff_image
 from airelay.store import AppStore
 
 # One label vocabulary for window durations across the normalized status
@@ -26,19 +27,16 @@ TEXT_MIME_PREFIXES = (
 INLINE_TEXT_FILE_MAX_BYTES = 1_000_000
 DEFAULT_MINIMAL_INSTRUCTIONS = "."
 # Parameters the verified upstreams cannot honor: the subscription backend
-# rejects the sampling controls outright, does not honor client-set
-# output-token caps, and rejects caller-supplied end-user identifiers. The
-# compatibility layer strips them from the inbound request and discloses the
-# omission (x-airelays-ignored-parameters, compatibility_adaptation traffic
-# record) instead of failing the request.
+# rejects the sampling controls outright and rejects caller-supplied
+# end-user identifiers. The compatibility layer strips them from the inbound
+# request and discloses the omission (x-airelays-ignored-parameters,
+# compatibility_adaptation traffic record) instead of failing the request.
+# Output-token limits are honoured instead (see output_token_limit).
 UNSUPPORTED_UPSTREAM_PARAMETERS = (
     "temperature",
     "top_p",
     "presence_penalty",
     "frequency_penalty",
-    "max_output_tokens",
-    "max_completion_tokens",
-    "max_tokens",
     "user",
     "safety_identifier",
     # Best-effort determinism in OpenAI's own API; the upstreams have none.
@@ -57,6 +55,7 @@ UNHONORED_CHAT_PARAMETERS = ("stop", "logprobs", "top_logprobs", "logit_bias")
 # three chat entries and `conversation` are AIRelays extensions.
 CHAT_PARAMETERS = frozenset({
     "model", "messages", "stream", "stream_options", "n", "store", "metadata", "service_tier",
+    "max_completion_tokens", "max_tokens",
     "tools", "tool_choice", "parallel_tool_calls", "functions", "function_call",
     "response_format", "reasoning_effort", "verbosity", "prompt_cache_key",
     "audio", "modalities", "prediction", "web_search_options", "moderation",
@@ -64,7 +63,7 @@ CHAT_PARAMETERS = frozenset({
     "conversation", "instructions", "include",
 })
 COMPLETIONS_PARAMETERS = frozenset({
-    "model", "prompt", "stream", "stream_options", "n", "store", "metadata",
+    "model", "prompt", "stream", "stream_options", "n", "store", "metadata", "max_tokens",
     "best_of", "echo", "suffix", "reasoning_effort",
     *UNSUPPORTED_UPSTREAM_PARAMETERS, *UNHONORED_CHAT_PARAMETERS,
     "conversation", "instructions",
@@ -85,6 +84,21 @@ def strip_unknown_parameters(payload: dict[str, Any], known: frozenset[str]) -> 
     disclosure (null means "not set")."""
     unknown = sorted(name for name in payload if name not in known)
     return [name for name in unknown if payload.pop(name) is not None]
+
+
+def output_token_limit(body: dict[str, Any]) -> int | None:
+    """The request's output-token limit, honoured on both runtimes: the GPT
+    upstream enforces `max_output_tokens` (verified live; it requires at
+    least 16), and a Claude run stops at the limit. `max_completion_tokens`
+    wins over the deprecated `max_tokens`, as on OpenAI."""
+    for name in ("max_completion_tokens", "max_tokens", "max_output_tokens"):
+        value = body.get(name)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise TranslationError(f"`{name}` must be a positive integer.")
+        return value
+    return None
 
 
 def strip_unsupported_response_parameters(payload: dict[str, Any]) -> list[str]:
@@ -547,10 +561,13 @@ def _expand_local_file(content_item: dict[str, Any], store: AppStore) -> list[di
     filename = file_record["filename"]
     kind = content_item.get("type")
     if kind in {"input_image", "image_url"}:
+        image_type = sniff_image(raw)
+        if image_type is None:
+            raise TranslationError(f"File `{filename}` is not a PNG, JPEG, GIF or WebP image.")
         return [
             {
                 "type": "input_image",
-                "image_url": _data_url(content_type, raw),
+                "image_url": _data_url(image_type, raw),
                 "detail": content_item.get("detail", "auto"),
             }
         ]
@@ -586,6 +603,14 @@ def _check_file_fits(part: dict[str, Any], record: dict[str, Any]) -> None:
             )
         if record["bytes"] > INLINE_TEXT_FILE_MAX_BYTES:
             raise TranslationError(f"File `{filename}` is too large to inline as text without truncation.")
+
+
+class RequestTooLargeError(TranslationError):
+    """Returned as 413."""
+
+
+# Anthropic's request size limit; files are inlined into the request.
+INLINE_FILES_MAX_BYTES = 32 * 1024 * 1024
 
 
 class UnknownLocalFileError(TranslationError):
@@ -625,6 +650,50 @@ def expand_local_files(payload: dict[str, Any], store: AppStore) -> None:
             item = {**item, "content": parts}
         expanded.append(item)
     payload["input"] = expanded
+
+
+def inline_chat_files(messages: list[Any], store: AppStore) -> list[Any]:
+    """Chat messages with local file references (`file_id` from
+    `POST /v1/files`) replaced by the file's data, for runtimes that receive
+    files inline (Claude). The messages themselves are not modified."""
+    def file_id(part: Any) -> str | None:
+        if not isinstance(part, dict):
+            return None
+        holder = part.get("image_url") if part.get("type") == "image_url" else part.get("file") \
+            if part.get("type") == "file" else part
+        value = holder.get("file_id") if isinstance(holder, dict) else None
+        return value if isinstance(value, str) and value else None
+
+    def inline(part: dict[str, Any]) -> dict[str, Any]:
+        ident = file_id(part)
+        try:
+            record, raw = store.get_file_bytes(ident)
+        except KeyError as exc:
+            raise UnknownLocalFileError(ident) from exc
+        data = _data_url(record["content_type"], raw)
+        if part.get("type") in ("image_url", "input_image"):
+            return {"type": "image_url", "image_url": {"url": data}}
+        return {"type": "file", "file": {"file_data": data, "filename": record["filename"]}}
+
+    total = 0
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        for part in content if isinstance(content, list) else []:
+            if file_id(part):
+                try:
+                    total += store.get_file(file_id(part))["bytes"]
+                except KeyError as exc:
+                    raise UnknownLocalFileError(file_id(part)) from exc
+    if total > INLINE_FILES_MAX_BYTES:
+        raise RequestTooLargeError(f"Files referenced by one request are limited to "
+                                   f"{INLINE_FILES_MAX_BYTES // (1024 * 1024)} MB in total.")
+    result: list[Any] = []
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, list) and any(file_id(part) for part in content):
+            message = {**message, "content": [inline(part) if file_id(part) else part for part in content]}
+        result.append(message)
+    return result
 
 
 def _normalize_responses_input(payload: dict[str, Any], store: AppStore) -> dict[str, Any]:
@@ -718,22 +787,20 @@ def _responses_message(
                     parts.append({"type": "refusal", "refusal": refusal_text})
                 continue
             if kind == "image_url":
-                image_url = item.get("image_url")
-                if isinstance(image_url, dict):
-                    file_id = image_url.get("file_id")
-                    if isinstance(file_id, str):
-                        parts.append({"type": "input_image", "file_id": file_id,
-                                      "detail": image_url.get("detail", "auto")})
-                    else:
-                        parts.append(
-                            {
-                                "type": "input_image",
-                                "image_url": image_url.get("url", ""),
-                                "detail": image_url.get("detail", "auto"),
-                            }
-                        )
+                value = item.get("image_url")
+                image = value if isinstance(value, dict) else {"url": value}  # some clients send the URL alone
+                if isinstance(image.get("file_id"), str):
+                    parts.append({"type": "input_image", "file_id": image["file_id"],
+                                  "detail": image.get("detail", "auto")})
                 else:
-                    raise TranslationError("`image_url` must be an object.")
+                    # The same check as on Claude models: a bad image is a
+                    # clear 422 here, not a vague upstream error.
+                    try:
+                        media = image_from_url(image.get("url"))
+                    except MediaError as exc:
+                        raise TranslationError(str(exc)) from exc
+                    parts.append({"type": "input_image", "detail": image.get("detail", "auto"),
+                                  "image_url": media.url or f"data:{media.media_type};base64,{media.data}"})
                 continue
             if kind == "file" and isinstance(item.get("file"), dict):
                 parts.extend(_chat_file_part(item["file"]))
@@ -986,6 +1053,8 @@ def chat_completions_to_responses(
         payload["reasoning"] = {"effort": body["reasoning_effort"]}
     if body.get("prompt_cache_key") is not None:
         payload["prompt_cache_key"] = body["prompt_cache_key"]
+    if output_token_limit(body) is not None:
+        payload["max_output_tokens"] = output_token_limit(body)
     if body.get("verbosity") is not None:
         payload["text"] = {"verbosity": body["verbosity"]}
 
@@ -1085,6 +1154,8 @@ def completions_to_responses(body: dict[str, Any]) -> tuple[dict[str, Any], bool
     }
     if "metadata" in body:
         payload["metadata"] = body["metadata"]
+    if output_token_limit(body) is not None:
+        payload["max_output_tokens"] = output_token_limit(body)
     # The completions route serves the same reasoning models as chat; the
     # control must not be silently dropped here while chat honors it (the
     # Claude runtime honors it on this route too).

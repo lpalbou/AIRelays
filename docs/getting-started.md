@@ -200,8 +200,7 @@ Current Claude limits:
 - local-only
 - loopback-only
 - follows the relay's protected or open local authentication mode
-- text-only
-- stateless
+- no audio, no server-side tools (web search), no forced tool calls
 
 ## Status
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import asyncio
 import os
 from types import SimpleNamespace
@@ -8,7 +10,7 @@ import pytest
 
 from airelay.claude_auth import new_profile
 from claude_fakes import use_fake_cli
-from airelay.providers import ClaudeCliRuntime, ProviderError, ProviderRegistry
+from airelay.providers import ClaudeCliRuntime, ProviderError, ProviderRegistry, claude_ignored_tool_options
 from airelay.config import Settings
 
 # Captured before conftest stubs it out for every other test.
@@ -131,19 +133,101 @@ async def test_claude_runtime_creates_chat_completion_from_text_messages(tmp_pat
     assert payload["usage"]["total_tokens"] == 15
 
 
-@pytest.mark.asyncio
-async def test_claude_runtime_rejects_tools_on_chat_route(tmp_path) -> None:
-    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+WEATHER_TOOL = {"type": "function", "function": {"name": "get_weather", "description": "Weather",
+                                               "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}}}
 
-    with pytest.raises(ProviderError, match="does not support `tools`"):
-        await runtime.create_chat_completion(
-            {
-                "model": "claude:sonnet",
-                "messages": [{"role": "user", "content": "hello"}],
-                "tools": [{"type": "function", "name": "lookup"}],
-            },
-            "req_123",
-        )
+
+def test_claude_tools_become_stub_definitions_and_unhonourable_options_are_refused(tmp_path) -> None:
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    base = {"model": "claude:sonnet", "messages": [{"role": "user", "content": "weather?"}], "tools": [WEATHER_TOOL]}
+    request = runtime._prepare_chat_request(base)
+    assert request.tools == ({"name": "get_weather", "description": "Weather",
+                              "inputSchema": {"type": "object", "properties": {"city": {"type": "string"}}}},)
+    assert "mcp__airelays__get_weather" in request.allowed_tools
+    assert runtime._prepare_chat_request({**base, "tool_choice": "none"}).tools == ()
+    untyped = {**base, "tools": [{"type": "function", "function": {"name": "f", "parameters": {"properties": {}}}}]}
+    assert runtime._prepare_chat_request(untyped).tools[0]["inputSchema"]["type"] == "object"
+    # Claude has no strict tool mode: strict tools run non-strict, and the app discloses it.
+    strict = {**base, "tools": [{**WEATHER_TOOL, "function": {**WEATHER_TOOL["function"], "strict": True}}]}
+    assert runtime._prepare_chat_request(strict).tools and claude_ignored_tool_options(strict) == ["tools.function.strict"]
+    assert claude_ignored_tool_options(base) == []
+    for extra, message in (({"tool_choice": "required"}, "forced"),
+                           ({"tool_choice": {"type": "function", "function": {"name": "get_weather"}}}, "forced"),
+                           ({"parallel_tool_calls": False}, "parallel_tool_calls"),
+                           ({"tools": [{"type": "custom", "custom": {"name": "x"}}]}, "only `function` tools"),
+                           ({"tools": [{**WEATHER_TOOL, "function": {**WEATHER_TOOL["function"], "parameters": {"type": "string"}}}]},
+                            "type `object`"),
+                           ({"tools": [{"type": "function", "function": {"name": "x" * 60}}]}, "Tool names")):
+        with pytest.raises(ProviderError, match=message):
+            runtime._prepare_chat_request({**base, **extra})
+
+
+@pytest.mark.asyncio
+async def test_claude_tool_calls_come_back_as_openai_tool_calls(tmp_path, monkeypatch) -> None:
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    call = {"id": "toolu_1", "type": "function", "function": {"name": "get_weather", "arguments": '{"city": "Paris"}'}}
+
+    async def fake_run_json(request, request_id):
+        return {"result": "", "stop_reason": "tool_use", "usage": {"input_tokens": 5, "output_tokens": 7},
+                "tool_calls": [call]}
+
+    monkeypatch.setattr(runtime, "_run_json", fake_run_json)
+    payload = await runtime.create_chat_completion({"model": "claude:sonnet", "tools": [WEATHER_TOOL],
+                                                    "messages": [{"role": "user", "content": "weather?"}]}, "r")
+    choice = payload["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"]["tool_calls"] == [call] and choice["message"]["content"] is None
+
+
+@pytest.mark.asyncio
+async def test_claude_runner_stops_at_the_tool_call_boundary(tmp_path) -> None:
+    """Through a real subprocess: the fake CLI streams a tool call and then
+    waits; the runner must interrupt it and return the call with its usage."""
+    script = tmp_path / "fake-claude-tools.py"
+    script.write_text('''
+import json, sys
+def out(event): print(json.dumps(event), flush=True)
+sys.stdin.readline()
+out({"type": "system", "subtype": "init", "tools": ["mcp__airelays__get_weather"]})
+out({"type": "stream_event", "event": {"type": "message_start", "message": {"usage": {"input_tokens": 9}}}})
+out({"type": "stream_event", "event": {"type": "content_block_start", "index": 0,
+     "content_block": {"type": "tool_use", "id": "toolu_9", "name": "mcp__airelays__get_weather"}}})
+out({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0,
+     "delta": {"type": "input_json_delta", "partial_json": "{\\"city\\": \\"Rome\\"}"}}})
+out({"type": "stream_event", "event": {"type": "content_block_stop", "index": 0}})
+out({"type": "stream_event", "event": {"type": "message_delta", "delta": {"stop_reason": "tool_use"},
+     "usage": {"output_tokens": 4}}})
+line = sys.stdin.readline()  # the interrupt; a real CLI would run the tool otherwise
+assert json.loads(line)["request"]["subtype"] == "interrupt"
+out({"type": "result", "subtype": "error_during_execution", "is_error": True, "result": "interrupted"})
+sys.exit(1)
+''')
+    settings = make_settings(tmp_path)
+    use_fake_cli(settings, script)
+    runtime = ClaudeCliRuntime(settings)
+    payload = await runtime.create_chat_completion({"model": "claude:sonnet", "tools": [WEATHER_TOOL],
+                                                    "messages": [{"role": "user", "content": "weather?"}]}, "r")
+    message = payload["choices"][0]["message"]
+    assert message["tool_calls"] == [{"id": "toolu_9", "type": "function",
+                                      "function": {"name": "get_weather", "arguments": '{"city": "Rome"}'}}]
+    assert payload["usage"]["prompt_tokens"] == 9 and payload["usage"]["completion_tokens"] == 4
+
+
+@pytest.mark.asyncio
+async def test_claude_runner_stops_when_the_cli_offers_unknown_tools(tmp_path) -> None:
+    script = tmp_path / "fake-claude-bash.py"
+    script.write_text('''
+import json, sys
+sys.stdin.readline()
+print(json.dumps({"type": "system", "subtype": "init", "tools": ["Bash"]}), flush=True)
+print(json.dumps({"type": "result", "result": "should never be read", "is_error": False}), flush=True)
+''')
+    settings = make_settings(tmp_path)
+    use_fake_cli(settings, script)
+    runtime = ClaudeCliRuntime(settings)
+    with pytest.raises(ProviderError) as error:
+        await runtime.create_chat_completion({"model": "claude:sonnet", "messages": [{"role": "user", "content": "hi"}]}, "r")
+    assert error.value.code == "cli_unexpected_tools" and "Bash" in error.value.detail
 
 
 @pytest.mark.asyncio
@@ -1241,3 +1325,137 @@ def test_json_mode_returns_refusals_and_cut_answers_as_is() -> None:
     assert _json_mode_answer('{"a": ', "length") == '{"a": '
     with pytest.raises(ProviderError, match="valid JSON object"):
         _json_mode_answer("I can't help with that.", "stop")
+
+
+def _fake_cli(tmp_path, body: str) -> ClaudeCliRuntime:
+    script = tmp_path / "fake-claude-audit.py"
+    script.write_text("import json, sys, time\ndef out(e): print(json.dumps(e), flush=True)\nsys.stdin.readline()\n" + body)
+    settings = make_settings(tmp_path)
+    use_fake_cli(settings, script)
+    return ClaudeCliRuntime(settings)
+
+
+TOOL_BODY = {"model": "claude:sonnet", "tools": [WEATHER_TOOL], "messages": [{"role": "user", "content": "weather?"}]}
+
+
+@pytest.mark.asyncio
+async def test_tool_runs_require_the_tools_to_be_loaded(tmp_path) -> None:
+    """A stub that did not start leaves the CLI without the tools; answering
+    anyway would silently drop them."""
+    runtime = _fake_cli(tmp_path, 'out({"type": "system", "subtype": "init", "tools": []})\n'
+                                  'out({"type": "result", "result": "I have no weather tool", "is_error": False})\n')
+    with pytest.raises(ProviderError) as error:
+        await runtime.create_chat_completion(TOOL_BODY, "r")
+    assert error.value.code == "cli_tools_unavailable" and "get_weather" in error.value.detail
+
+
+@pytest.mark.asyncio
+async def test_a_call_to_a_tool_nobody_defined_stops_the_run(tmp_path) -> None:
+    runtime = _fake_cli(tmp_path, '''out({"type": "system", "subtype": "init", "tools": ["mcp__airelays__get_weather"]})
+out({"type": "stream_event", "event": {"type": "content_block_start", "index": 0,
+     "content_block": {"type": "tool_use", "id": "t", "name": "Bash"}}})
+time.sleep(30)
+''')
+    with pytest.raises(ProviderError) as error:
+        await runtime.create_chat_completion(TOOL_BODY, "r")
+    assert error.value.code == "cli_unexpected_tools"
+
+
+@pytest.mark.asyncio
+async def test_the_stop_at_a_tool_call_is_bounded(tmp_path) -> None:
+    """A CLI that ignores the interrupt must not turn finished calls into a timeout."""
+    import time as _time
+
+    runtime = _fake_cli(tmp_path, '''out({"type": "system", "subtype": "init", "tools": ["mcp__airelays__get_weather"]})
+out({"type": "stream_event", "event": {"type": "content_block_start", "index": 0,
+     "content_block": {"type": "tool_use", "id": "t1", "name": "mcp__airelays__get_weather"}}})
+out({"type": "stream_event", "event": {"type": "content_block_stop", "index": 0}})
+out({"type": "stream_event", "event": {"type": "message_delta", "delta": {"stop_reason": "tool_use"}}})
+time.sleep(60)
+''')
+    started = _time.monotonic()
+    payload = await runtime.create_chat_completion(TOOL_BODY, "r")
+    assert payload["choices"][0]["finish_reason"] == "tool_calls" and _time.monotonic() - started < 20
+
+
+@pytest.mark.asyncio
+async def test_streamed_json_schema_with_tools_never_leaks_tool_arguments(tmp_path, monkeypatch) -> None:
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+
+    async def fake_stream(request, request_id):
+        for index, name, fragment in ((0, "mcp__airelays__get_weather", '{"city": "Paris"}'),
+                                      (1, "StructuredOutput", '{"city":"Paris"}')):
+            yield {"type": "stream_event", "event": {"type": "content_block_start", "index": index,
+                                                     "content_block": {"type": "tool_use", "name": name}}}
+            yield {"type": "stream_event", "event": {"type": "content_block_delta", "index": index,
+                                                     "delta": {"type": "input_json_delta", "partial_json": fragment}}}
+        yield {"type": "result", "result": '{"city":"Paris"}', "structured_output": {"city": "Paris"},
+               "stop_reason": "end_turn"}
+
+    monkeypatch.setattr(runtime, "_run_stream", fake_stream)
+    body = {**TOOL_BODY, "stream": True, "response_format": {"type": "json_schema", "json_schema": {
+        "name": "c", "schema": {"type": "object"}}}}
+    chunks = _collect_stream_chunks([c async for c in runtime.stream_chat_completion(body, "r")])
+    content = "".join(c["choices"][0]["delta"].get("content") or "" for c in chunks if c["choices"])
+    assert content == '{"city":"Paris"}'
+
+
+@pytest.mark.parametrize("tool_name, denied", [("mcp__airelays__get_weather", True), ("StructuredOutput", False)])
+def test_the_pre_execution_check_denies_client_tools_only(tool_name, denied) -> None:
+    import subprocess as _subprocess
+    import sys as _sys
+
+    from airelay import claude_tool_guard
+
+    out = _subprocess.run([_sys.executable, "-I", claude_tool_guard.__file__], input=json.dumps({"tool_name": tool_name}),
+                          capture_output=True, text=True, timeout=30).stdout
+    assert ('"deny"' in out) is denied
+
+
+def test_the_tool_stub_never_executes(tmp_path) -> None:
+    import subprocess as _subprocess
+    import sys as _sys
+
+    from airelay import claude_tool_stub
+
+    tools = tmp_path / "tools.json"
+    tools.write_text(json.dumps([{"name": "get_weather", "inputSchema": {"type": "object"}}]))
+    requests = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_weather", "arguments": {}}}]
+    out = _subprocess.run([_sys.executable, "-I", claude_tool_stub.__file__, str(tools)], timeout=30,
+                          input="".join(json.dumps(r) + "\n" for r in requests), capture_output=True, text=True).stdout
+    replies = [json.loads(line) for line in out.splitlines()]
+    assert replies[1]["result"]["tools"][0]["name"] == "get_weather"
+    assert replies[2]["result"]["isError"] is True and "Not executed" in replies[2]["result"]["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_claude_output_limit_stops_at_the_first_call(tmp_path) -> None:
+    """The CLI caps each model call at CLAUDE_CODE_MAX_OUTPUT_TOKENS and then
+    starts continuation calls on its own; the run must stop at the first
+    limit, like OpenAI's `max_tokens`, with the partial answer."""
+    runtime = _fake_cli(tmp_path, '''import os
+assert os.environ["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "7"
+out({"type": "system", "subtype": "init", "tools": []})
+out({"type": "stream_event", "event": {"type": "message_start", "message": {"usage": {"input_tokens": 3}}}})
+out({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Once upon"}}})
+out({"type": "stream_event", "event": {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 7}}})
+time.sleep(60)  # a real CLI would now start a continuation call
+''')
+    body = {"model": "claude:sonnet", "max_tokens": 7, "messages": [{"role": "user", "content": "story"}]}
+    payload = await runtime.create_chat_completion(body, "r")
+    choice = payload["choices"][0]
+    assert choice["finish_reason"] == "length" and choice["message"]["content"] == "Once upon"
+    assert payload["usage"]["completion_tokens"] == 7
+
+
+def test_claude_output_limit_values(tmp_path) -> None:
+    runtime = ClaudeCliRuntime(make_settings(tmp_path))
+    base = {"model": "claude:sonnet", "messages": [{"role": "user", "content": "hi"}]}
+    assert runtime._prepare_chat_request(base).max_output_tokens is None
+    assert runtime._prepare_chat_request({**base, "max_tokens": 50, "max_completion_tokens": 20}).max_output_tokens == 20
+    assert runtime._prepare_completion_request({"model": "claude:sonnet", "prompt": "hi", "max_tokens": 9}).max_output_tokens == 9
+    for bad in (0, -1, "10", True, 1.5):
+        with pytest.raises(ProviderError, match="positive integer"):
+            runtime._prepare_chat_request({**base, "max_tokens": bad})

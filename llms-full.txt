@@ -8,6 +8,7 @@
 - docs/getting-started.md: setup, custom CLI configuration, multi-account sign-in, verification
 - docs/configuration.md: config file shape and environment overrides
 - docs/security.md: relay auth, open local relay mode, Claude guardrails
+- docs/capabilities.md: what works on GPT models and on Claude models, side by side
 - docs/api.md: routes, compatibility adaptations, provider limits
 - docs/architecture.md: request flow and module boundaries
 - docs/subscription-status.md: usage reporting for OpenAI and Claude
@@ -15,6 +16,115 @@
 - docs/troubleshooting.md: symptoms, causes, fixes
 - desktop/README.md: combined connection/access card, hide-on-blur dashboard, tray controls, build, supervision
 - docs/adr/README.md: durable design decisions
+
+---
+
+## Capabilities (from docs/capabilities.md)
+
+AIRelays serves GPT models (your ChatGPT subscription) and Claude models (your
+Claude subscription) through one OpenAI-compatible endpoint,
+`http://127.0.0.1:8317/v1`, with the same API key. The model name picks the
+account type: `gpt-…` models use the ChatGPT runtime, `claude:…` and
+`claude-…` models use the Claude runtime. `/v1/models` lists both, with each
+model's capabilities under `airelays.capabilities`.
+
+This page is the reference for what works on each account type. Details for
+each route are in [API Notes](api.md).
+
+Legend: ✅ supported · ⚠️ accepted but not applied, and listed in the
+`x-airelays-ignored-parameters` response header · ❌ refused with a clear
+error (`422`, or `501` for whole endpoints).
+
+### Routes and responses
+
+| Capability | GPT models | Claude models |
+|---|---|---|
+| `POST /v1/chat/completions` | ✅ | ✅ |
+| `POST /v1/completions` | ✅ | ✅ |
+| `POST /v1/responses` | ✅ | ✅ |
+| Streaming (`stream: true`) on all three routes | ✅ | ✅ |
+| Standard `usage` (`prompt_tokens`, `completion_tokens`, cached and reasoning details) | ✅ | ✅ |
+| `stream_options.include_usage` | ✅ | ✅ |
+| `GET /v1/models`, `GET /v1/models/{model}` | ✅ | ✅ |
+
+### Generation controls
+
+| Capability | GPT models | Claude models |
+|---|---|---|
+| Output-token limit (`max_completion_tokens`, `max_tokens`, `max_output_tokens`) | ✅ enforced upstream; at least 16 | ✅ the run stops at the limit |
+| `reasoning_effort` | ✅ `none`, `low`, `medium`, `high`, `xhigh` (per model catalog) | ✅ `low`, `medium`, `high`, `xhigh`, `max` (per model) |
+| `temperature`, `top_p`, `presence_penalty`, `frequency_penalty` | ⚠️ | ⚠️ |
+| `seed`, `user`, `safety_identifier` | ⚠️ | ⚠️ |
+| `stop`, `logprobs`, `top_logprobs`, `logit_bias` | ❌ | ❌ |
+| `n` greater than 1 | ❌ | ❌ |
+
+A response cut by the output-token limit reports `finish_reason: "length"`
+(or `status: "incomplete"` on `/v1/responses`), as on OpenAI.
+
+### Structured output
+
+| Capability | GPT models | Claude models |
+|---|---|---|
+| JSON mode (`response_format: {"type": "json_object"}`) | ✅ native; the messages must mention JSON | ✅ the answer is checked to be one JSON object |
+| `json_schema` | ✅ strict-mode rewrite when `strict: true` | ✅ enforced natively by the CLI |
+
+### Tool calls
+
+| Capability | GPT models | Claude models |
+|---|---|---|
+| Function tools; calls returned as `tool_calls` for your application to run | ✅ | ✅ AIRelays never runs a tool ([how](api.md#tool-calls-on-claude-models)) |
+| `tool_choice` `auto` and `none` | ✅ | ✅ |
+| Forced call (`required` or a named tool) | ✅ | ❌ |
+| `allowed_tools` | ✅ | ✅ in `auto` mode |
+| `parallel_tool_calls: false` | ✅ | ❌ |
+| `strict: true` function tools | ✅ | ⚠️ run non-strict |
+| `custom` (grammar) tools | ✅ | ❌ |
+| Deprecated `functions` / `function_call` | ✅ | ❌ |
+| Server-side web search (`web_search` tool on `/v1/responses`) | ✅ | ❌ |
+| `web_search_options` on chat completions | ❌ | ❌ |
+
+### Inputs, files and conversations
+
+| Capability | GPT models | Claude models |
+|---|---|---|
+| Images: PNG, JPEG, GIF, WebP as data URL, http(s) URL or local `file_id` | ✅ | ✅ |
+| PDFs and UTF-8 text files (`file` parts: `file_data` or `file_id`) | ✅ | ✅ |
+| `/v1/files` (upload, list with pagination, retrieve, delete) | ✅ | ✅ |
+| `/v1/conversations`, `conversation` on every route | ✅ | ✅ |
+| One conversation continued across GPT and Claude | ✅ | ✅ (GPT `custom` tool calls in the history are not supported on Claude) |
+| `previous_response_id` | ❌ use `conversation` | ❌ use `conversation` |
+| Audio input, `prediction`, `moderation` | ❌ | ❌ |
+
+An image or document a model cannot read returns `422` on both account types,
+before any upstream call.
+
+### Endpoints outside text generation
+
+| Capability | GPT models | Claude models |
+|---|---|---|
+| Embeddings (`/v1/embeddings`) | ❌ `501` | ❌ `501` |
+| Image generation, audio, realtime | ❌ `501` | ❌ `501` |
+
+Neither subscription offers embeddings: the ChatGPT subscription refuses
+embedding models, and Anthropic has no embedding model.
+
+### Accounts
+
+| Capability | GPT models | Claude models |
+|---|---|---|
+| Several accounts, balancing and failover | ✅ | ✅ |
+| Usage and quota reporting (`/v1/subscription/status`) | ✅ | ✅ for browser sign-ins; not for the setup-token account |
+
+### Streaming notes
+
+Both account types stream answers as they are generated. Three parts arrive
+whole instead:
+
+- each tool call's arguments arrive in one chunk;
+- on Claude models, a JSON-mode answer arrives in one chunk, because it is
+  checked before it is sent;
+- on Claude models, the first token takes a few seconds while the local CLI
+  starts.
 
 ---
 
@@ -161,8 +271,9 @@ slots, then lowest fresh weekly usage. Without fresh usage, accounts take turns.
 per account. Known exhausted short and model-specific windows are skipped;
 account failures fail over only before response bytes reach the client.
 `account_cooldown_seconds` defaults to 300 when no reset time is reported;
-transient failures use a short cooldown. CLI profiles remain stateless for relay
-requests, without conversation affinity.
+transient failures use a short cooldown. Each Claude request is one fresh CLI
+run; conversation history, when a client uses `conversation`, is kept by
+AIRelays and sent with each turn, so there is no account affinity across turns.
 
 Claude usage accepts `?provider=claude&all_accounts=true`, returning
 `{"object": "subscription_status_list", "provider": "claude", "accounts": [...]}`
@@ -197,8 +308,8 @@ One person can enroll several of their own OpenAI subscriptions; `airelays login
 
 ## Routes
 
-- `GET /v1/models` — models from all enabled providers, with an `airelays` extension block per record. OpenAI queries its authenticated upstream catalog using the installed Codex version (`client_version = "auto"`, tested floor `0.153.4`; the former `0.124.0` default also uses automatic mode). Claude queries its CLI initialization catalog without submitting generation prompts and exposes both aliases and concrete model ids. Configured overrides extend discovery; `extra_models` defaults to empty. `airelays.discovery_source` distinguishes provider catalogs from configured overrides, and `airelays.resolved_model` shows the concrete Claude model behind an alias. `GET /v1/models?refresh=true` bypasses provider caches, including all OpenAI account catalogs; the desktop Refresh button uses it, and the Models tab reloads every five minutes while reachable. Failed Claude discovery retains configured ids and the last successful catalog, with its error in relay status. Catalog listing does not guarantee a successful generation under current account limits.
-- `POST /v1/responses`, `POST /v1/chat/completions`, `POST /v1/completions` — text generation
+- `GET /v1/models` (and `GET /v1/models/{model}`) — models from all enabled providers, with an `airelays` extension block per record. OpenAI queries its authenticated upstream catalog using the installed Codex version (`client_version = "auto"`, tested floor `0.153.4`; the former `0.124.0` default also uses automatic mode). Claude queries its CLI initialization catalog without submitting generation prompts and exposes both aliases and concrete model ids. Configured overrides extend discovery; `extra_models` defaults to empty. `airelays.discovery_source` distinguishes provider catalogs from configured overrides, and `airelays.resolved_model` shows the concrete Claude model behind an alias. `GET /v1/models?refresh=true` bypasses provider caches, including all OpenAI account catalogs; the desktop Refresh button uses it, and the Models tab reloads every five minutes while reachable. Failed Claude discovery retains configured ids and the last successful catalog, with its error in relay status. Catalog listing does not guarantee a successful generation under current account limits.
+- `POST /v1/responses`, `POST /v1/chat/completions`, `POST /v1/completions` — text generation on both runtimes (see the capability matrix above)
 - `GET /v1/subscription/status` (alias `GET /v1/account/rate_limits`) — normalized usage; `?provider=claude`, `?account=`, `?all_accounts=true`, `?raw=true`
 - `POST /v1/relay/accounts/refresh` — clear usage-limit holds and re-check capacity
 - `GET /v1/relay/status` — diagnostics, provider readiness, `requests_total`; `?activity_only=true` returns only the counter for frequent polling
@@ -211,11 +322,11 @@ One person can enroll several of their own OpenAI subscriptions; `airelays login
 
 The verified upstream is the ChatGPT subscription backend, not the public platform API:
 
-- `temperature`, `top_p`, `presence_penalty`, `frequency_penalty` are rejected by the upstream, and output-token limits (`max_tokens`, `max_completion_tokens`, `max_output_tokens`) are not honored; the relay strips them and discloses it via the `x-airelays-ignored-parameters` response header and a `compatibility_adaptation` traffic record. Generation uses the upstream's own defaults and runs to the model's natural stop. The Claude routes apply the same strip-and-disclose adaptation (the local `claude` CLI has no equivalent controls).
+- `temperature`, `top_p`, `presence_penalty`, `frequency_penalty` are rejected by the upstream; the relay strips them and discloses it via the `x-airelays-ignored-parameters` response header and a `compatibility_adaptation` traffic record. The Claude routes apply the same strip-and-disclose adaptation. Output-token limits (`max_completion_tokens`, `max_tokens`, `max_output_tokens`) are honoured on both runtimes: GPT models enforce them upstream (at least 16), and a Claude run stops at the limit; a cut answer reports `finish_reason: "length"`. The full per-account-type capability matrix is docs/capabilities.md.
 - `reasoning_effort` (chat) and `reasoning.effort` (responses) pass through verbatim to OpenAI models; on Claude models `reasoning_effort` maps to the CLI's `--effort` flag. Supported modes and defaults are read from provider catalogs when available and published in `/v1/models` under `airelays.reasoning`; they vary by model and can include `max` or `ultra`. Omitting effort uses the provider default; Claude can choose adaptively. An empty Claude modes list advertises no effort parameter.
 - `store=true`, `n>1`, and `best_of`/`echo`/`logprobs`/`suffix` are rejected loudly instead of silently adapted.
 - Failed upstream OpenAI calls are retried automatically with exponential backoff (default 3 retries, 5s/20s/60s; `retry_attempts = 0` disables) while no response byte has reached the client; each retry re-runs account failover. Final failures return OpenAI-shaped `{"error": {...}}` JSON with the real HTTP status and the upstream's own error code. After a stream has started, failures surface as an in-band `data: {"error": ...}` event (chat/completions) or verbatim `response.failed` events (responses passthrough).
-- Claude runtime: discovered `claude:*` aliases and concrete `claude-*` ids, plus configured overrides; text chat/completions only, stateless, loopback-only, no tools/files/images. Structured outputs are supported on chat completions: `response_format` `json_schema` maps to the claude CLI's `--json-schema` (native enforcement) and `json_object` answers are checked to be one JSON object; supported types per model are published in `/v1/models` under `airelays.structured_output`.
+- Claude runtime: discovered `claude:*` aliases and concrete `claude-*` ids, plus configured overrides; chat completions, completions and responses, loopback-only; images, PDFs and text files as input; local files and conversations; function tool calls are returned to the application, which runs them (AIRelays never runs a tool: built-in tools are off, client tools are descriptions behind a helper that executes nothing, calls are denied before execution, and the run stops at the call). Structured outputs are supported on chat completions: `response_format` `json_schema` maps to the claude CLI's `--json-schema` (native enforcement) and `json_object` answers are checked to be one JSON object; supported types per model are published in `/v1/models` under `airelays.structured_output`.
 
 ## Subscription Usage
 
@@ -277,7 +388,10 @@ Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/
 ## Troubleshooting Pointers
 
 - 401 then 429: wrong/missing relay token; repeated failures trigger a temporary IP block
-- 422 on token-limit fields: the subscription backend does not accept them; remove the fields
+- answers cut with `finish_reason: "length"`: the request's output-token limit was reached (enforced on both account types; GPT minimum 16)
+- Claude 502 `cli_tools_unavailable`: the CLI could not load the request's tools (check that each tool's `parameters` is an object schema; reinstall AIRelays if its tool helper is missing); `cli_unexpected_tools`: the CLI offered or attempted an undefined tool and the request was stopped; neither pauses an account
+- 422 for an image or document: images must be PNG, JPEG, GIF or WebP; documents PDF or UTF-8 text; Claude CMYK or animated images must be converted
+- 413 `request_too_large` on a Claude request: images and documents are limited to 32 MB per request
 - browser login URL only works on the relay's own machine; use `airelays login --device` on servers
 - Claude not ready in network mode: the runtime is loopback-only; switch to loopback binding
 - Claude 503 `provider_auth_error`: no AIRelays Claude account is connected; run `airelays claude login` or `airelays claude set-token` (the personal Claude Code sign-in and exported tokens are ignored)

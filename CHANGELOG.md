@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.17.0
+
+### Added
+
+- Claude models on `/v1/responses`: the same request and response shapes as
+  GPT models, streamed or not, including function tools, `text.format`
+  (`json_schema`, `json_object`), `reasoning.effort` and `conversation`.
+- Images on Claude models: PNG, JPEG, GIF and WebP as data URLs, http(s)
+  URLs or local `file_id`s, anywhere in a user message (including earlier
+  turns).
+- Files on Claude models: PDFs and UTF-8 text files as `file` parts
+  (`file_data` or a local `file_id` from `POST /v1/files`).
+- Conversations on Claude models (chat completions and `/v1/responses`); a
+  conversation can continue across models and runtimes.
+- Tool calls on Claude models: Claude decides which of your function tools to
+  call and the calls come back as OpenAI `tool_calls`; your application runs
+  them, as with GPT models. AIRelays never runs a tool: the CLI's built-in
+  tools are off, your tools reach it only as descriptions behind a helper that
+  executes nothing, every call is denied before execution, the run stops at
+  the call, and a request stops if the CLI ever offers a tool AIRelays did not
+  define. Forced calls, `parallel_tool_calls: false` and non-function tools
+  are refused with a clear 422; `strict: true` tools run non-strict (Claude
+  has no strict tool mode) and are listed in `x-airelays-ignored-parameters`.
+  A request whose tools the CLI could not load fails clearly instead of
+  answering without them.
+- `/v1/models` lists each model's `capabilities.tool_calls` and
+  `capabilities.inputs`.
+- Output-token limits are honoured on both account types:
+  `max_completion_tokens`, `max_tokens` and `max_output_tokens` are enforced
+  by the GPT upstream (minimum 16), and a Claude run stops at the limit. A cut
+  answer reports `finish_reason: "length"`.
+- `/v1/files` and `/v1/conversations` work when only Claude accounts are
+  configured.
+- New [Capabilities](docs/capabilities.md) page: what works on GPT models and
+  on Claude models, side by side.
+
+### Changed
+
+- Images are checked the same way on both runtimes before any upstream call:
+  an image that is not a readable PNG, JPEG, GIF or WebP returns 422 (a wrong
+  declared type is corrected). GPT models also accept the `image_url` string
+  shorthand some clients send.
+- Every Claude request now uses the CLI's structured input and output, so one
+  run carries text, images, documents and tool calls; non-streaming requests
+  read the same stream.
+
+### Compatibility
+
+- Claude requests with `tools`, images, files or `conversation`, previously
+  refused with 422, now succeed.
+- Requests that set an output-token limit now get answers cut at that limit
+  (previously the limit was dropped and listed in
+  `x-airelays-ignored-parameters`). On GPT models, values below 16 return the
+  upstream's 400.
+
 ## 0.16.2
 
 ### Fixed

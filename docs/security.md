@@ -83,7 +83,9 @@ When the Claude runtime is enabled:
 - the relay's protected or open local auth mode applies
 - loopback binding is required
 - `trust_x_forwarded_for` is rejected
-- the runtime is stateless
+- each request is a fresh CLI run with session persistence and built-in
+  tools off; client tool calls are returned, never run (see
+  [docs/api.md](api.md#tool-calls-on-claude-models))
 - the runtime is local-only
 
 AIRelays uses only Claude accounts it owns: profiles added through

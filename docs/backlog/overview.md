@@ -6,9 +6,9 @@ AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provi
 
 ## Counts
 
-- Planned: 4
+- Planned: 3
 - Proposed: 4
-- Completed: 10
+- Completed: 11
 - Deprecated: 1
 - Recurrent: 0
 
@@ -25,7 +25,6 @@ Planned track [cross-platform runtime](planned/platform/README.md) (ADR 0008): 0
 - [0022_relay_lifecycle_and_single_instance_tray.md](planned/platform/0022_relay_lifecycle_and_single_instance_tray.md)
 - [0023_headless_service_install.md](planned/platform/0023_headless_service_install.md)
 - [0024_signed_installers.md](planned/platform/0024_signed_installers.md)
-- [0027_images_and_claude_tools.md](planned/providers/0027_images_and_claude_tools.md) — images on both runtimes and tool calls on Claude models (0.17.0)
 
 ## Proposed Work
 
@@ -64,6 +63,7 @@ Planned track [cross-platform runtime](planned/platform/README.md) (ADR 0008): 0
 | 0020 | Relay-owned Claude accounts and CLI-sourced usage | (worked directly; recorded post-completion) | `docs/backlog/completed/accounts/0020_relay_owned_claude_accounts.md` | 2026-10-10 | Completed | Claude routes only through AIRelays-owned profiles and an optional inference-only setup token; the personal Claude Code sign-in is never used or signed out; usage comes from Claude Code's `get_usage` with stale readings marked and excluded from routing (ADR 0007). | `pytest` 417 passed; desktop browser, node and `cargo check` green; live `get_usage` check against a real profile |
 | 0025 | Uniform cross-platform runtime, first slice | (worked directly; recorded post-completion) | `docs/backlog/completed/platform/0025_uniform_cross_platform_runtime_first_slice.md` | 2026-10-11 | Completed | File-only private credentials with a cross-process refresh lock, one `claude` launcher, isolated bundled interpreter, valid macOS signing, tests on three OSes (ADR 0008). | Three per-OS adversarial reviews; `pytest` 444 passed on 3.11–3.13; `cargo test`; desktop browser tests; MkDocs/build/twine green |
 | 0026 | Chat Completions usage contract and OpenAI conformance | (worked directly; recorded post-completion) | `docs/backlog/completed/providers/0026_chat_completions_usage_contract.md` | 2026-10-11 | Completed | Chat and completions report OpenAI's CompletionUsage on both runtimes (Claude counts cached prompt tokens); spec-shaped streamed usage; `/v1/responses` unchanged. | Three adversarial reviews; 85 contract/conformance tests; `pytest` 529 on 3.11–3.13; live schema validation (0 failures) and openai-python 3.29.0 checks |
+| 0027 | Images, files, conversations, `/v1/responses` and tool calls on Claude models | `docs/backlog/planned/providers/0027_images_and_claude_tools.md` | `docs/backlog/completed/providers/0027_images_and_claude_tools.md` | 2026-10-15 | Completed | Claude models gain the GPT feature set on the same endpoint; tool calls are returned to the client and never run. | Two adversarial audits; `pytest` 605 on 3.11–3.13; live SDK 28/28 and openai-openapi validation (0 failures) |
 
 ## Deprecated Work
 

@@ -42,7 +42,7 @@ flowchart LR
    Catalogs use a bounded cache, with an explicit refresh path shared by
    the API and desktop Models page. Discovery does not submit inference
    prompts.
-4. Claude-specific validation and invocation stay inside the Claude runtime, while the OpenAI runtime currently uses shared request/response transforms plus the OpenAI backend adapter.
+4. Images and documents are checked the same way for both runtimes before any upstream call. The OpenAI runtime uses the shared request/response transforms plus the OpenAI backend adapter. Claude requests from every route go through one entry point: `/v1/responses` bodies are translated to the chat shape and back, conversation history is attached, uploaded files are inlined, and the Claude runtime turns the conversation into the single message one CLI run receives (see [Claude Request Path](#claude-request-path)).
 5. On the OpenAI runtime, the account pool picks the account: conversation affinity first, then — among accounts with capacity that serve the requested model — the one with the most remaining quota in its longest usage window (`balance = "balanced"`, the default), strict rotation (`"round_robin"`), or the first such account (`"ordered"`). Which usage windows an account reports is plan-dependent, so the pool ranks windows by duration and balances on the longest (weekly) budget — the scarce one — while short-window exhaustion is handled by benching and failover. Accounts already benched (a usage probe or an earlier request showed their window is spent) are skipped outright, so requests route straight to accounts with capacity. Account-scoped failures (usage limits, in-stream failure events, dead credentials, transport errors) bench the account until it recovers and fail over to the next one — only before any content byte reaches the client; on streams, events that precede content are buffered so this guarantee holds.
 6. If every account fails, the retry layer waits an exponential backoff (`retry_attempts`, default 3 retries at 5s/20s/60s) and re-runs the whole pool pass — again only while no response byte has reached the client. Quota errors whose reset lies beyond the backoff budget return immediately.
 7. The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope; failures return OpenAI-shaped error JSON with the upstream's own reason, and failures after streaming started surface in-band.
@@ -52,7 +52,32 @@ Claude selection uses available account slots, fresh weekly usage, and known
 model-specific limits. Without fresh usage, eligible accounts rotate. A CLI
 authentication, quota, or transient failure puts the account into cooldown;
 the pool can try another eligible account before any response bytes are sent.
-Claude remains stateless: there is no cross-request conversation affinity.
+Each Claude request is one fresh CLI run; conversation history, when a
+client uses `conversation`, is kept by AIRelays and sent with each turn, so
+there is no account affinity across turns.
+
+## Claude Request Path
+
+```mermaid
+flowchart LR
+    Chat["/v1/chat/completions"] --> Entry
+    Resp["/v1/responses"] -->|"Responses ↔ chat translation"| Entry
+    Entry["Claude entry point\nconversation history · uploaded files inlined"] --> Prep["Request preparation\nimage and document check · transcript blocks\ntool definitions · output limit"]
+    Prep --> Pool["Claude account pool"]
+    Pool --> Run["One CLI run per request\nstream-json input and output"]
+    Run -->|"client tools as descriptions"| Stub["Tool helper\nlists tools, runs nothing"]
+    Run -->|"before any tool runs"| Guard["Pre-execution check\nalways deny"]
+    Run -->|"tool calls made or output limit reached"| Stop["Run interrupted\ncalls or partial answer returned"]
+```
+
+Each Claude request is one CLI run that receives the whole conversation as a
+single user message, with images and documents in place, so a turn is one
+model call. Built-in CLI tools are off; the client's function tools reach the
+CLI only as descriptions served by a helper that executes nothing, every call
+is denied before execution, and the run stops as soon as Claude has made its
+calls. The CLI's own report of available tools is checked on every request.
+See [Tool calls on Claude models](api.md#tool-calls-on-claude-models) and
+[Capabilities](capabilities.md).
 
 `airelay.claude_auth` owns enrollment metadata under
 `data_dir/claude/accounts/<id>/account.json`. Each adjacent `config/` directory
@@ -178,11 +203,37 @@ they do not establish support on an unknown account.
 ### `airelays.transforms`
 
 - OpenAI runtime request and response translation
+- unknown-parameter disclosure and output-token limits for both runtimes
+
+### `airelays.media`
+
+- the image and document check shared by both runtimes (format sniffing,
+  size caps)
+
+### `airelays.claude_content`
+
+- chat messages as the single transcript message a Claude CLI run receives,
+  with images and documents in place
+
+### `airelays.chat_responses`
+
+- `/v1/responses` on top of the Claude chat path: request translation,
+  Responses objects and stream events, and conversation item conversion
+
+### `airelays.conversations`
+
+- conversation history: prepended to each turn and recorded once a turn
+  succeeds, for both runtimes
+
+### `airelays.claude_tool_stub` and `airelays.claude_tool_guard`
+
+- the tool helper that describes client tools to the Claude CLI and runs
+  nothing, and the pre-execution check that denies every client tool call
 
 ### `airelays.store`
 
 - local files
-- local OpenAI conversation state
+- local conversation state (shared by both runtimes)
 
 ### `airelays.traffic`
 
@@ -203,9 +254,9 @@ OpenAI runtime:
 
 Claude runtime:
 
-- stateless only
-- no local conversation reuse
-- no file reuse
+- supports AIRelays local conversations (history sent with each turn)
+- supports local file reuse (files inlined into the request)
+- each request is a fresh CLI run with session persistence off
 
 ## Intentional Boundaries
 

@@ -3,7 +3,7 @@
 AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes.
 
 - OpenAI runtime: ChatGPT subscription access with multi-account balancing
-- Claude runtime: local text adapter with balancing across AIRelays-owned `claude` CLI subscription profiles, separate from your personal Claude Code sign-in
+- Claude runtime: chat, completions and Responses with images, files, conversations and tool calls, balanced across AIRelays-owned `claude` CLI subscription profiles, separate from your personal Claude Code sign-in
 
 Install the headless relay and CLI (macOS, Linux):
 
@@ -23,6 +23,7 @@ in PowerShell. See the repository README for details.
 Start with:
 
 - [Getting Started](getting-started.md)
+- [Capabilities](capabilities.md)
 - [Configuration](configuration.md)
 - [Security](security.md)
 - [API Notes](api.md)
