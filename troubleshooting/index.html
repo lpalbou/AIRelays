@@ -587,6 +587,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#another-airelays-relay-is-already-running-with-the-data-directory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "Another AIRelays relay is already running with the data directory …"
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#401-missing-or-invalid-airelays-bearer-token" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1229,6 +1240,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#another-airelays-relay-is-already-running-with-the-data-directory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "Another AIRelays relay is already running with the data directory …"
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#401-missing-or-invalid-airelays-bearer-token" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1546,6 +1568,17 @@ If discovery fails, inspect <code>providers.claude.models_discovery_error</code>
 <code>GET /v1/relay/status</code>; configured ids and the last successful catalog
 remain available. See <a href="../api/#get-v1models">model discovery</a> and
 <a href="../configuration/#provider-notes">configuration</a>.</p>
+<h2 id="another-airelays-relay-is-already-running-with-the-data-directory">"Another AIRelays relay is already running with the data directory …"<a class="headerlink" href="#another-airelays-relay-is-already-running-with-the-data-directory" title="Permanent link">&para;</a></h2>
+<p>Only one relay can use a data directory at a time, so accounts, uploads,
+conversations and logs are never shared between two relays. The message gives
+the running relay's process id, and the command exits with status 75. The
+desktop app reports this case with a notification and does not retry.</p>
+<ul>
+<li>if the desktop app is running, it already runs the relay: use that one, or
+  quit the app first (tray menu → Quit AIRelays)</li>
+<li>if a terminal session runs <code>airelays serve</code>, stop it first</li>
+<li>to run two relays on purpose, give each its own <code>--data-dir</code></li>
+</ul>
 <h2 id="401-missing-or-invalid-airelays-bearer-token"><code>401 Missing or invalid AIRelays bearer token</code><a class="headerlink" href="#401-missing-or-invalid-airelays-bearer-token" title="Permanent link">&para;</a></h2>
 <ul>
 <li>run <code>airelays status</code></li>
@@ -1823,7 +1856,7 @@ and rejects OpenAI model ids that are absent from a working live
 <li>confirm the file is below the per-file upload ceiling</li>
 <li>confirm the relay has not reached the total stored-upload quota</li>
 <li><code>413 request_too_large</code> on a Claude request: the images and documents in
-  one request (inline or by <code>file_id</code>) are limited to 32 MB in total, the
+  one request (inline or by <code>file_id</code>) are limited to 32 MiB in total, the
   Claude API's request limit; split the files across requests</li>
 </ul>
 <h2 id="502-429-with-server_is_overloaded-or-usage_limit_reached-or-slow-answers-while-the-upstream-is-degraded"><code>502</code> / <code>429</code> with <code>server_is_overloaded</code> or <code>usage_limit_reached</code>, or slow answers while the upstream is degraded<a class="headerlink" href="#502-429-with-server_is_overloaded-or-usage_limit_reached-or-slow-answers-while-the-upstream-is-degraded" title="Permanent link">&para;</a></h2>

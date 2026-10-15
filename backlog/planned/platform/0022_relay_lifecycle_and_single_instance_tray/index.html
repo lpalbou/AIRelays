@@ -892,6 +892,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#progress" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Progress
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#scope" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -942,6 +953,22 @@
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>One shutdown protocol on every OS, no orphaned relays, one relay per data
 directory, and one tray instance.</p>
+<h2 id="progress">Progress<a class="headerlink" href="#progress" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Done in 0.17.1: <code>tauri-plugin-single-instance</code> (a second launch focuses the
+  running app's dashboard; verified on macOS with <code>open -n</code> and a direct
+  binary launch) and the per-data-directory relay lock (<code>data_dir/relay.lock</code>,
+  informational <code>relay.pid</code>, through <code>private_io.InterProcessLock</code>). A relay
+  refused by the lock exits with status 75; the tray drops its intent to run,
+  notifies once and does not restart it. Login-item launches pass
+  <code>--autostart</code>, so a second instance started by the login item does not
+  open the dashboard (existing login items are re-registered at startup).</li>
+<li>To verify on Windows and Linux: one tray after a second launch and after a
+  login-item launch, and the status-75 handling.</li>
+<li>Remaining: everything else below (lifeline stdin, tray handling of a relay
+  managed elsewhere, installer <code>--quit</code>, Linux tray detection, Windows port
+  1455, macOS PATH fallback, config rewrite).</li>
+</ul>
 <h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>--lifeline-stdin</code> (passed only by the tray): the relay reads stdin in a

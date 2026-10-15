@@ -1329,9 +1329,14 @@ error (<code>422</code>, or <code>501</code> for whole endpoints).</p>
 <td>✅</td>
 </tr>
 <tr>
-<td><code>/v1/conversations</code>, <code>conversation</code> on every route</td>
+<td><code>/v1/conversations</code>; <code>conversation</code> on <code>/v1/chat/completions</code> and <code>/v1/responses</code></td>
 <td>✅</td>
 <td>✅</td>
+</tr>
+<tr>
+<td><code>conversation</code> on <code>/v1/completions</code></td>
+<td>✅</td>
+<td>❌</td>
 </tr>
 <tr>
 <td>One conversation continued across GPT and Claude</td>
