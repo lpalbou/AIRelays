@@ -1,6 +1,6 @@
 [package]
 name = "airelays-desktop"
-version = "0.17.0"
+version = "0.17.1"
 description = "AIRelays tray app: supervises the local relay and hosts its dashboard."
 authors = ["Laurent-Philippe Albou"]
 edition = "2021"
@@ -11,6 +11,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
+# One tray per user session: a second launch focuses the running app.
+tauri-plugin-single-instance = "=2.4.5"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

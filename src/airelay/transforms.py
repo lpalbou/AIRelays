@@ -8,7 +8,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
-from airelay.media import MediaError, image_from_url, sniff_image
+from airelay.errors import InvalidRequestError, RequestTooLargeError
+from airelay.media import MAX_REQUEST_MEDIA_BYTES, TEXT_TYPES, image_from_url, sniff_image
 from airelay.store import AppStore
 
 # One label vocabulary for window durations across the normalized status
@@ -16,14 +17,6 @@ from airelay.store import AppStore
 from airelay.usage_windows import window_label as _window_label
 
 
-TEXT_MIME_PREFIXES = (
-    "text/",
-    "application/json",
-    "application/xml",
-    "application/yaml",
-    "application/x-yaml",
-    "application/csv",
-)
 INLINE_TEXT_FILE_MAX_BYTES = 1_000_000
 DEFAULT_MINIMAL_INSTRUCTIONS = "."
 # Parameters the verified upstreams cannot honor: the subscription backend
@@ -75,8 +68,8 @@ COMPLETIONS_PARAMETERS = frozenset({
 _ANY_VALUE_REQUESTS = frozenset({"web_search_options", "audio", "prediction", "moderation"})
 
 
-class TranslationError(ValueError):
-    pass
+class TranslationError(InvalidRequestError):
+    """A request the OpenAI-compatible layer cannot translate (422)."""
 
 
 def strip_unknown_parameters(payload: dict[str, Any], known: frozenset[str]) -> list[str]:
@@ -114,10 +107,45 @@ def strip_unsupported_response_parameters(payload: dict[str, Any]) -> list[str]:
     return ignored
 
 
+def conversation_id_of(value: Any) -> str | None:
+    """The `conversation` parameter's id: a string, or an object with a
+    string `id` (both forms OpenAI accepts)."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        value = value.get("id")
+    if not isinstance(value, str) or not value:
+        raise TranslationError("`conversation` must be a conversation id or an object with its `id`.",
+                               param="conversation")
+    return value
+
+
+def validated_metadata(value: Any) -> dict[str, str] | None:
+    """OpenAI's `metadata`: up to 16 string pairs, keys of at most 64
+    characters and values of at most 512."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or len(value) > 16 or not all(
+            isinstance(key, str) and len(key) <= 64 and isinstance(item, str) and len(item) <= 512
+            for key, item in value.items()):
+        raise TranslationError("`metadata` must be an object of at most 16 string values (keys up to 64 "
+                               "characters, values up to 512).", param="metadata")
+    return value
+
+
+def refuse_tools_unless_allowed(body: dict[str, Any], allow_tools: bool) -> None:
+    """The `/no-tools` routes refuse any request that could call a tool."""
+    if allow_tools:
+        return
+    if body.get("tools") or body.get("functions") or body.get("tool_choice") not in (None, "none") \
+            or body.get("function_call") not in (None, "none"):
+        raise TranslationError("This route disables tools.")
+
+
 def is_requested(name: str, value: Any) -> bool:
     """Whether a parameter asks for something, as opposed to restating the
     default many clients send (null, false, 0, empty, `best_of: 1`,
-    `modalities: ["text"]`). Legacy completions `logprobs` is an integer
+    `modalities: ["text"]`, `truncation: "disabled"`). Legacy completions `logprobs` is an integer
     where 0 still asks for the sampled token's logprob."""
     if name == "logprobs" and isinstance(value, int) and not isinstance(value, bool):
         return True
@@ -125,7 +153,8 @@ def is_requested(name: str, value: Any) -> bool:
         return value is not None
     if value in (None, False, 0, "", [], {}):
         return False
-    return not ((name == "best_of" and value == 1) or (name == "modalities" and value == ["text"]))
+    return not ((name == "best_of" and value == 1) or (name == "modalities" and value == ["text"])
+                or (name == "truncation" and value == "disabled"))
 
 
 def reject_unhonored_parameters(payload: dict[str, Any]) -> None:
@@ -462,7 +491,7 @@ def _normalize_responses_text_format(text_format: Any) -> dict[str, Any]:
 
 def _is_text_file(content_type: str) -> bool:
     lowered = content_type.lower()
-    return lowered.startswith(TEXT_MIME_PREFIXES)
+    return lowered.startswith(TEXT_TYPES)
 
 
 def _data_url(content_type: str, body: bytes) -> str:
@@ -605,14 +634,6 @@ def _check_file_fits(part: dict[str, Any], record: dict[str, Any]) -> None:
             raise TranslationError(f"File `{filename}` is too large to inline as text without truncation.")
 
 
-class RequestTooLargeError(TranslationError):
-    """Returned as 413."""
-
-
-# Anthropic's request size limit; files are inlined into the request.
-INLINE_FILES_MAX_BYTES = 32 * 1024 * 1024
-
-
 class UnknownLocalFileError(TranslationError):
     def __init__(self, file_id: str) -> None:
         super().__init__(f"Unknown local file id `{file_id}`. Upload it first with `POST /v1/files`.")
@@ -684,9 +705,9 @@ def inline_chat_files(messages: list[Any], store: AppStore) -> list[Any]:
                     total += store.get_file(file_id(part))["bytes"]
                 except KeyError as exc:
                     raise UnknownLocalFileError(file_id(part)) from exc
-    if total > INLINE_FILES_MAX_BYTES:
+    if total > MAX_REQUEST_MEDIA_BYTES:
         raise RequestTooLargeError(f"Files referenced by one request are limited to "
-                                   f"{INLINE_FILES_MAX_BYTES // (1024 * 1024)} MB in total.")
+                                   f"{MAX_REQUEST_MEDIA_BYTES // (1024 * 1024)} MiB in total.")
     result: list[Any] = []
     for message in messages:
         content = message.get("content") if isinstance(message, dict) else None
@@ -719,20 +740,15 @@ def prepare_response_request(
     store: AppStore,
     allow_tools: bool,
 ) -> tuple[dict[str, Any], bool, str | None]:
+    if not isinstance(body.get("model"), str) or not body["model"]:
+        raise TranslationError("Responses requests must include a `model` string.", param="model")
     payload = _normalize_responses_input(body, store)
     strip_unsupported_response_parameters(payload)
     wants_stream = bool(payload.get("stream"))
-    conversation_id = payload.pop("conversation", None)
-    if isinstance(conversation_id, dict):
-        conversation_id = conversation_id.get("id")
-    if conversation_id is not None and not isinstance(conversation_id, str):
-        raise TranslationError("`conversation` must be a string or an object with string `id`.")
+    conversation_id = conversation_id_of(payload.pop("conversation", None))
     if payload.get("store") not in {None, False}:
         raise TranslationError("The subscription backend requires `store=false`.")
-    if not allow_tools and payload.get("tools"):
-        raise TranslationError("This route disables tools.")
-    if not allow_tools and payload.get("tool_choice") not in {None, "none"}:
-        raise TranslationError("This route disables tools.")
+    refuse_tools_unless_allowed(payload, allow_tools)
     instructions = payload.get("instructions")
     if not isinstance(instructions, str) or not instructions.strip():
         payload["instructions"] = DEFAULT_MINIMAL_INSTRUCTIONS
@@ -795,10 +811,7 @@ def _responses_message(
                 else:
                     # The same check as on Claude models: a bad image is a
                     # clear 422 here, not a vague upstream error.
-                    try:
-                        media = image_from_url(image.get("url"))
-                    except MediaError as exc:
-                        raise TranslationError(str(exc)) from exc
+                    media = image_from_url(image.get("url"))
                     parts.append({"type": "input_image", "detail": image.get("detail", "auto"),
                                   "image_url": media.url or f"data:{media.media_type};base64,{media.data}"})
                 continue
@@ -907,13 +920,7 @@ def chat_completions_to_responses(
         raise TranslationError("The deprecated `functions` cannot be combined with `conversation`; use `tools`.")
     if body.get("n") not in {None, 1}:
         raise TranslationError("Only `n=1` is supported.")
-    if not allow_tools and (body.get("tools") or body.get("functions")):
-        raise TranslationError("This route disables tools.")
-    tool_choice_value = body.get("tool_choice")
-    if not allow_tools and tool_choice_value is not None and tool_choice_value != "none":
-        raise TranslationError("This route disables tools.")
-    if not allow_tools and body.get("function_call") not in {None, "none"}:
-        raise TranslationError("This route disables tools.")
+    refuse_tools_unless_allowed(body, allow_tools)
     if body.get("store") not in {None, False}:
         raise TranslationError("The subscription backend requires `store=false`.")
     messages = body.get("messages")
@@ -923,9 +930,7 @@ def chat_completions_to_responses(
     if not isinstance(model, str) or not model:
         raise TranslationError("Chat completions requests must include a `model` string.")
 
-    conversation_id = body.get("conversation")
-    if conversation_id is not None and not isinstance(conversation_id, str):
-        raise TranslationError("`conversation` must be a string when provided.")
+    conversation_id = conversation_id_of(body.get("conversation"))
 
     input_items: list[dict[str, Any]] = []
     instruction_parts: list[str] = []
@@ -1163,9 +1168,7 @@ def completions_to_responses(body: dict[str, Any]) -> tuple[dict[str, Any], bool
         payload["reasoning"] = {"effort": body["reasoning_effort"]}
 
     wants_stream = bool(body.get("stream"))
-    conversation_id = body.get("conversation")
-    if conversation_id is not None and not isinstance(conversation_id, str):
-        raise TranslationError("`conversation` must be a string when provided.")
+    conversation_id = conversation_id_of(body.get("conversation"))
     return payload, wants_stream, conversation_id
 
 

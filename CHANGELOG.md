@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.17.1
+
+### Fixed
+
+- Desktop: opening AIRelays while it is already running (a second click, or
+  the login item starting it again) no longer creates a second tray icon; it
+  brings the running app's dashboard to the front.
+- One relay per data directory: a second `airelays serve` using the same data
+  directory exits with "Another AIRelays relay is already running … (pid N)"
+  (exit status 75) instead of competing for the same accounts, uploads and
+  logs. The desktop app reports this with one notification and does not
+  retry. A login-item launch while the app already runs stays in the
+  background.
+- Claude `/v1/responses` accepts the default values many clients send
+  (`background: false`, `previous_response_id: null`, `prompt: null`); only
+  a requested feature is refused.
+- Claude conversations on `/v1/chat/completions` send the request's messages
+  exactly as given (for example an image's `detail`); content a conversation
+  cannot store is refused with `422` instead of being dropped.
+- Claude `/v1/responses`: log probabilities (`top_logprobs`, or
+  `message.output_text.logprobs` in `include`) are refused with `422`; other
+  `include` values and `text.verbosity` are listed in
+  `x-airelays-ignored-parameters`; a `function_call_output` given as text
+  parts is accepted; `parallel_tool_calls` is always a boolean in the
+  response.
+- Tool results on Claude models (`role: "tool"` messages and
+  `function_call_output`) must be text: image or file parts are refused with
+  `422` instead of being dropped.
+- Errors that arrive after a stream started carry the OpenAI error `type`
+  (`rate_limit_error`, `server_error`, …); a Claude `response.failed` event
+  uses the Responses error codes (`rate_limit_exceeded`, `server_error`).
+- `/v1/responses` without a `model` returns `422`. Conversation `metadata`
+  is checked (at most 16 string values), and validation errors name the
+  offending field in `param`.
+- `conversation` accepts the object form (`{"id": "conv_…"}`) on every route
+  that supports conversations; an empty id is refused with `422`.
+
 ## 0.17.0
 
 ### Added

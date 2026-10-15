@@ -1,6 +1,6 @@
 //! Shared application state and the status polling loop.
 
-use crate::relay::{robust_lock, Lifecycle, RelaySupervisor};
+use crate::relay::{robust_lock, Lifecycle, RelaySupervisor, RELAY_ALREADY_RUNNING};
 use crate::settings::AppSettings;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -167,10 +167,18 @@ pub fn spawn_status_loop(app: AppHandle) {
         let mut restart_attempts: u32 = 0;
         let mut restart_due: Option<Instant> = None;
         loop {
-            let exited = {
+            let exit = {
                 let state = app.state::<AppState>();
                 state.supervisor.reap_if_exited()
             };
+            let exited = exit.is_some();
+            if exit.and_then(|status| status.code()) == Some(RELAY_ALREADY_RUNNING) {
+                notify(
+                    &app,
+                    "AIRelays relay not started",
+                    "Another AIRelays relay already uses this data directory. Open the Console tab for details.",
+                );
+            }
 
             // The child died without a user stop: schedule a respawn with
             // capped backoff, or give up after too many consecutive failures.

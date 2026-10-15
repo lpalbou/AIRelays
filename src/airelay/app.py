@@ -51,7 +51,7 @@ from airelay.providers import (
 )
 from airelay.retry import RetryPolicy, retry_call
 from airelay.security import EndpointProtector
-from airelay.errors import error_body
+from airelay.errors import InvalidRequestError, error_body, error_type
 from airelay.store import AppStore
 from airelay.traffic import TrafficLogger, snapshot_body
 from airelay.transforms import (
@@ -66,8 +66,10 @@ from airelay.transforms import (
     completion_chunk,
     completions_to_responses,
     strip_unsupported_response_parameters,
-    RequestTooLargeError,
     TranslationError,
+    conversation_id_of,
+    refuse_tools_unless_allowed,
+    validated_metadata,
     UnknownLocalFileError,
     chat_completion_chunk,
     chat_completions_to_responses,
@@ -131,10 +133,10 @@ def _request_id(request: Request | None = None) -> str:
     return created
 
 
-def _stream_error_event(message: str, code: str) -> bytes:
+def _stream_error_event(message: str, code: str, status_code: int, type_: str | None = None) -> bytes:
     """OpenAI-style in-band SSE error event, for failures that happen after
     the response headers are already on the wire."""
-    payload = {"error": {"message": message, "type": code, "param": None, "code": code}}
+    payload = {"error": {"message": message, "type": type_ or error_type(status_code), "param": None, "code": code}}
     return f"data: {json.dumps(payload, ensure_ascii=True)}\n\n".encode("utf-8")
 
 
@@ -169,16 +171,22 @@ def _stream_failure_event(parsed: Any) -> bytes:
     """In-band error for an upstream failure event, carrying the upstream
     reason instead of a silently truncated stream."""
     error = stream_error_object(parsed) or {}
-    message = error.get("message")
-    code = error.get("code") or error.get("type")
+    message, code, type_ = error.get("message"), error.get("code") or error.get("type"), error.get("type")
+    code = code if isinstance(code, str) and code else "upstream_error"
     return _stream_error_event(
         message if isinstance(message, str) and message else "The upstream response failed.",
-        code if isinstance(code, str) and code else "upstream_error",
+        code,
+        429 if code in _RATE_LIMIT_CODES else 502,
+        type_ if isinstance(type_, str) and type_ else None,
     )
 
 
+# Upstream failure codes that mean "retry later", typed `rate_limit_error`.
+_RATE_LIMIT_CODES = frozenset({"rate_limit_exceeded", "usage_limit_reached", "rate_limit_error"})
+
+
 _INCOMPLETE_STREAM_EVENT = _stream_error_event(
-    "Upstream stream ended before response.completed.", "incomplete_stream"
+    "Upstream stream ended before response.completed.", "incomplete_stream", 502
 )
 
 
@@ -223,10 +231,11 @@ def _backend_error_payload(exc: BackendError) -> dict[str, Any]:
 class _ApiError(HTTPException):
     """An HTTP error that keeps its machine-readable OpenAI error `code`."""
 
-    def __init__(self, status_code: int, detail: str, *, code: str | None = None,
+    def __init__(self, status_code: int, detail: str, *, code: str | None = None, param: str | None = None,
                  headers: dict[str, str] | None = None) -> None:
         super().__init__(status_code=status_code, detail=detail, headers=headers)
         self.code = code
+        self.param = param
 
 
 def _http_error(exc: Exception) -> Exception:
@@ -258,10 +267,8 @@ def _http_error(exc: Exception) -> Exception:
         return _ApiError(status, exc.detail, code=exc.code, headers=headers or None)
     if isinstance(exc, AuthenticationError):
         return exc
-    if isinstance(exc, RequestTooLargeError):
-        return _ApiError(413, str(exc), code="request_too_large")
-    if isinstance(exc, TranslationError):
-        return _ApiError(422, str(exc))
+    if isinstance(exc, InvalidRequestError):
+        return _ApiError(exc.status_code, str(exc), code=exc.code, param=exc.param)
     raise _ApiError(500, str(exc))
 
 
@@ -438,7 +445,8 @@ def create_app(settings: Settings) -> FastAPI:
         # in OpenAI's error shape.
         request_id = _request_id(request)
         detail = exc.detail if isinstance(exc.detail, str) else json.dumps(exc.detail)
-        payload = error_body(detail, status_code=exc.status_code, code=getattr(exc, "code", None))
+        payload = error_body(detail, status_code=exc.status_code, code=getattr(exc, "code", None),
+                             param=getattr(exc, "param", None))
         headers = dict(getattr(exc, "headers", None) or {})
         if exc.status_code == 501:
             headers.update(NOT_RETRYABLE)
@@ -592,34 +600,40 @@ def create_app(settings: Settings) -> FastAPI:
                 detail="This route needs the OpenAI or the Claude runtime enabled.",
             )
 
+    def claude_runtime() -> Any:
+        runtime = providers.claude
+        if runtime is None:
+            raise ProviderError(503, "The Claude runtime is not available in this AIRelays process.",
+                                code="provider_unavailable")
+        return runtime
+
     async def claude_chat(request_id: str, body: dict[str, Any], conversation_id: Any,
                           turn_items: list[Any]) -> tuple[Any, ConversationTurn | None]:
         """One Claude run for every route: the chat payload, or its SSE
         stream (primed, so failures before the first byte are real HTTP
         errors), and the conversation turn to record."""
-        claude_runtime = providers.claude
-        if claude_runtime is None:
-            raise ProviderError(503, "The Claude runtime is not available in this AIRelays process.",
-                                code="provider_unavailable")
-        if isinstance(conversation_id, dict):
-            conversation_id = conversation_id.get("id")
+        runtime = claude_runtime()
+        conversation_id = conversation_id_of(conversation_id)
         turn = None
         if conversation_id:
-            history = {"input": list(turn_items)}
             try:
-                turn = ConversationTurn.begin(store, conversation_id, history)
+                turn, history = ConversationTurn.open(store, conversation_id, turn_items)
             except KeyError as exc:
                 raise _ApiError(404, f"Unknown conversation id `{conversation_id}`.") from exc
-            system = [m for m in body.get("messages") or [] if m.get("role") in ("system", "developer")]
-            body = {**body, "messages": system + items_to_messages(history["input"])}
+            # The stored history goes after the system messages and before
+            # the request's own messages, which are sent as they came.
+            messages = body.get("messages") or []
+            system = [m for m in messages if m.get("role") in ("system", "developer")]
+            turn_messages = [m for m in messages if m.get("role") not in ("system", "developer")]
+            body = {**body, "messages": system + items_to_messages(history) + turn_messages}
         body = {**body, "messages": inline_chat_files(body.get("messages") or [], store)}
         if not body.get("stream"):
-            payload = await claude_runtime.create_chat_completion(body, request_id)
+            payload = await runtime.create_chat_completion(body, request_id)
             if payload.get("usage") is not None:
                 traffic.write({"request_id": request_id, "phase": "outbound_usage", "provider": "claude",
                                "model": payload.get("model"), "usage": payload["usage"]})
             return payload, turn
-        stream = claude_runtime.stream_chat_completion(body, request_id)
+        stream = runtime.stream_chat_completion(body, request_id)
         first = await _first_chunk(stream)
         return (first, stream), turn
 
@@ -644,17 +658,16 @@ def create_app(settings: Settings) -> FastAPI:
         except ProviderError as exc:
             # Headers are already on the wire; signal the failure in-band
             # the way OpenAI does instead of silently truncating the stream.
-            yield _stream_error_event(exc.detail, exc.code)
+            yield _stream_error_event(exc.detail, exc.code, exc.status_code)
         finally:
             await stream.aclose()
 
     async def claude_responses(request_id: str, body: dict[str, Any], allow_tools: bool) -> Response:
         """`/v1/responses` on a Claude model: translated to the chat runtime
         and back (see airelay.chat_responses)."""
-        if not allow_tools and (body.get("tools") or body.get("tool_choice") not in (None, "none")):
-            raise TranslationError("This route disables tools.")
+        refuse_tools_unless_allowed(body, allow_tools)
         chat, turn_items, ignored = request_to_chat(body)
-        ignored += strip_unknown_parameters(chat, CLAUDE_CHAT_PARAMETERS) + claude_ignored_tool_options(chat)
+        ignored += claude_ignored_tool_options(chat)
         result, turn = await claude_chat(request_id, chat, body.get("conversation"), turn_items)
         headers = _adaptation_headers(ignored)
         log_adaptation(request_id, ignored, reason=CLAUDE_ADAPTATION_REASON)
@@ -678,14 +691,11 @@ def create_app(settings: Settings) -> FastAPI:
                                 turn.complete(converter.response)
                             for event in closing:
                                 yield chat_responses_sse(event)
-                        elif "error" in item:
-                            for event in converter.fail(item["error"]):
-                                yield chat_responses_sse(event)
                         else:
                             for event in converter.feed(item):
                                 yield chat_responses_sse(event)
             except ProviderError as exc:
-                for event in converter.fail({"code": exc.code, "message": exc.detail}):
+                for event in converter.fail(exc.status_code, exc.detail):
                     yield chat_responses_sse(event)
             finally:
                 await stream.aclose()
@@ -1112,10 +1122,11 @@ def create_app(settings: Settings) -> FastAPI:
         await log_inbound(request_id, request, body)
         payload = load_json(body)
         try:
+            metadata = validated_metadata(payload.get("metadata"))
             items = normalize_conversation_items(payload.get("items"), store)
-        except TranslationError as exc:
+        except InvalidRequestError as exc:
             raise _http_error(exc) from exc
-        conversation = store.create_conversation(metadata=payload.get("metadata"), items=items)
+        conversation = store.create_conversation(metadata=metadata, items=items)
         return logged_json(request_id, conversation)
 
     @app.get("/v1/conversations/{conversation_id}")
@@ -1137,7 +1148,9 @@ def create_app(settings: Settings) -> FastAPI:
         await log_inbound(request_id, request, body)
         payload = load_json(body)
         try:
-            conversation = store.update_conversation(conversation_id, metadata=payload.get("metadata"))
+            conversation = store.update_conversation(conversation_id, metadata=validated_metadata(payload.get("metadata")))
+        except InvalidRequestError as exc:
+            raise _http_error(exc) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"Unknown conversation id `{conversation_id}`.") from exc
         return logged_json(request_id, conversation)
@@ -1249,16 +1262,9 @@ def create_app(settings: Settings) -> FastAPI:
             resolved = await resolve_request_model(body.get("model"), request_id)
             if resolved is not None:
                 if resolved.provider == "claude":
-                    claude_runtime = providers.claude
-                    if claude_runtime is None:
-                        raise ProviderError(
-                            503,
-                            "The Claude runtime is not available in this AIRelays process.",
-                            code="provider_unavailable",
-                        )
-                    if not allow_tools and (body.get("tools") or body.get("tool_choice") not in (None, "none")):
-                        raise TranslationError("This route disables tools.")
-                    conversation_id = body.pop("conversation", None)
+                    claude_runtime()
+                    refuse_tools_unless_allowed(body, allow_tools)
+                    conversation_id = conversation_id_of(body.pop("conversation", None))
                     ignored_parameters = strip_unsupported_response_parameters(body)
                     ignored_parameters += strip_unknown_parameters(body, CLAUDE_CHAT_PARAMETERS)
                     ignored_parameters += claude_ignored_tool_options(body)
@@ -1444,20 +1450,14 @@ def create_app(settings: Settings) -> FastAPI:
             resolved = await resolve_request_model(body.get("model"), request_id)
             if resolved is not None:
                 if resolved.provider == "claude":
-                    claude_runtime = providers.claude
-                    if claude_runtime is None:
-                        raise ProviderError(
-                            503,
-                            "The Claude runtime is not available in this AIRelays process.",
-                            code="provider_unavailable",
-                        )
+                    runtime = claude_runtime()
                     ignored_parameters = strip_unsupported_response_parameters(body)
                     ignored_parameters += strip_unknown_parameters(body, CLAUDE_COMPLETION_PARAMETERS)
                     reject_unhonored_parameters(body)
                     log_adaptation(request_id, ignored_parameters, reason=CLAUDE_ADAPTATION_REASON)
                     claude_headers = _adaptation_headers(ignored_parameters)
                     if not body.get("stream"):
-                        payload = await claude_runtime.create_completion(body, request_id)
+                        payload = await runtime.create_completion(body, request_id)
                         usage = payload.get("usage")
                         if usage is not None:
                             traffic.write(
@@ -1472,7 +1472,7 @@ def create_app(settings: Settings) -> FastAPI:
                         return logged_json(request_id, payload, headers=claude_headers)
 
                     # Same eager-validation contract as the chat route.
-                    claude_stream = claude_runtime.stream_completion(body, request_id)
+                    claude_stream = runtime.stream_completion(body, request_id)
                     first_chunk = await _first_chunk(claude_stream)
 
                     async def claude_event_stream() -> AsyncIterator[bytes]:
@@ -1488,7 +1488,7 @@ def create_app(settings: Settings) -> FastAPI:
                                 )
                                 yield chunk
                         except ProviderError as exc:
-                            yield _stream_error_event(exc.detail, exc.code)
+                            yield _stream_error_event(exc.detail, exc.code, exc.status_code)
                         finally:
                             await claude_stream.aclose()
 

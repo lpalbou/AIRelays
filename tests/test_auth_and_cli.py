@@ -832,3 +832,25 @@ def test_cancelled_refresh_never_strands_the_refresh_lock(tmp_path, monkeypatch)
     probe = InterProcessLock(manager.storage.lock_path)
     probe.acquire(timeout=2)
     probe.release()
+
+
+def test_one_relay_per_data_directory(tmp_path, capsys) -> None:
+    """A second relay on the same data directory is refused with the first
+    one's pid and a status the desktop app recognises; the lock frees
+    itself when the holder releases it."""
+    import os
+
+    from airelay.cli import RELAY_ALREADY_RUNNING, _hold_relay_lock
+    from airelay.config import Settings
+
+    settings = Settings(data_dir=tmp_path / "data", logs_dir=tmp_path / "logs")
+    settings.ensure_directories()
+    first = _hold_relay_lock(settings)
+    try:
+        with pytest.raises(SystemExit) as excinfo:
+            _hold_relay_lock(settings, wait=0)
+    finally:
+        first.release()
+    assert excinfo.value.code == RELAY_ALREADY_RUNNING == 75
+    assert f"already running with the data directory {settings.data_dir} (pid {os.getpid()})" in capsys.readouterr().err
+    _hold_relay_lock(settings, wait=0).release()

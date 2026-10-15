@@ -69,7 +69,8 @@ A response cut by the output-token limit reports `finish_reason: "length"`
 | Images: PNG, JPEG, GIF, WebP as data URL, http(s) URL or local `file_id` | ✅ | ✅ |
 | PDFs and UTF-8 text files (`file` parts: `file_data` or `file_id`) | ✅ | ✅ |
 | `/v1/files` (upload, list with pagination, retrieve, delete) | ✅ | ✅ |
-| `/v1/conversations`, `conversation` on every route | ✅ | ✅ |
+| `/v1/conversations`; `conversation` on `/v1/chat/completions` and `/v1/responses` | ✅ | ✅ |
+| `conversation` on `/v1/completions` | ✅ | ❌ |
 | One conversation continued across GPT and Claude | ✅ | ✅ (GPT `custom` tool calls in the history are not supported on Claude) |
 | `previous_response_id` | ❌ use `conversation` | ❌ use `conversation` |
 | Audio input, `prediction`, `moderation` | ❌ | ❌ |

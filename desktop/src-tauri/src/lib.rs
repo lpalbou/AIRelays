@@ -15,11 +15,25 @@ fn should_hide_dashboard(label: &str, tray_available: bool, visible: bool, focus
     label == "main" && tray_available && visible && !focused
 }
 
+/// Marks launches made by the login item.
+const AUTOSTART_ARG: &str = "--autostart";
+
 pub fn run() {
     tauri::Builder::default()
+        // First plugin, so a second launch exits before it creates a tray or
+        // a relay supervisor: one tray per user session. The running app
+        // shows its dashboard instead, which is what a user opening the
+        // app again expects.
+        // A login-item launch (`--autostart`) while the app already runs
+        // stays silent.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if !argv.iter().any(|arg| arg == AUTOSTART_ARG) {
+                commands::show_dashboard(app);
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![AUTOSTART_ARG]),
         ))
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
@@ -32,6 +46,15 @@ pub fn run() {
                 .expect("app config dir")
                 .join("app-settings.json");
             app.manage(AppState::load(settings_path));
+
+            // Re-register an existing login item so it carries the current
+            // launch arguments.
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                if app.autolaunch().is_enabled().unwrap_or(false) {
+                    let _ = app.autolaunch().enable();
+                }
+            }
 
             // Tray-first app: no dock icon on macOS.
             #[cfg(target_os = "macos")]

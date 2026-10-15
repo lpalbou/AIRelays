@@ -14,7 +14,7 @@ import time
 import uuid
 from typing import Any, Iterator
 
-from airelay.transforms import UNSUPPORTED_UPSTREAM_PARAMETERS, TranslationError
+from airelay.transforms import UNSUPPORTED_UPSTREAM_PARAMETERS, TranslationError, is_requested, validated_metadata
 
 # Responses fields with no meaning on Claude that would change the answer.
 _REFUSED = {
@@ -24,7 +24,7 @@ _REFUSED = {
 }
 # Mapped explicitly below.
 _MAPPED = {"model", "input", "instructions", "tools", "tool_choice", "parallel_tool_calls", "text", "reasoning",
-           "stream", "stream_options", "store", "conversation", "metadata", "include", "max_output_tokens"}
+           "stream", "stream_options", "store", "conversation", "metadata", "max_output_tokens"}
 
 
 def _message(role: str, content: Any) -> dict[str, Any]:
@@ -50,6 +50,21 @@ def _message(role: str, content: Any) -> dict[str, Any]:
     return {"role": role, "content": parts}
 
 
+def _tool_output(output: Any) -> str:
+    """A `function_call_output` output (a string or text parts) as the text
+    of a chat tool message."""
+    if isinstance(output, str):
+        return output
+    if not isinstance(output, list):
+        raise TranslationError("`function_call_output.output` must be a string or an array of content parts.")
+    texts = []
+    for part in output:
+        if not isinstance(part, dict) or part.get("type") not in ("input_text", "output_text"):
+            raise TranslationError("Function call outputs on Claude models must be text.")
+        texts.append(part.get("text") or "")
+    return "".join(texts)
+
+
 def items_to_messages(items: list[Any]) -> list[dict[str, Any]]:
     """Responses input items as chat messages (consecutive function calls
     become one assistant message with several `tool_calls`)."""
@@ -72,9 +87,8 @@ def items_to_messages(items: list[Any]) -> list[dict[str, Any]]:
             else:
                 messages.append({"role": "assistant", "content": None, "tool_calls": [call]})
         elif kind == "function_call_output":
-            output = item.get("output")
             messages.append({"role": "tool", "tool_call_id": item.get("call_id"),
-                             "content": output if isinstance(output, str) else json.dumps(output)})
+                             "content": _tool_output(item.get("output"))})
         elif kind == "reasoning":
             continue  # Claude cannot replay another model's reasoning
         else:
@@ -92,19 +106,22 @@ def messages_to_items(messages: list[Any]) -> list[dict[str, Any]]:
         role = message.get("role")
         if role in ("system", "developer"):
             continue
+        content = message.get("content")
+        content = [{"type": "text", "text": content}] if isinstance(content, str) else content or []
         if role == "tool":
-            output = message.get("content")
-            text = output if isinstance(output, str) else "".join(
-                p.get("text", "") for p in output or [] if isinstance(p, dict))
-            items.append({"type": "function_call_output", "call_id": message.get("tool_call_id"), "output": text})
+            items.append({"type": "function_call_output", "call_id": message.get("tool_call_id"),
+                          "output": _tool_output([{**p, "type": "input_text"} if isinstance(p, dict)
+                                                  and p.get("type") == "text" else p for p in content])})
             continue
         text_type = "output_text" if role == "assistant" else "input_text"
-        content = message.get("content")
         parts: list[dict[str, Any]] = []
-        for part in [{"type": "text", "text": content}] if isinstance(content, str) else content or []:
+        for part in content:
             kind = part.get("type") if isinstance(part, dict) else None
-            if kind == "text" and part.get("text"):
-                parts.append({"type": text_type, "text": part["text"]})
+            if kind in ("text", "input_text", "output_text"):
+                if part.get("text"):
+                    parts.append({"type": text_type, "text": part["text"]})
+            elif kind in ("input_image", "input_file"):
+                parts.append(dict(part))  # already in the Responses form
             elif kind == "refusal":
                 parts.append({"type": "refusal", "refusal": part.get("refusal", "")})
             elif kind == "image_url":
@@ -114,6 +131,8 @@ def messages_to_items(messages: list[Any]) -> list[dict[str, Any]]:
                              else {"type": "input_image", "image_url": image.get("url")})
             elif kind == "file":
                 parts.append({"type": "input_file", **(part.get("file") or {})})
+            else:
+                raise TranslationError(f"Unsupported content part `{kind}` in a conversation on Claude models.")
         if parts:
             items.append({"type": "message", "role": role, "content": parts})
         for call in message.get("tool_calls") or []:
@@ -135,10 +154,13 @@ def request_to_chat(body: dict[str, Any]) -> tuple[dict[str, Any], list[Any], li
     """A `/v1/responses` request as (chat body, the turn's input items,
     ignored parameter names)."""
     for name, reason in _REFUSED.items():
-        if body.get(name) is not None:
+        if is_requested(name, body.get(name)):
             raise TranslationError(reason)
     if body.get("store"):
         raise TranslationError("Claude models do not store responses; send `store: false` or omit it.")
+    include = body.get("include") if isinstance(body.get("include"), list) else []
+    if is_requested("top_logprobs", body.get("top_logprobs")) or "message.output_text.logprobs" in include:
+        raise TranslationError("Log probabilities are not available on Claude models.")
     items = _input_items(body.get("input"))
     chat: dict[str, Any] = {"model": body.get("model"), "messages": items_to_messages(items),
                             "stream": bool(body.get("stream")), "stream_options": {"include_usage": True}}
@@ -170,10 +192,13 @@ def request_to_chat(body: dict[str, Any]) -> tuple[dict[str, Any], list[Any], li
     effort = (body.get("reasoning") or {}).get("effort") if isinstance(body.get("reasoning"), dict) else None
     if effort is not None:
         chat["reasoning_effort"] = effort
-    ignored = sorted(name for name, value in body.items() if value is not None and (
+    ignored = sorted(name for name, value in body.items() if is_requested(name, value) and (
         name in UNSUPPORTED_UPSTREAM_PARAMETERS or name not in _MAPPED))
     if isinstance(body.get("reasoning"), dict) and body["reasoning"].get("summary") is not None:
         ignored.append("reasoning.summary")
+    if isinstance(body.get("text"), dict) and body["text"].get("verbosity") is not None:
+        ignored.append("text.verbosity")
+    validated_metadata(body.get("metadata"))  # echoed in the response
     return chat, items, ignored
 
 
@@ -195,7 +220,7 @@ def _shell(request: dict[str, Any], response_id: str, created_at: int, model: st
     return {"id": response_id, "object": "response", "created_at": created_at, "model": model,
             "status": "in_progress", "output": [], "error": None, "incomplete_details": None,
             "instructions": request.get("instructions"), "metadata": request.get("metadata") or {},
-            "parallel_tool_calls": request.get("parallel_tool_calls", True), "temperature": None, "top_p": None,
+            "parallel_tool_calls": request.get("parallel_tool_calls") is not False, "temperature": None, "top_p": None,
             "tool_choice": request.get("tool_choice") or "auto",
             # Claude runs every function tool non-strict (it has no strict mode).
             "tools": [{**tool, "strict": False} if isinstance(tool, dict) and tool.get("type") == "function" else tool
@@ -279,7 +304,7 @@ class ChatStreamToResponses:
             self._usage = chunk["usage"]
         for choice in chunk.get("choices") or []:
             delta = choice.get("delta") or {}
-            text = delta.get("content") or delta.get("refusal")
+            text = delta.get("content")
             if text:
                 index = len(self.response["output"])
                 if self._text is None:
@@ -314,9 +339,12 @@ class ChatStreamToResponses:
         kind = "response.incomplete" if final["status"] == "incomplete" else "response.completed"
         return events + [self._event(kind, response=json.loads(json.dumps(final)))]
 
-    def fail(self, error: dict[str, Any]) -> list[dict[str, Any]]:
+    def fail(self, status_code: int, message: str) -> list[dict[str, Any]]:
+        """A failure after the stream started, as `response.failed` with
+        one of the error codes the Responses API defines."""
         self.response["status"] = "failed"
-        self.response["error"] = {"code": error.get("code") or "server_error", "message": error.get("message") or ""}
+        self.response["error"] = {"code": "rate_limit_exceeded" if status_code == 429 else "server_error",
+                                  "message": message}
         return [self._event("response.failed", response=json.loads(json.dumps(self.response)))]
 
 

@@ -12,8 +12,9 @@ import pytest
 
 from airelay.claude_content import ClaudeContentError, conversation_from_chat
 from airelay.media import MediaError, document_from_data, image_from_url
+from airelay.errors import InvalidRequestError
 from airelay.store import AppStore
-from airelay.transforms import TranslationError, chat_completions_to_responses
+from airelay.transforms import chat_completions_to_responses
 
 
 def png(size: int = 8) -> bytes:
@@ -73,8 +74,8 @@ def test_gpt_chat_images_use_the_same_check(tmp_path, image_url, expected) -> No
 def test_gpt_chat_rejects_bad_images_locally(tmp_path) -> None:
     body = {"model": "gpt-5.4-mini", "messages": [{"role": "user", "content": [
         {"type": "image_url", "image_url": {"url": data_url(b"not an image")}}]}]}
-    with pytest.raises(TranslationError, match="not a PNG"):
+    with pytest.raises(InvalidRequestError, match="not a PNG"):
         chat_completions_to_responses(body, AppStore(tmp_path), allow_tools=True)
     body["messages"][0]["content"][0]["image_url"] = {}
-    with pytest.raises(TranslationError, match="non-empty"):
+    with pytest.raises(InvalidRequestError, match="non-empty"):
         chat_completions_to_responses(body, AppStore(tmp_path), allow_tools=True)

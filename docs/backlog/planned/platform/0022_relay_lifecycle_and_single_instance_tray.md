@@ -10,6 +10,22 @@
 One shutdown protocol on every OS, no orphaned relays, one relay per data
 directory, and one tray instance.
 
+## Progress
+
+- Done in 0.17.1: `tauri-plugin-single-instance` (a second launch focuses the
+  running app's dashboard; verified on macOS with `open -n` and a direct
+  binary launch) and the per-data-directory relay lock (`data_dir/relay.lock`,
+  informational `relay.pid`, through `private_io.InterProcessLock`). A relay
+  refused by the lock exits with status 75; the tray drops its intent to run,
+  notifies once and does not restart it. Login-item launches pass
+  `--autostart`, so a second instance started by the login item does not
+  open the dashboard (existing login items are re-registered at startup).
+- To verify on Windows and Linux: one tray after a second launch and after a
+  login-item launch, and the status-75 handling.
+- Remaining: everything else below (lifeline stdin, tray handling of a relay
+  managed elsewhere, installer `--quit`, Linux tray detection, Windows port
+  1455, macOS PATH fallback, config rewrite).
+
 ## Scope
 
 - `--lifeline-stdin` (passed only by the tray): the relay reads stdin in a

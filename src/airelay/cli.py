@@ -32,7 +32,7 @@ from airelay.claude_auth import (
     account_identity, discover_profiles, enroll_profile,
     forget_profile, new_profile, resolve_profile, suspend_profile,
 )
-from airelay.private_io import ensure_private_dir
+from airelay.private_io import InterProcessLock, LockUnsupported, ensure_private_dir, write_private
 from airelay.terminal import accent, bad, bold, good, muted, warn
 
 
@@ -1531,24 +1531,64 @@ def _run_token_show(args: argparse.Namespace) -> None:
     _print_token_show_summary(payload)
 
 
+# Exit status of a relay refused because another one holds its data
+# directory; the desktop app reports it instead of restarting the relay.
+RELAY_ALREADY_RUNNING = 75  # EX_TEMPFAIL, unlike any crash status
+
+
+def _hold_relay_lock(settings: Settings, wait: float = 5.0) -> InterProcessLock:
+    """One relay per data directory: two relays sharing accounts, uploads,
+    conversations and logs would race each other. The lock is held for the
+    life of the process (the OS releases it if the process dies); the pid
+    file is informational only. `wait` covers a relay that is still
+    exiting, as when the desktop app restarts it."""
+    lock = InterProcessLock(settings.data_dir / "relay.lock")
+    try:
+        lock.acquire(timeout=wait)
+    except TimeoutError:
+        try:
+            owner = (settings.data_dir / "relay.pid").read_text().strip() or "unknown"
+        except OSError:
+            owner = "unknown"
+        print(
+            f"Another AIRelays relay is already running with the data directory {settings.data_dir} "
+            f"(pid {owner}). Stop it first, or use a different --data-dir.",
+            file=sys.stderr,
+        )
+        raise SystemExit(RELAY_ALREADY_RUNNING) from None
+    except LockUnsupported:
+        print(
+            f"Warning: {settings.data_dir} does not support file locks; make sure no other relay uses it.",
+            file=sys.stderr,
+        )
+        return lock
+    write_private(settings.data_dir / "relay.pid", f"{os.getpid()}\n")
+    return lock
+
+
 def _run_serve(args: argparse.Namespace) -> None:
     settings = _base_settings(args)
     try:
         settings.validate_provider_guardrails()
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from exc
-    if settings.require_bearer_auth and not settings.resolve_bearer_token():
-        if settings.auto_generate_bearer_token:
-            settings.ensure_bearer_token()
-        else:
-            raise SystemExit(
-                "Bearer authentication is enabled, but no relay token is configured. "
-                "Run `airelays init` or set AIRELAYS_BEARER_TOKEN."
-            )
-    provider_statuses = _provider_registry(settings, _auth_manager(settings)).provider_statuses()
-    _print_serve_banner(settings, provider_statuses)
-    app = create_app(settings)
-    uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
+    settings.ensure_directories()
+    relay_lock = _hold_relay_lock(settings)
+    try:
+        if settings.require_bearer_auth and not settings.resolve_bearer_token():
+            if settings.auto_generate_bearer_token:
+                settings.ensure_bearer_token()
+            else:
+                raise SystemExit(
+                    "Bearer authentication is enabled, but no relay token is configured. "
+                    "Run `airelays init` or set AIRELAYS_BEARER_TOKEN."
+                )
+        provider_statuses = _provider_registry(settings, _auth_manager(settings)).provider_statuses()
+        _print_serve_banner(settings, provider_statuses)
+        app = create_app(settings)
+        uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
+    finally:
+        relay_lock.release()
 
 
 def _run_logs(args: argparse.Namespace) -> None:

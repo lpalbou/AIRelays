@@ -836,6 +836,109 @@ def test_claude_conversations_and_local_files(tmp_path) -> None:
     client.__exit__(None, None, None)
 
 
+def test_claude_conversation_sends_the_request_messages_unchanged(tmp_path) -> None:
+    client, sent = _claude_app(tmp_path, iter([_chat("Hi."), _chat("A cat.")]))
+    conversation_id = client.post("/v1/conversations", json={}).json()["id"]
+    client.post("/v1/chat/completions", json={"model": "claude:sonnet", "conversation": conversation_id,
+                                              "messages": [{"role": "user", "content": "Hello"}]})
+    image = {"type": "image_url", "image_url": {"url": "https://example.com/cat.png", "detail": "high"}}
+    messages = [{"role": "system", "content": "Be brief."}, {"role": "user", "content": [image]}]
+    response = client.post("/v1/chat/completions", json={"model": "claude:sonnet", "conversation": conversation_id,
+                                                         "messages": messages})
+    assert response.status_code == 200
+    assert sent[1]["messages"][0] == messages[0] and sent[1]["messages"][-1] == messages[1]
+    assert [m["role"] for m in sent[1]["messages"]] == ["system", "user", "assistant", "user"]
+    unknown = client.post("/v1/chat/completions", json={"model": "claude:sonnet", "conversation": conversation_id,
+        "messages": [{"role": "user", "content": [{"type": "input_audio", "input_audio": {}}]}]})
+    _assert_error(unknown, 422)
+    tool_image = client.post("/v1/chat/completions", json={"model": "claude:sonnet", "conversation": conversation_id,
+        "messages": [{"role": "tool", "tool_call_id": "c1", "content": [image]}]})
+    _assert_error(tool_image, 422)
+    for empty in ("", {}, {"id": ""}):
+        _assert_error(client.post("/v1/chat/completions", json={"model": "claude:sonnet", "conversation": empty,
+                                                                "messages": messages}), 422)
+    assert len(sent) == 2
+    client.__exit__(None, None, None)
+
+
+def test_claude_conversation_accepts_responses_style_parts(tmp_path) -> None:
+    client, sent = _claude_app(tmp_path, iter([_chat("Hi.")]))
+    conversation_id = client.post("/v1/conversations", json={}).json()["id"]
+    response = client.post("/v1/chat/completions", json={"model": "claude:sonnet", "conversation": conversation_id,
+        "messages": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]})
+    assert response.status_code == 200
+    stored = client.app.state.store.conversation_items(conversation_id)
+    assert stored[0]["content"] == [{"type": "input_text", "text": "hi"}]
+    client.__exit__(None, None, None)
+
+
+def test_claude_responses_options_without_an_equivalent(tmp_path) -> None:
+    client, sent = _claude_app(tmp_path, iter([_chat("ok"), _chat("ok")]))
+    base = {"model": "claude:sonnet", "input": "hi"}
+    _assert_error(client.post("/v1/responses", json={**base, "top_logprobs": 2}), 422)
+    _assert_error(client.post("/v1/responses", json={**base, "include": ["message.output_text.logprobs"]}), 422)
+    response = client.post("/v1/responses", json={**base, "include": ["reasoning.encrypted_content"],
+                                                  "text": {"verbosity": "low"}, "parallel_tool_calls": None})
+    assert response.status_code == 200 and response.json()["parallel_tool_calls"] is True
+    assert response.headers["x-airelays-ignored-parameters"] == "include,text.verbosity"
+    calls = [{"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"}]
+    output = {"type": "function_call_output", "call_id": "c1", "output": [
+        {"type": "input_text", "text": "21"}, {"type": "input_text", "text": "C"}]}
+    assert client.post("/v1/responses", json={**base, "input": calls + [output]}).status_code == 200
+    assert sent[-1]["messages"][-1] == {"role": "tool", "tool_call_id": "c1", "content": "21C"}
+    image = {**output, "output": [{"type": "input_image", "image_url": "https://example.com/a.png"}]}
+    _assert_error(client.post("/v1/responses", json={**base, "input": calls + [image]}), 422)
+    client.__exit__(None, None, None)
+
+
+def test_claude_failures_after_the_stream_started_are_typed(tmp_path) -> None:
+    client, _ = _claude_app(tmp_path, iter([]))
+    runtime = client.app.state.providers.claude
+
+    async def stream(body, request_id):
+        yield b'data: {"choices": [{"index": 0, "delta": {"content": "Hi"}}]}\n\n'
+        raise ProviderError(429, "All Claude accounts are at their limits.", code="usage_limit_reached")
+
+    runtime.stream_chat_completion = stream
+    chat = client.post("/v1/chat/completions", json={**CLAUDE_CHAT, "stream": True}).text
+    error = json.loads(chat.strip().splitlines()[-1][6:])["error"]
+    assert error["type"] == "rate_limit_error" and error["code"] == "usage_limit_reached"
+    responses = client.post("/v1/responses", json={"model": "claude:sonnet", "input": "hi", "stream": True}).text
+    failed = json.loads(responses.strip().splitlines()[-1][6:])
+    assert failed["type"] == "response.failed"
+    assert failed["response"]["error"] == {"code": "rate_limit_exceeded",
+                                           "message": "All Claude accounts are at their limits."}
+    client.__exit__(None, None, None)
+
+
+def test_upstream_rate_limits_after_the_stream_started_are_typed() -> None:
+    from airelay.app import _stream_failure_event
+
+    limited = json.loads(_stream_failure_event({"response": {"error": {"code": "rate_limit_exceeded",
+                                                                       "message": "Slow down."}}})[6:])
+    assert limited["error"]["type"] == "rate_limit_error" and limited["error"]["code"] == "rate_limit_exceeded"
+    failed = json.loads(_stream_failure_event({"response": {"error": {"code": "server_error", "message": "x"}}})[6:])
+    assert failed["error"]["type"] == "server_error"
+
+
+def test_requests_without_a_model_or_with_bad_metadata_are_422(tmp_path) -> None:
+    error = _assert_error(_post(tmp_path, "/v1/responses", {"input": "hi"}), 422)
+    assert error["param"] == "model"
+    error = _assert_error(_post(tmp_path, "/v1/conversations", {"metadata": {"a": 1}}), 422)
+    assert error["param"] == "metadata"
+
+
+def test_claude_responses_accept_default_values(tmp_path) -> None:
+    client, sent = _claude_app(tmp_path, iter([_chat("ok")]))
+    response = client.post("/v1/responses", json={"model": "claude:sonnet", "input": "hi", "background": False,
+                                                  "previous_response_id": None, "prompt": None, "store": False,
+                                                  "top_logprobs": 0, "truncation": "disabled", "include": []})
+    assert response.status_code == 200 and "x-airelays-ignored-parameters" not in response.headers
+    _assert_error(client.post("/v1/responses", json={"model": "claude:sonnet", "input": "hi", "background": True}),
+                  422)
+    client.__exit__(None, None, None)
+
+
 def test_no_tools_route_refuses_tools_on_claude(tmp_path) -> None:
     client, sent = _claude_app(tmp_path, iter([]))
     response = client.post("/no-tools/v1/chat/completions", json={"model": "claude:sonnet", "messages": [
@@ -848,7 +951,7 @@ def test_no_tools_route_refuses_tools_on_claude(tmp_path) -> None:
 def test_claude_requests_cap_the_size_of_referenced_files(tmp_path, monkeypatch) -> None:
     import airelay.transforms as transforms
 
-    monkeypatch.setattr(transforms, "INLINE_FILES_MAX_BYTES", 10)
+    monkeypatch.setattr(transforms, "MAX_REQUEST_MEDIA_BYTES", 10)
     client, sent = _claude_app(tmp_path, iter([]))
     file_id = client.post("/v1/files", files={"file": ("big.txt", b"x" * 64, "text/plain")}).json()["id"]
     response = client.post("/v1/chat/completions", json={"model": "claude:sonnet", "messages": [

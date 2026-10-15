@@ -1,8 +1,10 @@
-"""Images and documents in OpenAI requests, checked once for every runtime.
+"""Images and documents in OpenAI requests, checked before any upstream call.
 
-A bad image must fail the same way on every model: as a clear 422 before any
-upstream call. The Claude CLI silently replaces images it cannot read with a
-text notice and reports success, so nothing unreadable may reach it.
+Every Claude request and every chat completion on GPT models goes through
+these checks, so a bad image fails the same way on both: as a clear 422. The
+Claude CLI silently replaces images it cannot read with a text notice and
+reports success, so nothing unreadable may reach it. GPT `/v1/responses`
+input is forwarded as sent, and the upstream checks it.
 """
 
 from __future__ import annotations
@@ -12,8 +14,12 @@ import binascii
 import re
 from dataclasses import dataclass
 
+from airelay.errors import InvalidRequestError
+
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
-MAX_DOCUMENT_BYTES = 32 * 1024 * 1024
+# Anthropic's request size limit, applied to every request's images and
+# documents together (and so to each one).
+MAX_REQUEST_MEDIA_BYTES = 32 * 1024 * 1024
 MAX_MEDIA_PARTS = 100
 
 # Formats both upstreams read, recognised by their first bytes; a wrong
@@ -25,10 +31,11 @@ _IMAGE_SIGNATURES = (
     (b"GIF89a", "image/gif"),
 )
 _DATA_URL = re.compile(r"data:(?P<type>[\w.+-]+/[\w.+-]+)?(?:;[\w-]+=[^;,]*)*;base64,(?P<data>.*)", re.S | re.I)
-TEXT_TYPES = ("text/", "application/json", "application/xml", "application/yaml", "application/x-yaml")
+TEXT_TYPES = ("text/", "application/json", "application/xml", "application/yaml", "application/x-yaml",
+              "application/csv")
 
 
-class MediaError(ValueError):
+class MediaError(InvalidRequestError):
     """An image or document that cannot be sent; the message says why."""
 
 
@@ -94,8 +101,8 @@ def document_from_data(file_data: object, filename: object = None) -> Media:
 
 def document_from_bytes(raw: bytes, declared_type: str, filename: str | None) -> Media:
     if raw.startswith(b"%PDF-"):
-        if len(raw) > MAX_DOCUMENT_BYTES:
-            raise MediaError(f"The PDF is larger than {MAX_DOCUMENT_BYTES // (1024 * 1024)} MiB.")
+        if len(raw) > MAX_REQUEST_MEDIA_BYTES:
+            raise MediaError(f"The PDF is larger than {MAX_REQUEST_MEDIA_BYTES // (1024 * 1024)} MiB.")
         return Media("document", "application/pdf", base64.b64encode(raw).decode("ascii"), filename=filename)
     image_type = sniff_image(raw)
     if image_type is not None:
@@ -103,8 +110,8 @@ def document_from_bytes(raw: bytes, declared_type: str, filename: str | None) ->
             raise MediaError(f"The image is larger than {MAX_IMAGE_BYTES // (1024 * 1024)} MiB.")
         return Media("image", image_type, base64.b64encode(raw).decode("ascii"), filename=filename)
     if declared_type.startswith(TEXT_TYPES) or (filename or "").lower().endswith((".txt", ".md", ".csv", ".json")):
-        if len(raw) > MAX_DOCUMENT_BYTES:
-            raise MediaError(f"The text file is larger than {MAX_DOCUMENT_BYTES // (1024 * 1024)} MiB.")
+        if len(raw) > MAX_REQUEST_MEDIA_BYTES:
+            raise MediaError(f"The text file is larger than {MAX_REQUEST_MEDIA_BYTES // (1024 * 1024)} MiB.")
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError as exc:

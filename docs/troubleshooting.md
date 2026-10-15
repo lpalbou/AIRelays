@@ -71,6 +71,18 @@ If discovery fails, inspect `providers.claude.models_discovery_error` in
 remain available. See [model discovery](api.md#get-v1models) and
 [configuration](configuration.md#provider-notes).
 
+## "Another AIRelays relay is already running with the data directory …"
+
+Only one relay can use a data directory at a time, so accounts, uploads,
+conversations and logs are never shared between two relays. The message gives
+the running relay's process id, and the command exits with status 75. The
+desktop app reports this case with a notification and does not retry.
+
+- if the desktop app is running, it already runs the relay: use that one, or
+  quit the app first (tray menu → Quit AIRelays)
+- if a terminal session runs `airelays serve`, stop it first
+- to run two relays on purpose, give each its own `--data-dir`
+
 ## `401 Missing or invalid AIRelays bearer token`
 
 - run `airelays status`
@@ -374,7 +386,7 @@ When the Claude runtime is enabled:
 - confirm the file is below the per-file upload ceiling
 - confirm the relay has not reached the total stored-upload quota
 - `413 request_too_large` on a Claude request: the images and documents in
-  one request (inline or by `file_id`) are limited to 32 MB in total, the
+  one request (inline or by `file_id`) are limited to 32 MiB in total, the
   Claude API's request limit; split the files across requests
 
 ## `502` / `429` with `server_is_overloaded` or `usage_limit_reached`, or slow answers while the upstream is degraded

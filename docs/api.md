@@ -291,8 +291,14 @@ Claude runtime:
   `tool_choice`, `text.format` (`json_schema`, `json_object`) and
   `reasoning.effort`
 - `conversation` works as on GPT models; `previous_response_id`,
-  `store: true`, `background` and stored prompts are refused (Claude
+  `store: true`, `background: true` and stored prompts are refused (Claude
   models keep no responses: use `conversation`)
+- log probabilities (`top_logprobs`, or `message.output_text.logprobs` in
+  `include`) are refused; other `include` values and `text.verbosity` are
+  dropped and listed in `x-airelays-ignored-parameters`
+- a `function_call_output` is a string or text parts; image and file parts
+  in tool outputs are refused (as in `role: "tool"` messages on chat
+  completions)
 - function tools run non-strict, since Claude has no strict tool mode
   (`strict: true` is listed in `x-airelays-ignored-parameters`). Server-side
   tools (web search, file search)

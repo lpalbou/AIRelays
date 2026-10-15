@@ -14,10 +14,11 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from airelay.media import MAX_MEDIA_PARTS, Media, MediaError, document_from_data, image_from_url
+from airelay.errors import InvalidRequestError
+from airelay.media import MAX_MEDIA_PARTS, Media, document_from_data, image_from_url
 
 
-class ClaudeContentError(ValueError):
+class ClaudeContentError(InvalidRequestError):
     """A message the Claude runtime cannot send; the message says why."""
 
 
@@ -66,18 +67,12 @@ def _parts(content: Any, role: str) -> list[dict[str, Any] | str]:
         elif kind in {"image_url", "input_image"} and role == "user":
             value = part.get("image_url")
             url = value.get("url") if isinstance(value, dict) else value
-            try:
-                parts.append(media_block(image_from_url(url)))
-            except MediaError as exc:
-                raise ClaudeContentError(str(exc)) from exc
+            parts.append(media_block(image_from_url(url)))
         elif kind in {"file", "input_file"} and role == "user":
             file = part.get("file") if kind == "file" else part
             if not isinstance(file, dict) or not file.get("file_data"):
                 raise ClaudeContentError("`file` parts need `file_data` (or a `file_id` uploaded with `POST /v1/files`).")
-            try:
-                parts.append(media_block(document_from_data(file["file_data"], file.get("filename"))))
-            except MediaError as exc:
-                raise ClaudeContentError(str(exc)) from exc
+            parts.append(media_block(document_from_data(file["file_data"], file.get("filename"))))
         elif kind in {"image_url", "input_image", "file", "input_file"}:
             raise ClaudeContentError(f"`{kind}` content is only allowed in user messages.")
         else:
@@ -106,9 +101,10 @@ def conversation_from_chat(messages: list[dict[str, Any]]) -> ClaudeConversation
                 conversation.system_parts.append(text)
             continue
         if role == "tool":
-            output = message.get("content")
-            text = output if isinstance(output, str) else "".join(
-                p for p in _parts(output, "user") if isinstance(p, str))
+            output = _parts(message.get("content"), "tool")
+            if not all(isinstance(p, str) for p in output):
+                raise ClaudeContentError("Tool results on Claude models must be text.")
+            text = "".join(output)
             turns.append(("user", [f"[tool result {message.get('tool_call_id')}] {text}"]))
             continue
         if role not in {"user", "assistant"}:

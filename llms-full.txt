@@ -90,7 +90,8 @@ A response cut by the output-token limit reports `finish_reason: "length"`
 | Images: PNG, JPEG, GIF, WebP as data URL, http(s) URL or local `file_id` | ✅ | ✅ |
 | PDFs and UTF-8 text files (`file` parts: `file_data` or `file_id`) | ✅ | ✅ |
 | `/v1/files` (upload, list with pagination, retrieve, delete) | ✅ | ✅ |
-| `/v1/conversations`, `conversation` on every route | ✅ | ✅ |
+| `/v1/conversations`; `conversation` on `/v1/chat/completions` and `/v1/responses` | ✅ | ✅ |
+| `conversation` on `/v1/completions` | ✅ | ❌ |
 | One conversation continued across GPT and Claude | ✅ | ✅ (GPT `custom` tool calls in the history are not supported on Claude) |
 | `previous_response_id` | ❌ use `conversation` | ❌ use `conversation` |
 | Audio input, `prediction`, `moderation` | ❌ | ❌ |
@@ -391,7 +392,8 @@ Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/
 - answers cut with `finish_reason: "length"`: the request's output-token limit was reached (enforced on both account types; GPT minimum 16)
 - Claude 502 `cli_tools_unavailable`: the CLI could not load the request's tools (check that each tool's `parameters` is an object schema; reinstall AIRelays if its tool helper is missing); `cli_unexpected_tools`: the CLI offered or attempted an undefined tool and the request was stopped; neither pauses an account
 - 422 for an image or document: images must be PNG, JPEG, GIF or WebP; documents PDF or UTF-8 text; Claude CMYK or animated images must be converted
-- 413 `request_too_large` on a Claude request: images and documents are limited to 32 MB per request
+- 413 `request_too_large` on a Claude request: images and documents are limited to 32 MiB per request
+- "Another AIRelays relay is already running": one relay per data directory; use the running one (the desktop app runs it), stop it, or give a second relay its own `--data-dir`
 - browser login URL only works on the relay's own machine; use `airelays login --device` on servers
 - Claude not ready in network mode: the runtime is loopback-only; switch to loopback binding
 - Claude 503 `provider_auth_error`: no AIRelays Claude account is connected; run `airelays claude login` or `airelays claude set-token` (the personal Claude Code sign-in and exported tokens are ignored)

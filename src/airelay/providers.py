@@ -25,7 +25,6 @@ from airelay.backend import ChatGptCodexBackend
 from airelay.config import Settings
 from airelay.claude_auth import ClaudeProfile, account_identity, token_profile
 from airelay.claude_content import (
-    ClaudeContentError,
     conversation_from_chat,
     conversation_from_prompt,
     transcript_text,
@@ -33,12 +32,13 @@ from airelay.claude_content import (
 )
 from airelay import claude_tool_guard, claude_tool_stub
 from airelay.claude_launch import ArgumentsTooLong, ClaudeLauncher, workdir
+from airelay.errors import InvalidRequestError, RequestTooLargeError
+from airelay.media import MAX_REQUEST_MEDIA_BYTES
 from airelay.private_io import write_private
 from airelay.traffic import TrafficLogger, snapshot_body
 from airelay.transforms import (
     UNHONORED_CHAT_PARAMETERS,
     UNSUPPORTED_UPSTREAM_PARAMETERS,
-    TranslationError,
     is_requested,
     output_token_limit,
     chat_completion_chunk,
@@ -58,7 +58,7 @@ from airelay.transforms import (
 # completions has no such parameter, so it is rejected there rather than
 # silently ignored.
 CLAUDE_CHAT_REJECTED = (
-    "functions", "function_call", "conversation", "store",
+    "functions", "function_call", "store",
     "previous_response_id", "modalities", "audio", "prediction",
     "web_search_options", "moderation",
 )
@@ -367,11 +367,7 @@ def _claude_output_schema(body: dict[str, Any], route: str) -> str | None:
     if response_format is None:
         return None
     if not isinstance(response_format, dict):
-        raise ProviderError(
-            422,
-            f"`response_format` must be an object on `{route}`.",
-            code="invalid_request_error",
-        )
+        raise InvalidRequestError(f"`response_format` must be an object on `{route}`.", param="response_format")
     if not response_format:
         return None  # {} carries no request, like an absent parameter
     format_type = response_format.get("type")
@@ -385,38 +381,25 @@ def _claude_output_schema(body: dict[str, Any], route: str) -> str | None:
     if format_type == "json_schema":
         schema_payload = response_format.get("json_schema")
         if not isinstance(schema_payload, dict):
-            raise ProviderError(
-                422,
-                f"`response_format.type=json_schema` requires a `json_schema` object on `{route}`.",
-                code="invalid_request_error",
-            )
+            raise InvalidRequestError(f"`response_format.type=json_schema` requires a `json_schema` object on "
+                                      f"`{route}`.", param="response_format")
         schema = schema_payload.get("schema")
         if not isinstance(schema, dict):
-            raise ProviderError(
-                422,
-                f"`response_format.json_schema.schema` must be an object on `{route}`.",
-                code="invalid_request_error",
-            )
+            raise InvalidRequestError(f"`response_format.json_schema.schema` must be an object on `{route}`.",
+                                      param="response_format")
         try:
             serialized = json.dumps(schema, ensure_ascii=True, separators=(",", ":"), allow_nan=False)
         except ValueError as exc:
-            raise ProviderError(
-                422,
-                f"`response_format.json_schema.schema` must be valid JSON on `{route}` "
-                "(NaN and Infinity are not representable).",
-                code="invalid_request_error",
-            ) from exc
+            raise InvalidRequestError(f"`response_format.json_schema.schema` must be valid JSON on `{route}` "
+                                      "(NaN and Infinity are not representable).", param="response_format") from exc
         if len(serialized) > CLAUDE_MAX_SCHEMA_BYTES:
             # The schema travels on the CLI's argv; past the platform's
             # argument-size limit the spawn fails with a raw OS error, so
             # oversized schemas are rejected while a status code is still
             # possible.
-            raise ProviderError(
-                422,
-                f"`response_format` schema is too large for the local Claude CLI "
-                f"(serialized {len(serialized)} bytes, maximum {CLAUDE_MAX_SCHEMA_BYTES}).",
-                code="invalid_request_error",
-            )
+            raise InvalidRequestError(f"`response_format` schema is too large for the local Claude CLI "
+                                      f"(serialized {len(serialized)} bytes, maximum {CLAUDE_MAX_SCHEMA_BYTES}).",
+                                      param="response_format")
         return serialized
     # A missing `type` on a non-empty response_format lands here too
     # (format_type None): OpenAI rejects that shape, and treating it as
@@ -567,7 +550,6 @@ def _usage_from_claude_result(payload: dict[str, Any] | None) -> dict[str, Any] 
 
 
 CLAUDE_STREAM_LINE_LIMIT = 64 * 1024 * 1024
-CLAUDE_MAX_MEDIA_BYTES = 32 * 1024 * 1024
 # The CLI names a tool from the `airelays` MCP server `mcp__airelays__<name>`;
 # the API caps tool names at 64 characters, prefix included.
 CLAUDE_TOOL_PREFIX = "mcp__airelays__"
@@ -581,7 +563,7 @@ def _claude_tools(body: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     if not is_requested("tools", tools):
         return ()
     if not isinstance(tools, list):
-        raise ProviderError(422, "`tools` must be an array.", code="invalid_request_error")
+        raise InvalidRequestError("`tools` must be an array.", param="tools")
     choice = body.get("tool_choice")
     allowed: set[str] | None = None
     if choice == "none":
@@ -603,15 +585,15 @@ def _claude_tools(body: dict[str, Any]) -> tuple[dict[str, Any], ...]:
         function = tool.get("function") if isinstance(tool.get("function"), dict) else tool
         name = function.get("name")
         if not isinstance(name, str) or not _TOOL_NAME.fullmatch(name):
-            raise ProviderError(422, f"Tool names on Claude models must be 1-{64 - len(CLAUDE_TOOL_PREFIX)} "
-                                "letters, digits, `_` or `-`.", code="invalid_request_error")
+            raise InvalidRequestError(f"Tool names on Claude models must be 1-{64 - len(CLAUDE_TOOL_PREFIX)} "
+                                      "letters, digits, `_` or `-`.", param="tools")
         if name in definitions:
-            raise ProviderError(422, f"Duplicate tool name `{name}`.", code="invalid_request_error")
+            raise InvalidRequestError(f"Duplicate tool name `{name}`.", param="tools")
         parameters = function.get("parameters")
         if parameters is not None and (not isinstance(parameters, dict) or parameters.get("type", "object") != "object"):
             # The CLI silently drops every tool when one schema is not an object.
-            raise ProviderError(422, f"Tool `{name}`: `parameters` must be a JSON Schema of type `object`.",
-                                code="invalid_request_error")
+            raise InvalidRequestError(f"Tool `{name}`: `parameters` must be a JSON Schema of type `object`.",
+                                      param="tools")
         definitions[name] = {"name": name, "description": function.get("description") or "",
                              # `type` made explicit: the CLI drops every tool when it is missing.
                              "inputSchema": {"type": "object", "properties": {}, **(parameters or {})}}
@@ -631,13 +613,6 @@ def _tool_arguments(cwd: Path, tools: tuple[dict[str, Any], ...]) -> list[str]:
     return ["--mcp-config", str(cwd / "mcp.json"), "--settings", str(cwd / "settings.json")]
 
 
-def _claude_output_limit(body: dict[str, Any]) -> int | None:
-    try:
-        return output_token_limit(body)
-    except TranslationError as exc:
-        raise ProviderError(422, str(exc), code="invalid_request_error") from exc
-
-
 def claude_ignored_tool_options(body: dict[str, Any]) -> list[str]:
     """Tool options Claude runs without, for disclosure: it has no strict
     tool mode, so `strict: true` tools run non-strict."""
@@ -655,7 +630,7 @@ INTERRUPT_LINE = (json.dumps({"type": "control_request", "request_id": "airelays
                               "request": {"subtype": "interrupt"}}) + "\n").encode("utf-8")
 
 
-class _ToolCalls:
+class _EarlyStop:
     """Where AIRelays stops a Claude run, read from the stream: Claude's calls
     to the client's tools (each tool_use block: start, argument fragments,
     stop) at `stop_reason: "tool_use"`, or the output limit at
@@ -664,7 +639,7 @@ class _ToolCalls:
     def __init__(self, allowed: frozenset[str], *, limited: bool = False) -> None:
         self.allowed = allowed
         self.limited = limited
-        self.stop_reason = "tool_use"
+        self.stop_reason = ""
         self.calls: list[dict[str, Any]] = []
         self.text: list[str] = []
         self.usage: dict[str, Any] = {}
@@ -701,7 +676,7 @@ class _ToolCalls:
         return False
 
     def result(self) -> dict[str, Any]:
-        """A `result` event for a run stopped at its tool calls."""
+        """A `result` event for the stopped run."""
         tool_calls = [{"id": call["id"], "type": "function", "function": {
             "name": call["name"].removeprefix(CLAUDE_TOOL_PREFIX), "arguments": call["arguments"] or "{}"}}
             for call in self.calls]
@@ -1319,15 +1294,13 @@ class ClaudeCliRuntime:
                 )
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
-            raise ProviderError(422, "Chat completions requests must include a non-empty `messages` array.")
-        try:
-            conversation = conversation_from_chat(messages)
-        except ClaudeContentError as exc:
-            raise ProviderError(422, str(exc), code="invalid_request_error") from exc
+            raise InvalidRequestError("Chat completions requests must include a non-empty `messages` array.",
+                                      param="messages")
+        conversation = conversation_from_chat(messages)  # InvalidRequestError -> 422 in the app
         system_parts = conversation.system_parts
-        if sum(len(json.dumps(block)) for block in conversation.blocks if block["type"] != "text") > CLAUDE_MAX_MEDIA_BYTES:
-            raise ProviderError(413, f"Images and documents in one Claude request are limited to "
-                                f"{CLAUDE_MAX_MEDIA_BYTES // (1024 * 1024)} MB (encoded).", code="request_too_large")
+        if sum(len(json.dumps(block)) for block in conversation.blocks if block["type"] != "text") > MAX_REQUEST_MEDIA_BYTES:
+            raise RequestTooLargeError(f"Images and documents in one Claude request are limited to "
+                                       f"{MAX_REQUEST_MEDIA_BYTES // (1024 * 1024)} MiB (encoded).")
         output_schema = _claude_output_schema(body, "/v1/chat/completions")
         response_format = body.get("response_format")
         json_mode = isinstance(response_format, dict) and response_format.get("type") == "json_object"
@@ -1342,7 +1315,7 @@ class ClaudeCliRuntime:
             output_schema=output_schema,
             json_mode=json_mode,
             tools=_claude_tools(body),
-            max_output_tokens=_claude_output_limit(body),
+            max_output_tokens=output_token_limit(body),
         )
 
     def _prepare_completion_request(self, body: dict[str, Any]) -> ClaudeTextRequest:
@@ -1366,7 +1339,7 @@ class ClaudeCliRuntime:
                 )
             prompt = prompt[0]
         if not isinstance(prompt, str) or not prompt:
-            raise ProviderError(422, "Completions requests must include a non-empty `prompt` string.")
+            raise InvalidRequestError("Completions requests must include a non-empty `prompt` string.", param="prompt")
         return ClaudeTextRequest(
             public_model=resolved.public_id,
             upstream_model=resolved.upstream_id,
@@ -1374,13 +1347,13 @@ class ClaudeCliRuntime:
             content=tuple(conversation_from_prompt(prompt).blocks),
             include_usage=stream_include_usage(body),
             effort=_claude_effort(body, "/v1/completions", self._models[resolved.public_id].reasoning_modes),
-            max_output_tokens=_claude_output_limit(body),
+            max_output_tokens=output_token_limit(body),
         )
 
     def _resolved_model_from_body(self, body: dict[str, Any]) -> ResolvedModel:
         model = body.get("model")
         if not isinstance(model, str) or not model:
-            raise ProviderError(422, "Requests must include a non-empty `model` string.")
+            raise InvalidRequestError("Requests must include a non-empty `model` string.", param="model")
         resolved = self.resolve_model(model)
         if resolved is None:
             raise ProviderError(
@@ -1439,7 +1412,7 @@ class ClaudeCliRuntime:
                     stoppable = bool(request.tools) or request.max_output_tokens is not None
                     if not stoppable:
                         process.stdin.close()  # stoppable runs keep it open to interrupt
-                    calls = _ToolCalls(request.allowed_tools, limited=request.max_output_tokens is not None) \
+                    early_stop = _EarlyStop(request.allowed_tools, limited=request.max_output_tokens is not None) \
                         if stoppable else None
                     assert process.stdout is not None
                     while True:
@@ -1477,7 +1450,7 @@ class ClaudeCliRuntime:
                             raise _claude_failure(str((inner.get("error") or {}).get("message") or "Claude stream failed."), inner)
                         if event.get("type") == "user":
                             continue  # the CLI's own echo of our message
-                        if calls is not None and calls.observe(event):
+                        if early_stop is not None and early_stop.observe(event):
                             # Claude asked for tools, or reached the output
                             # limit: stop the run before the CLI acts on the
                             # calls or starts a continuation call.
@@ -1489,7 +1462,7 @@ class ClaudeCliRuntime:
                                 pass  # the CLI already ended
                             saw_result = True
                             yield event
-                            yield calls.result()
+                            yield early_stop.result()
                             # The calls are in hand: give the CLI a moment to
                             # end on its own, then `finally` stops it (gracefully).
                             with contextlib.suppress(asyncio.TimeoutError, ValueError):

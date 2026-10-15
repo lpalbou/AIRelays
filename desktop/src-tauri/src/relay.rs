@@ -89,6 +89,10 @@ struct Supervised {
     job: job_object::Job,
 }
 
+/// Exit status of `airelays serve` when another relay already uses the
+/// same data directory (see `RELAY_ALREADY_RUNNING` in the Python CLI).
+pub const RELAY_ALREADY_RUNNING: i32 = 75;
+
 pub struct RelaySupervisor {
     child: Mutex<Option<Supervised>>,
     pub lifecycle: Mutex<Lifecycle>,
@@ -231,22 +235,24 @@ impl RelaySupervisor {
         self.log("relay", "Relay stopped.", false);
     }
 
-    /// Reconciles lifecycle with the actual child state; returns true when
-    /// the process died since the last check.
-    pub fn reap_if_exited(&self) -> bool {
+    /// Reconciles lifecycle with the actual child state; returns the exit
+    /// status when the process died since the last check. A relay refused
+    /// because another one holds its data directory is not a crash: the
+    /// intent to run is dropped so it is not restarted.
+    pub fn reap_if_exited(&self) -> Option<std::process::ExitStatus> {
         let mut guard = robust_lock(&self.child);
-        if let Some(supervised) = guard.as_mut() {
-            if let Ok(Some(status)) = supervised.child.try_wait() {
-                *guard = None;
-                drop(guard);
-                let failed = !status.success();
-                *robust_lock(&self.lifecycle) =
-                    if failed { Lifecycle::Failed } else { Lifecycle::Stopped };
-                self.log("relay", &format!("Relay process exited ({status})."), failed);
-                return true;
-            }
+        let status = guard.as_mut()?.child.try_wait().ok()??;
+        *guard = None;
+        drop(guard);
+        let failed = !status.success();
+        *robust_lock(&self.lifecycle) =
+            if failed { Lifecycle::Failed } else { Lifecycle::Stopped };
+        self.log("relay", &format!("Relay process exited ({status})."), failed);
+        if status.code() == Some(RELAY_ALREADY_RUNNING) {
+            self.desired_running
+                .store(false, std::sync::atomic::Ordering::Relaxed);
         }
-        false
+        Some(status)
     }
 
     pub fn mark_running(&self) {

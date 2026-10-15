@@ -12,6 +12,7 @@ from airelay.claude_auth import new_profile
 from claude_fakes import use_fake_cli
 from airelay.providers import ClaudeCliRuntime, ProviderError, ProviderRegistry, claude_ignored_tool_options
 from airelay.config import Settings
+from airelay.errors import InvalidRequestError
 
 # Captured before conftest stubs it out for every other test.
 REAL_CONTROL_REQUEST = ClaudeCliRuntime._control_request
@@ -158,7 +159,7 @@ def test_claude_tools_become_stub_definitions_and_unhonourable_options_are_refus
                            ({"tools": [{**WEATHER_TOOL, "function": {**WEATHER_TOOL["function"], "parameters": {"type": "string"}}}]},
                             "type `object`"),
                            ({"tools": [{"type": "function", "function": {"name": "x" * 60}}]}, "Tool names")):
-        with pytest.raises(ProviderError, match=message):
+        with pytest.raises((ProviderError, InvalidRequestError), match=message):
             runtime._prepare_chat_request({**base, **extra})
 
 
@@ -411,7 +412,7 @@ async def test_claude_runtime_rejects_unsupported_response_format_shapes(tmp_pat
             },
             "req_1",
         )
-    with pytest.raises(ProviderError, match="requires a `json_schema` object"):
+    with pytest.raises(InvalidRequestError, match="requires a `json_schema` object"):
         await runtime.create_chat_completion(
             {
                 "model": "claude:sonnet",
@@ -420,7 +421,7 @@ async def test_claude_runtime_rejects_unsupported_response_format_shapes(tmp_pat
             },
             "req_2",
         )
-    with pytest.raises(ProviderError, match="`response_format.json_schema.schema` must be an object"):
+    with pytest.raises(InvalidRequestError, match="`response_format.json_schema.schema` must be an object"):
         await runtime.create_chat_completion(
             {
                 "model": "claude:sonnet",
@@ -564,7 +565,7 @@ async def test_claude_runtime_rejects_oversized_and_nonfinite_schemas(tmp_path) 
     spawn can fail with a raw E2BIG, and NaN/Infinity are not JSON."""
     runtime = ClaudeCliRuntime(make_settings(tmp_path))
     huge = {"type": "object", "properties": {f"k{i}": {"type": "string"} for i in range(9000)}}
-    with pytest.raises(ProviderError, match="too large"):
+    with pytest.raises(InvalidRequestError, match="too large"):
         await runtime.create_chat_completion(
             {
                 "model": "claude:sonnet",
@@ -573,7 +574,7 @@ async def test_claude_runtime_rejects_oversized_and_nonfinite_schemas(tmp_path) 
             },
             "req_1",
         )
-    with pytest.raises(ProviderError, match="NaN and Infinity"):
+    with pytest.raises(InvalidRequestError, match="NaN and Infinity"):
         await runtime.create_chat_completion(
             {
                 "model": "claude:sonnet",
@@ -1456,6 +1457,7 @@ def test_claude_output_limit_values(tmp_path) -> None:
     assert runtime._prepare_chat_request(base).max_output_tokens is None
     assert runtime._prepare_chat_request({**base, "max_tokens": 50, "max_completion_tokens": 20}).max_output_tokens == 20
     assert runtime._prepare_completion_request({"model": "claude:sonnet", "prompt": "hi", "max_tokens": 9}).max_output_tokens == 9
+
     for bad in (0, -1, "10", True, 1.5):
-        with pytest.raises(ProviderError, match="positive integer"):
+        with pytest.raises(InvalidRequestError, match="positive integer"):
             runtime._prepare_chat_request({**base, "max_tokens": bad})

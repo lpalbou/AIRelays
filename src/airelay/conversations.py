@@ -1,4 +1,4 @@
-"""Local conversation history for the OpenAI runtime.
+"""Local conversation history, shared by both runtimes.
 
 OpenAI's `conversation` parameter: the conversation's items are prepended
 to every turn's input, and once a turn completes its own input and output
@@ -58,13 +58,21 @@ class ConversationTurn:
         self._recorded = False
 
     @classmethod
+    def open(cls, store: AppStore, conversation_id: str,
+             turn_input: list[dict[str, Any]]) -> tuple[ConversationTurn, list[dict[str, Any]]]:
+        """The turn and the conversation's stored items so far. Raises
+        KeyError for an unknown conversation id."""
+        history = store.conversation_items(conversation_id)
+        return cls(store, conversation_id, list(turn_input)), history
+
+    @classmethod
     def begin(cls, store: AppStore, conversation_id: str | None,
               payload: dict[str, Any]) -> ConversationTurn | None:
-        """Raises KeyError for an unknown conversation id."""
+        """Prepends the history to a Responses payload's `input`. Raises
+        KeyError for an unknown conversation id."""
         if not conversation_id:
             return None
-        history = store.conversation_items(conversation_id)
-        turn = cls(store, conversation_id, list(payload["input"]))
+        turn, history = cls.open(store, conversation_id, payload["input"])
         payload["input"] = history + payload["input"]
         return turn
 
