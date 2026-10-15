@@ -966,9 +966,9 @@
 <p>AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provider-runtime expansion is complete and released: the ChatGPT subscription path is the primary runtime (with balanced multi-account routing) and the Claude runtime is a first-class local adapter as of 0.4.0. Open work is the cross-platform runtime track (ADR 0008) plus proposed hardening follow-ups.</p>
 <h2 id="counts">Counts<a class="headerlink" href="#counts" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Planned: 3</li>
+<li>Planned: 4</li>
 <li>Proposed: 4</li>
-<li>Completed: 9</li>
+<li>Completed: 10</li>
 <li>Deprecated: 1</li>
 <li>Recurrent: 0</li>
 </ul>
@@ -983,6 +983,7 @@
 <li><a href="../planned/platform/0022_relay_lifecycle_and_single_instance_tray/">0022_relay_lifecycle_and_single_instance_tray.md</a></li>
 <li><a href="../planned/platform/0023_headless_service_install/">0023_headless_service_install.md</a></li>
 <li><a href="../planned/platform/0024_signed_installers/">0024_signed_installers.md</a></li>
+<li><a href="../planned/providers/0027_images_and_claude_tools/">0027_images_and_claude_tools.md</a> — images on both runtimes and tool calls on Claude models (0.17.0)</li>
 </ul>
 <h2 id="proposed-work">Proposed Work<a class="headerlink" href="#proposed-work" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1001,6 +1002,7 @@
 <li><a href="../completed/providers/0001_provider_runtime_registry_for_subscription_relays/">0001_provider_runtime_registry_for_subscription_relays.md</a></li>
 <li><a href="../completed/providers/0010_experimental_claude_subscription_cli_adapter/">0010_experimental_claude_subscription_cli_adapter.md</a></li>
 <li><a href="../completed/providers/0011_claude_runtime_mainline_graduation/">0011_claude_runtime_mainline_graduation.md</a></li>
+<li><a href="../completed/providers/0026_chat_completions_usage_contract/">0026_chat_completions_usage_contract.md</a></li>
 <li><a href="../completed/accounts/">Multi-account pool</a></li>
 <li><a href="../completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening/">0012_balanced_multi_account_routing_and_pool_hardening.md</a></li>
 <li><a href="../completed/accounts/0013_openai_usage_probe_caching_and_single_flight/">0013_openai_usage_probe_caching_and_single_flight.md</a></li>
@@ -1111,6 +1113,16 @@
 <td>Completed</td>
 <td>File-only private credentials with a cross-process refresh lock, one <code>claude</code> launcher, isolated bundled interpreter, valid macOS signing, tests on three OSes (ADR 0008).</td>
 <td>Three per-OS adversarial reviews; <code>pytest</code> 444 passed on 3.11–3.13; <code>cargo test</code>; desktop browser tests; MkDocs/build/twine green</td>
+</tr>
+<tr>
+<td>0026</td>
+<td>Chat Completions usage contract and OpenAI conformance</td>
+<td>(worked directly; recorded post-completion)</td>
+<td><code>docs/backlog/completed/providers/0026_chat_completions_usage_contract.md</code></td>
+<td>2026-10-11</td>
+<td>Completed</td>
+<td>Chat and completions report OpenAI's CompletionUsage on both runtimes (Claude counts cached prompt tokens); spec-shaped streamed usage; <code>/v1/responses</code> unchanged.</td>
+<td>Three adversarial reviews; 85 contract/conformance tests; <code>pytest</code> 529 on 3.11–3.13; live schema validation (0 failures) and openai-python 3.29.0 checks</td>
 </tr>
 </tbody>
 </table>

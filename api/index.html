@@ -529,6 +529,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#finish-reasons-and-refusals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Finish reasons and refusals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#token-usage-on-chat-and-completions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token usage on chat and completions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#post-v1files" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1147,6 +1180,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#finish-reasons-and-refusals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Finish reasons and refusals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#token-usage-on-chat-and-completions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token usage on chat and completions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#post-v1files" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1240,13 +1306,28 @@ adaptation records when the request shape itself is repaired:</p>
   (<code>max_tokens</code>, <code>max_completion_tokens</code>, <code>max_output_tokens</code>) and
   caller-supplied end-user identifiers (<code>user</code>, <code>safety_identifier</code>) are
   also stripped because the verified subscription backend does not honor
-  them. The names of removed parameters are returned in the
+  them, as is <code>seed</code> (best-effort determinism in OpenAI's own API; neither
+  upstream supports it). The names of removed parameters are returned in the
   <code>x-airelays-ignored-parameters</code> response header and logged as a
   <code>compatibility_adaptation</code> traffic record with the reason. Generation
   runs with the upstream's own defaults. The same adaptation applies on
   the Claude routes: the local <code>claude</code> CLI exposes no sampling or token
   limit controls, so these parameters are stripped and disclosed there
   too instead of failing the request.</li>
+<li><strong>Unrecognized parameters:</strong> on <code>/v1/chat/completions</code> and
+  <code>/v1/completions</code> (both runtimes), a parameter AIRelays does not
+  recognize is dropped and listed in <code>x-airelays-ignored-parameters</code> like
+  the stripped ones, so nothing is ignored silently. This covers cache
+  hints such as <code>prompt_cache_retention</code>; on Claude models it also covers
+  <code>verbosity</code>, <code>prompt_cache_key</code>, <code>metadata</code> and <code>service_tier</code>. A
+  parameter sent as <code>null</code> means "not set" and is not listed. Names are
+  percent-encoded in the header (so any JSON key is a valid header value)
+  and the list is capped at about 2 KB, ending in <code>,...</code> when cut; the
+  traffic log keeps every name. <code>/v1/responses</code> forwards unrecognized
+  parameters to the upstream as-is.</li>
+<li><strong>Verbosity and prompt caching:</strong> on OpenAI models, chat
+  <code>verbosity</code> is forwarded as the Responses <code>text.verbosity</code>, and
+  <code>prompt_cache_key</code> is forwarded as-is.</li>
 <li><strong>Reasoning effort:</strong> <code>reasoning_effort</code> (chat completions and
   completions) and <code>reasoning.effort</code> (responses) are forwarded verbatim
   to OpenAI models; on <code>claude:*</code> models <code>reasoning_effort</code> maps to the
@@ -1260,7 +1341,19 @@ adaptation records when the request shape itself is repaired:</p>
   adaptive default. An empty Claude modes list means no effort parameter
   is advertised for that model.</li>
 <li><strong>Structured outputs:</strong> <code>response_format.type=json_schema</code> is forwarded
-  (translated) to OpenAI models; on <code>claude:*</code> chat completions both
+  (translated) to OpenAI models. With <code>strict: true</code>, the schema is
+  rewritten to OpenAI's strict-mode form: every property becomes required,
+  optional ones accept <code>null</code>, and <code>additionalProperties</code> defaults to
+  <code>false</code> (a schema that sets it to anything else is rejected). Without
+  <code>strict: true</code> the schema is forwarded unchanged with <code>strict: false</code>,
+  OpenAI's default, sent explicitly because the upstream otherwise assumes
+  strict mode. The same applies to <code>text.format</code> on <code>/v1/responses</code>.
+  <code>response_format.type=json_object</code> is forwarded as the upstream's native
+  JSON mode (<code>text.format: {"type": "json_object"}</code>), with OpenAI's rule that
+  the messages must mention JSON enforced by the upstream. In JSON mode, chat
+  system and developer messages are sent as developer input messages rather
+  than <code>instructions</code>, so a system prompt that mentions JSON counts, as on
+  OpenAI. On <code>claude:*</code> chat completions both
   <code>json_schema</code> and <code>json_object</code> are honored via the claude CLI's native
   <code>--json-schema</code> enforcement. Supported types per model are published in
   <code>/v1/models</code> under <code>airelays.structured_output</code>.</li>
@@ -1274,16 +1367,25 @@ adaptation records when the request shape itself is repaired:</p>
   <code>custom_tool_call</code> items back into chat-completions <code>tool_calls</code> on both
   streaming and non-streaming responses. Mixed-shape requests that contain
   both <code>messages</code> and <code>input</code>, or tool outputs that do not reference a
-  preceding assistant tool call in the same request, are rejected loudly.</li>
-<li><strong>Rejected loudly instead of adapted:</strong> <code>store=true</code>, <code>n&gt;1</code>, and
-  <code>best_of</code>/<code>echo</code>/<code>logprobs</code>/<code>suffix</code> on <code>/v1/completions</code>. These change
-  semantics in ways silent stripping would hide, so they return a clear
-  error.</li>
+  preceding assistant tool call in the same request (or, with
+  <code>conversation</code>, an earlier turn), are rejected loudly.</li>
+<li><strong>Rejected loudly instead of adapted:</strong> <code>store=true</code>, <code>n&gt;1</code>,
+  <code>best_of</code>/<code>echo</code>/<code>logprobs</code>/<code>suffix</code> on <code>/v1/completions</code>, and on both
+  chat and completions (both runtimes) a non-empty <code>stop</code>, a true
+  <code>logprobs</code>, a nonzero <code>top_logprobs</code>, or a non-empty <code>logit_bias</code>.
+  Neither upstream can honor them and dropping them would change the
+  output, so they return a clear 422 error. Chat <code>web_search_options</code>,
+  <code>moderation</code>, <code>audio</code>, <code>prediction</code> and non-text <code>modalities</code> are
+  rejected the same way; for the first four any non-null value counts,
+  since <code>web_search_options: {}</code> means "search with defaults". Default values (<code>null</code>, <code>false</code>, <code>0</code>, empty,
+  <code>best_of: 1</code>, <code>modalities: ["text"]</code>) are accepted on both runtimes;
+  on <code>/v1/completions</code>, an integer <code>logprobs</code> (including <code>0</code>) is a
+  request.</li>
 <li><strong>OpenAI model admission:</strong> when AIRelays can fetch the live ChatGPT
   Codex model catalog for the authenticated OpenAI account(s), OpenAI
   requests are forwarded only for model ids that appear in that catalog
   or in <code>[providers.openai].extra_models</code>. Other ids are rejected locally
-  with a clear 422 and suggestions from <code>/v1/models</code>, instead of failing
+  with 404 <code>model_not_found</code> and suggestions from <code>/v1/models</code>, instead of failing
   later upstream with an account-scoped unsupported-model error. In
   multi-account mode, the same cache is invalidated when the enrolled
   OpenAI account set changes, so admission follows the union of their
@@ -1330,6 +1432,9 @@ adaptation records when the request shape itself is repaired:</p>
 <li><code>airelays.catalog_visibility</code> and <code>airelays.description</code> preserve upstream metadata. Entries marked <code>hide</code> appear as <strong>upstream-hidden</strong> in the desktop; AIRelays does not infer their underlying identity or promote them as recommended models.</li>
 <li>Catalog discovery reports provider availability and capabilities; it does not generate a test response for every model. Account limits and upstream availability still apply when serving a request.</li>
 </ul>
+<p><code>GET /v1/models/{model}</code> returns that model's entry from the list (ids match
+case-insensitively, as for requests), or 404 <code>model_not_found</code>. While the
+OpenAI catalog cannot be fetched, OpenAI ids return the catalog error instead.</p>
 <h2 id="get-v1subscriptionstatus"><code>GET /v1/subscription/status</code><a class="headerlink" href="#get-v1subscriptionstatus" title="Permanent link">&para;</a></h2>
 <p>Returns a normalized subscription-usage snapshot with per-window usage
 percentages, window labels ("5h", "weekly", derived from each window's
@@ -1374,8 +1479,9 @@ account's cached readings and persisted backoff.</p>
 this process, usable as a lightweight activity signal. OpenAI model-list
 cache diagnostics live under <code>providers.openai.models_cache</code>.</p>
 <p><code>providers.claude.accounts</code> lists AIRelays-owned Claude accounts with their
-<code>slug</code>, email, readiness, <code>managed_profile</code>, <code>oauth_token_source</code>, and request
-cooldown. <code>managed_profile</code> is <code>false</code> only for the setup-token account;
+<code>slug</code>, email, readiness, <code>managed_profile</code>, <code>oauth_token_source</code>, request
+cooldown, and <code>unavailable_models</code> (models the account cannot serve right now
+although its sign-in works, with seconds until AIRelays tries them again). <code>managed_profile</code> is <code>false</code> only for the setup-token account;
 <code>oauth_token_source</code> is <code>profile</code> or <code>file</code>. <code>providers.claude.balance</code> reports their selection
 strategy. A second ready profile of the same subscription carries
 <code>duplicate_of</code> and is counted once; an account whose identity differs from its
@@ -1405,7 +1511,8 @@ provider (<code>--json</code> supported).</p>
 <p>Current OpenAI limits:</p>
 <ul>
 <li><code>store=true</code> rejected</li>
-<li>output-token limit fields rejected explicitly</li>
+<li>output-token limit fields stripped and disclosed (see
+  <a href="#compatibility-adaptations-read-this-first">Compatibility Adaptations</a>)</li>
 </ul>
 <p>Claude runtime:</p>
 <ul>
@@ -1421,6 +1528,23 @@ provider (<code>--json</code> supported).</p>
 <li>tool support includes both OpenAI <code>function</code> tools and <code>custom</code> tools;
   AIRelays also accepts Cursor's flatter Responses-style <code>custom</code> tool
   shape on this route</li>
+<li><code>tool_choice</code> accepts <code>auto</code>, <code>none</code>, <code>required</code>, a named function or
+  custom tool, and <code>allowed_tools</code></li>
+<li>function tools run non-strict unless <code>function.strict</code> is <code>true</code>, as in
+  OpenAI's chat API; AIRelays sends <code>strict: false</code> explicitly because the
+  upstream otherwise assumes strict. <code>strict</code> must be a boolean here and in
+  <code>response_format.json_schema</code></li>
+<li>assistant messages may carry <code>content: null</code> alongside <code>tool_calls</code> or a
+  <code>refusal</code>, as OpenAI SDKs send them back</li>
+<li>the deprecated <code>functions</code>/<code>function_call</code> interface is supported end
+  to end: replies carry <code>message.function_call</code> (streamed as
+  <code>delta.function_call</code>) with <code>finish_reason: "function_call"</code>, one call
+  per reply, and <code>role: "function"</code> messages answer the matching call by
+  <code>name</code>. Send either <code>tools</code> or <code>functions</code>, not both, and use <code>tools</code>
+  with <code>conversation</code></li>
+<li>file content parts use OpenAI's shape, <code>{"type": "file", "file": {...}}</code>,
+  with a local <code>file_id</code> from <code>POST /v1/files</code> or inline <code>file_data</code> plus
+  <code>filename</code></li>
 </ul>
 <p>Claude runtime:</p>
 <ul>
@@ -1433,21 +1557,30 @@ provider (<code>--json</code> supported).</p>
 <li><code>reasoning_effort</code> supported (<code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>),
   mapped to the CLI's <code>--effort</code> flag; omitted means the model's adaptive
   default</li>
-<li>structured outputs supported: <code>response_format.type=json_schema</code> and
-  <code>json_object</code> map to the CLI's <code>--json-schema</code> flag (native schema
-  enforcement; <code>json_object</code> enforces the permissive <code>{"type": "object"}</code>
-  schema). The response <code>content</code> is the enforced JSON only — a run that
-  produces no schema-conforming output fails loudly instead of returning
-  prose. On streaming requests the JSON text streams as the content
-  deltas. Enforcement runs as an internal tool turn upstream, so
-  schema-enforced calls bill some additional output tokens. Unsupported
+<li>structured outputs supported: <code>response_format.type=json_schema</code> maps to
+  the CLI's <code>--json-schema</code> flag (native schema enforcement). The response
+  <code>content</code> is the enforced JSON only — a run that produces no
+  schema-conforming output fails loudly instead of returning prose. On
+  streaming requests the JSON text streams as the content deltas.
+  Enforcement runs as an internal tool turn upstream, so schema-enforced
+  calls bill some additional output tokens. Unsupported
   <code>response_format</code> shapes (including a missing <code>type</code>) are rejected with
   a 422; serialized schemas are capped at 200 KB (they travel on the local
   CLI's argv). Two documented leniencies versus OpenAI:
   <code>json_schema.name</code> is optional (metadata the CLI does not use), and
   <code>strict</code> is ignored because the CLI's native enforcement is always
   strict — clients can only get stricter behavior than asked, never
-  weaker.</li>
+  weaker.
+  <code>json_object</code> asks the model, in the system prompt, for a single JSON
+  object and checks the answer before returning it (a surrounding code fence
+  is removed); an answer that is not one JSON object returns 502
+  <code>invalid_json_output</code> and does not pause any account. An answer cut short
+  (<code>finish_reason: "length"</code>) or refused (<code>content_filter</code>) is returned as is.
+  In JSON mode a streamed answer arrives as one content chunk, because it is
+  checked first.</li>
+<li>every Claude request carries a system prompt: the client's, or a minimal
+  one when the client sends none, so the Claude CLI's own built-in agent
+  prompt never applies.</li>
 <li>sampling parameters stripped and disclosed via
   <code>x-airelays-ignored-parameters</code> (the <code>claude</code> CLI has no sampling
   controls); other unsupported generation controls rejected locally</li>
@@ -1475,13 +1608,121 @@ provider (<code>--json</code> supported).</p>
   <code>x-airelays-ignored-parameters</code>; other unsupported generation controls
   rejected locally</li>
 </ul>
+<h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
+<p>Every error uses OpenAI's error object, with a <code>detail</code> copy of the message
+for existing AIRelays clients:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"error"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">,</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"invalid_request_error"</span><span class="p">,</span><span class="w"> </span><span class="nt">"param"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"code"</span><span class="p">:</span><span class="w"> </span><span class="s2">"model_not_found"</span><span class="p">},</span><span class="w"> </span><span class="nt">"detail"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><code>type</code> is <code>invalid_request_error</code> for client errors, <code>rate_limit_error</code>
+  for 429 and <code>server_error</code> for 5xx (authentication problems with the
+  upstream subscription use <code>authentication_error</code>)</li>
+<li>unknown models return 404 with code <code>model_not_found</code>; unsupported
+  parameters and features return 422 (see ADR 0001)</li>
+<li>a Claude answer in <code>json_object</code> mode that is not one JSON object returns
+  502 <code>invalid_json_output</code>; retrying usually helps, or use <code>json_schema</code></li>
+<li>a quota or cooldown rejection returns 429 with a <code>Retry-After</code> header when
+  the reset time is known (OpenAI SDKs then wait, or stop retrying when the
+  reset is more than two minutes away); a Claude CLI that is not signed in
+  returns 503, not 401, because the client's own credentials are fine</li>
+<li>every response carries an <code>x-request-id</code> header, the id AIRelays uses in
+  its traffic log; OpenAI SDKs expose it as <code>request_id</code></li>
+<li>Claude streams start only once the CLI produces output, so failures before
+  the first token are real HTTP errors; failures after it arrive in-band as
+  <code>data: {"error": {...}}</code> without <code>[DONE]</code></li>
+</ul>
+<h2 id="finish-reasons-and-refusals">Finish reasons and refusals<a class="headerlink" href="#finish-reasons-and-refusals" title="Permanent link">&para;</a></h2>
+<p><code>finish_reason</code> is <code>stop</code>, <code>length</code>, <code>tool_calls</code>, <code>content_filter</code>, or
+<code>function_call</code> for requests using the deprecated <code>functions</code>. An
+upstream response cut short by its token limit reports <code>length</code>, and one
+stopped by the provider's content filter (OpenAI) or a refusal (Claude)
+reports <code>content_filter</code>. OpenAI refusals are returned in <code>message.refusal</code>
+(streamed as <code>delta.refusal</code>). Chat responses always include
+<code>choices[].logprobs</code> and <code>message.refusal</code>, <code>null</code> when not applicable.</p>
+<h2 id="token-usage-on-chat-and-completions">Token usage on chat and completions<a class="headerlink" href="#token-usage-on-chat-and-completions" title="Permanent link">&para;</a></h2>
+<p><code>/v1/chat/completions</code> and <code>/v1/completions</code> report <code>usage</code> in OpenAI's
+Chat Completions shape on both runtimes:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"prompt_tokens"</span><span class="p">:</span><span class="w"> </span><span class="mi">18</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"completion_tokens"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"total_tokens"</span><span class="p">:</span><span class="w"> </span><span class="mi">23</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"prompt_tokens_details"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"cached_tokens"</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="nt">"cache_write_tokens"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"completion_tokens_details"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"reasoning_tokens"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><code>prompt_tokens</code> counts every prompt token, cached ones included;
+  <code>prompt_tokens_details.cached_tokens</code> and <code>cache_write_tokens</code> break out
+  the tokens read from and written to the prompt cache
+  (<code>cache_write_tokens</code> is typed in recent openai-python releases; older
+  SDKs keep it as an extra field).
+  <code>total_tokens</code> is <code>prompt_tokens + completion_tokens</code>.</li>
+<li>the details objects and their members appear only when the provider
+  reports them (the Claude runtime has no <code>completion_tokens_details</code>)</li>
+<li>when a provider reports no readable usage, <code>usage</code> is omitted rather than
+  filled with zeros</li>
+<li>streaming: with <code>stream_options: {"include_usage": true}</code>, every chunk
+  carries <code>"usage": null</code>, and one extra chunk with <code>"choices": []</code> and the
+  usage follows the chunk with <code>finish_reason</code>, before <code>data: [DONE]</code>.
+  Without it, chunks have no <code>usage</code> field. A stream that fails sends no
+  usage chunk.</li>
+<li><code>/v1/responses</code> returns the Responses API usage (<code>input_tokens</code>,
+  <code>output_tokens</code>, ...) unchanged</li>
+<li><code>stream_options</code> sent without <code>stream: true</code> has no effect; it is dropped
+  and listed in <code>x-airelays-ignored-parameters</code></li>
+<li>for the OpenAI runtime, traffic logs keep the upstream usage as reported
+  (<code>upstream_usage</code> and <code>outbound_usage</code> records). For Claude, the raw CLI
+  result is logged for non-streaming requests (<code>provider_response</code>) and
+  stream lines only when stream-line logging is enabled; Claude
+  <code>outbound_usage</code> records carry the translated usage</li>
+</ul>
 <h2 id="post-v1files"><code>POST /v1/files</code><a class="headerlink" href="#post-v1files" title="Permanent link">&para;</a></h2>
 <p>Local AIRelays file storage for the OpenAI runtime compatibility path.</p>
+<ul>
+<li><code>purpose</code> is a multipart form field, as OpenAI SDKs send it: one of
+  <code>assistants</code> (the default when omitted), <code>batch</code>, <code>fine-tune</code>, <code>vision</code>,
+  <code>user_data</code> or <code>evals</code></li>
+<li><code>GET /v1/files</code> supports OpenAI's <code>after</code>, <code>limit</code> (1 to 10000, default
+  10000), <code>order</code> (<code>desc</code> by default) and <code>purpose</code> query parameters and
+  returns <code>first_id</code>, <code>last_id</code> and <code>has_more</code>, so SDK auto-pagination
+  works, including loops that delete each file as they go (a deleted file
+  still anchors <code>after</code> for a day)</li>
+<li><code>expires_after</code> is not supported and returns 422; delete files
+  explicitly</li>
+<li><code>GET /v1/files/{file_id}</code>, <code>GET /v1/files/{file_id}/content</code> and
+  <code>DELETE /v1/files/{file_id}</code> complete the set</li>
+</ul>
 <h2 id="post-v1conversations"><code>POST /v1/conversations</code><a class="headerlink" href="#post-v1conversations" title="Permanent link">&para;</a></h2>
 <p>Local AIRelays conversation storage for the OpenAI runtime compatibility path.</p>
+<ul>
+<li>create a conversation, optionally with initial <code>items</code> (Responses input
+  items) and <code>metadata</code>; <code>GET</code>, <code>POST</code> (metadata update) and <code>DELETE</code>
+  <code>/v1/conversations/{id}</code> manage it</li>
+<li>pass its id as <code>conversation</code> on <code>/v1/responses</code> (a string or
+  <code>{"id": ...}</code>), <code>/v1/chat/completions</code> or <code>/v1/completions</code>. The
+  conversation's items are prepended to each turn's input, and once a turn
+  succeeds its input and output items are appended, as in OpenAI's
+  conversations. A failed turn leaves the conversation unchanged</li>
+<li>stored output items are the replayable ones: assistant messages, every
+  call the client answers (items with a <code>call_id</code>, such as function,
+  custom and local shell calls), and reasoning items that carry
+  <code>encrypted_content</code> (request it with
+  <code>include: ["reasoning.encrypted_content"]</code>). Other reasoning items and
+  server-side tool calls are not kept; their outcome is in the messages
+  that follow</li>
+<li>local files are stored as <code>file_id</code> references and inlined on every
+  turn. Initial <code>items</code> are checked like a turn's input (the file exists
+  and fits its content part). Deleting a file that a conversation uses
+  makes its later turns fail with 422; start a new conversation</li>
+<li>the conversation items API (<code>/v1/conversations/{id}/items</code>) is not
+  available and returns 501</li>
+<li>on <code>/v1/chat/completions</code>, a <code>tool</code> message may answer a tool call made
+  in an earlier turn of the conversation</li>
+</ul>
 <p>The Claude runtime is stateless and does not use local conversations.</p>
 <h2 id="unsupported-routes">Unsupported Routes<a class="headerlink" href="#unsupported-routes" title="Permanent link">&para;</a></h2>
-<p>These currently return <code>501 unsupported_error</code>:</p>
+<p>These currently return <code>501 unsupported_error</code>. Every 501 AIRelays returns
+carries <code>x-should-retry: false</code>, so OpenAI SDKs do not retry it:</p>
 <ul>
 <li>embeddings</li>
 <li>image generation</li>

@@ -626,6 +626,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-claude-request-fails-which-account-or-model-is-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A Claude request fails: which account or model is affected
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#502-invalid_json_output-on-a-claude-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        502 invalid_json_output on a Claude model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-claude-account-needs-to-sign-in-again" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -670,10 +692,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#422-on-claude-routes" class="md-nav__link">
+  <a href="#404-model_not_found-or-422-on-chat-and-completions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        422 on Claude routes
+        404 model_not_found or 422 on chat and completions
       
     </span>
   </a>
@@ -1213,6 +1235,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-claude-request-fails-which-account-or-model-is-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A Claude request fails: which account or model is affected
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#502-invalid_json_output-on-a-claude-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        502 invalid_json_output on a Claude model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-claude-account-needs-to-sign-in-again" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1257,10 +1301,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#422-on-claude-routes" class="md-nav__link">
+  <a href="#404-model_not_found-or-422-on-chat-and-completions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        422 on Claude routes
+        404 model_not_found or 422 on chat and completions
       
     </span>
   </a>
@@ -1489,6 +1533,39 @@ sign-in or an exported token need this once. Claude Code refresh tokens
 rotate, so AIRelays cannot copy the personal sign-in. Profiles already
 enrolled keep working, and switching or signing out Claude Code does not
 affect the relay.</p>
+<h2 id="a-claude-request-fails-which-account-or-model-is-affected">A Claude request fails: which account or model is affected<a class="headerlink" href="#a-claude-request-fails-which-account-or-model-is-affected" title="Permanent link">&para;</a></h2>
+<p>AIRelays decides what a Claude CLI failure affects before taking any account
+out of rotation, and the error message says which case applies:</p>
+<ul>
+<li><strong>Your request</strong> (a bad image, an unreachable URL, a prompt that is too
+  long): 422 or 413 explaining what to change. No account is paused.</li>
+<li><strong>One model on one account</strong>: the API does not serve that model to the
+  account (a "not found" or permission refusal while a live usage check shows
+  the account's sign-in works). Only that model is paused on that account
+  (<code>unavailable_models</code> in <code>/v1/relay/status</code>); other models keep working, and
+  another account is tried. If none can serve it, you get 404
+  <code>model_unavailable</code>; use another model from <code>/v1/models</code>.</li>
+<li><strong>A passing sign-in refusal</strong>: the CLI reported a sign-in error, but the
+  live usage check shows the sign-in works (for example a token that was just
+  renewed). Nothing is paused; another account is tried, and retrying usually
+  works.</li>
+<li><strong>An account's usage limit or a temporary failure</strong>: the account pauses
+  until its reset time (or <code>account_cooldown_seconds</code> when the reset is
+  unknown), or about 30 seconds after a temporary failure, and another account
+  is tried. The message lists each account's state, with <code>Retry-After</code>; a wait
+  over a minute also carries <code>x-should-retry: false</code>. When the check cannot
+  tell whether the sign-in works, the account pauses the same way.</li>
+<li><strong>An account's sign-in</strong>: the usage check confirms the sign-in was
+  rejected (an explicit authentication error, such as a revoked token). The
+  account is marked as needing a new sign-in, leaves rotation until you sign in again, and the message names
+  the command to run (see below).</li>
+</ul>
+<h2 id="502-invalid_json_output-on-a-claude-model"><code>502 invalid_json_output</code> on a Claude model<a class="headerlink" href="#502-invalid_json_output-on-a-claude-model" title="Permanent link">&para;</a></h2>
+<p>You asked for <code>response_format: {"type": "json_object"}</code> and the model's
+answer was not a single JSON object. AIRelays checks JSON-mode answers before
+returning them, so you never receive broken JSON with a success status. Retry
+the request, or send <code>json_schema</code> with a schema: the Claude CLI enforces
+named schemas natively.</p>
 <h2 id="a-claude-account-needs-to-sign-in-again">A Claude account needs to sign in again<a class="headerlink" href="#a-claude-account-needs-to-sign-in-again" title="Permanent link">&para;</a></h2>
 <p>Use <code>airelays claude accounts</code> to find the account id, then
 <code>airelays claude login --replace ACCOUNT</code>. Choose the same account in the
@@ -1540,16 +1617,24 @@ usually heavy system load or a long request burst.</p>
 <li>if it persists, open the Console tab for relay output, or use Restart</li>
 <li>Stop/Restart keep working: the app still manages the process</li>
 </ul>
-<h2 id="422-on-claude-routes"><code>422</code> on Claude routes<a class="headerlink" href="#422-on-claude-routes" title="Permanent link">&para;</a></h2>
-<p>The Claude runtime supports discovered aliases and concrete model ids, plus configured overrides, on text <code>chat.completions</code> and text <code>completions</code>.</p>
-<p>Checks:</p>
+<h2 id="404-model_not_found-or-422-on-chat-and-completions"><code>404 model_not_found</code> or <code>422</code> on chat and completions<a class="headerlink" href="#404-model_not_found-or-422-on-chat-and-completions" title="Permanent link">&para;</a></h2>
+<p>A <code>404</code> with code <code>model_not_found</code> means the model id is not available:
+confirm it appears in <code>/v1/models</code> (a discovered alias, concrete
+<code>claude-*</code> id, configured override, or an OpenAI model your account's
+catalog lists).</p>
+<p>A <code>422</code> names what the relay cannot honor. The Claude runtime supports text
+<code>chat.completions</code> and text <code>completions</code>. Checks:</p>
 <ul>
-<li>confirm the model id appears in <code>/v1/models</code>, as a discovered alias,
-  concrete <code>claude-*</code> id, or configured Claude override</li>
-<li>remove tools, files, images, audio, and <code>conversation</code>
+<li>remove tools, files, images, audio, and <code>conversation</code> on Claude models
   (<code>response_format</code> json_schema/json_object is supported on chat completions)</li>
-<li>remove unsupported generation controls</li>
+<li>remove <code>stop</code>, <code>logprobs</code>, <code>top_logprobs</code>, <code>logit_bias</code>,
+  <code>web_search_options</code> and <code>moderation</code>: neither upstream can honor them,
+  so AIRelays rejects them rather than returning output that ignores them</li>
+<li>remove other unsupported generation controls</li>
 </ul>
+<p>If a request succeeds but behaves as if a parameter were missing, check the
+<code>x-airelays-ignored-parameters</code> response header: it lists every parameter
+AIRelays dropped, including ones it does not recognize.</p>
 <h2 id="cursor-custom-openai-endpoint-errors">Cursor custom OpenAI endpoint errors<a class="headerlink" href="#cursor-custom-openai-endpoint-errors" title="Permanent link">&para;</a></h2>
 <p>If Cursor is configured to call AIRelays as a custom OpenAI-compatible
 endpoint and Agent/Edit flows fail, first identify which malformed request
