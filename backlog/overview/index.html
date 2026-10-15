@@ -355,6 +355,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../api/" class="md-nav__link">
         
   
@@ -525,10 +552,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" >
         
           
-          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="0">
             
   
   
@@ -546,8 +573,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_12">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_13">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -966,9 +993,9 @@
 <p>AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provider-runtime expansion is complete and released: the ChatGPT subscription path is the primary runtime (with balanced multi-account routing) and the Claude runtime is a first-class local adapter as of 0.4.0. Open work is the cross-platform runtime track (ADR 0008) plus proposed hardening follow-ups.</p>
 <h2 id="counts">Counts<a class="headerlink" href="#counts" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Planned: 4</li>
+<li>Planned: 3</li>
 <li>Proposed: 4</li>
-<li>Completed: 10</li>
+<li>Completed: 11</li>
 <li>Deprecated: 1</li>
 <li>Recurrent: 0</li>
 </ul>
@@ -983,7 +1010,6 @@
 <li><a href="../planned/platform/0022_relay_lifecycle_and_single_instance_tray/">0022_relay_lifecycle_and_single_instance_tray.md</a></li>
 <li><a href="../planned/platform/0023_headless_service_install/">0023_headless_service_install.md</a></li>
 <li><a href="../planned/platform/0024_signed_installers/">0024_signed_installers.md</a></li>
-<li><a href="../planned/providers/0027_images_and_claude_tools/">0027_images_and_claude_tools.md</a> — images on both runtimes and tool calls on Claude models (0.17.0)</li>
 </ul>
 <h2 id="proposed-work">Proposed Work<a class="headerlink" href="#proposed-work" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1123,6 +1149,16 @@
 <td>Completed</td>
 <td>Chat and completions report OpenAI's CompletionUsage on both runtimes (Claude counts cached prompt tokens); spec-shaped streamed usage; <code>/v1/responses</code> unchanged.</td>
 <td>Three adversarial reviews; 85 contract/conformance tests; <code>pytest</code> 529 on 3.11–3.13; live schema validation (0 failures) and openai-python 3.29.0 checks</td>
+</tr>
+<tr>
+<td>0027</td>
+<td>Images, files, conversations, <code>/v1/responses</code> and tool calls on Claude models</td>
+<td><code>docs/backlog/planned/providers/0027_images_and_claude_tools.md</code></td>
+<td><code>docs/backlog/completed/providers/0027_images_and_claude_tools.md</code></td>
+<td>2026-10-15</td>
+<td>Completed</td>
+<td>Claude models gain the GPT feature set on the same endpoint; tool calls are returned to the client and never run.</td>
+<td>Two adversarial audits; <code>pytest</code> 605 on 3.11–3.13; live SDK 28/28 and openai-openapi validation (0 failures)</td>
 </tr>
 </tbody>
 </table>

@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://www.lpalbou.info/AIRelays/api/">
       
       
-        <link rel="prev" href="../security/">
+        <link rel="prev" href="../capabilities/">
       
       
         <link rel="next" href="../architecture/">
@@ -356,6 +356,33 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -584,6 +611,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tool-calls-on-claude-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool calls on Claude models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#unsupported-routes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -752,10 +790,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" >
         
           
-          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="0">
             
   
   
@@ -773,8 +811,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_12">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_13">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1235,6 +1273,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tool-calls-on-claude-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool calls on Claude models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#unsupported-routes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1291,6 +1340,8 @@ old files. GET requests do not trigger reclamation.</p>
 age limit but leaves size enforcement enabled. See
 <a href="../configuration/#traffic-log-retention">configuration</a> for bounds, precedence,
 rotation behavior, migration, and CLI/tray controls.</p>
+<p>For a side-by-side summary of what works on GPT models and on Claude models,
+see <a href="../capabilities/">Capabilities</a>.</p>
 <h2 id="compatibility-adaptations-read-this-first">Compatibility Adaptations (read this first)<a class="headerlink" href="#compatibility-adaptations-read-this-first" title="Permanent link">&para;</a></h2>
 <p>The verified upstream is the ChatGPT subscription backend, not the public
 platform API. AIRelays adapts requests on the three text-generation routes
@@ -1302,18 +1353,25 @@ adaptation records when the request shape itself is repaired:</p>
 <li><strong>Removed unsupported parameters:</strong> <code>temperature</code>, <code>top_p</code>,
   <code>presence_penalty</code>, and <code>frequency_penalty</code> are stripped before the
   upstream call because the upstream rejects them
-  (<code>"Unsupported parameter: temperature"</code>). Output-token limit fields
-  (<code>max_tokens</code>, <code>max_completion_tokens</code>, <code>max_output_tokens</code>) and
-  caller-supplied end-user identifiers (<code>user</code>, <code>safety_identifier</code>) are
-  also stripped because the verified subscription backend does not honor
-  them, as is <code>seed</code> (best-effort determinism in OpenAI's own API; neither
-  upstream supports it). The names of removed parameters are returned in the
+  (<code>"Unsupported parameter: temperature"</code>). Caller-supplied end-user
+  identifiers (<code>user</code>, <code>safety_identifier</code>) are also stripped because the
+  verified subscription backend does not honor them, as is <code>seed</code>
+  (best-effort determinism in OpenAI's own API; neither upstream supports
+  it). The names of removed parameters are returned in the
   <code>x-airelays-ignored-parameters</code> response header and logged as a
   <code>compatibility_adaptation</code> traffic record with the reason. Generation
   runs with the upstream's own defaults. The same adaptation applies on
-  the Claude routes: the local <code>claude</code> CLI exposes no sampling or token
-  limit controls, so these parameters are stripped and disclosed there
-  too instead of failing the request.</li>
+  the Claude routes: the local <code>claude</code> CLI exposes no sampling controls,
+  so these parameters are stripped and disclosed there too instead of
+  failing the request.</li>
+<li><strong>Output-token limits:</strong> <code>max_completion_tokens</code> (preferred) and
+  <code>max_tokens</code> on chat and completions, and <code>max_output_tokens</code> on
+  <code>/v1/responses</code>, are honoured on both runtimes. GPT models receive them as
+  the upstream's <code>max_output_tokens</code>, which enforces them (values below 16
+  get the upstream's own 400). On Claude models each CLI model call is capped
+  and the run stops when the first one reaches the limit, before the CLI
+  would continue on its own. A cut answer reports <code>finish_reason: "length"</code>
+  (<code>status: "incomplete"</code> on <code>/v1/responses</code>).</li>
 <li><strong>Unrecognized parameters:</strong> on <code>/v1/chat/completions</code> and
   <code>/v1/completions</code> (both runtimes), a parameter AIRelays does not
   recognize is dropped and listed in <code>x-airelays-ignored-parameters</code> like
@@ -1511,12 +1569,27 @@ provider (<code>--json</code> supported).</p>
 <p>Current OpenAI limits:</p>
 <ul>
 <li><code>store=true</code> rejected</li>
-<li>output-token limit fields stripped and disclosed (see
+<li>output-token limits enforced upstream (see
   <a href="#compatibility-adaptations-read-this-first">Compatibility Adaptations</a>)</li>
 </ul>
 <p>Claude runtime:</p>
 <ul>
-<li>rejected explicitly on this route</li>
+<li>the same request and response shapes, streamed (<code>response.created</code>,
+  <code>response.output_text.delta</code>, <code>function_call</code> items,
+  <code>response.completed</code>) or not, translated to the Claude runtime's chat
+  path: <code>input</code> (text, <code>input_image</code>, <code>input_file</code>, <code>function_call</code> and
+  <code>function_call_output</code> items), <code>instructions</code>, function <code>tools</code>,
+  <code>tool_choice</code>, <code>text.format</code> (<code>json_schema</code>, <code>json_object</code>) and
+  <code>reasoning.effort</code></li>
+<li><code>conversation</code> works as on GPT models; <code>previous_response_id</code>,
+  <code>store: true</code>, <code>background</code> and stored prompts are refused (Claude
+  models keep no responses: use <code>conversation</code>)</li>
+<li>function tools run non-strict, since Claude has no strict tool mode
+  (<code>strict: true</code> is listed in <code>x-airelays-ignored-parameters</code>). Server-side
+  tools (web search, file search)
+  are not available on Claude models</li>
+<li>other unsupported fields, such as <code>reasoning.summary</code>, are dropped and
+  listed in <code>x-airelays-ignored-parameters</code></li>
 </ul>
 <h2 id="post-v1chatcompletions"><code>POST /v1/chat/completions</code><a class="headerlink" href="#post-v1chatcompletions" title="Permanent link">&para;</a></h2>
 <p>OpenAI runtime:</p>
@@ -1549,11 +1622,32 @@ provider (<code>--json</code> supported).</p>
 <p>Claude runtime:</p>
 <ul>
 <li>discovered Claude aliases and concrete model ids, plus configured overrides</li>
-<li>text-only <code>system</code>, <code>developer</code>, <code>user</code>, and <code>assistant</code> messages</li>
+<li><code>system</code>, <code>developer</code>, <code>user</code>, <code>assistant</code> and <code>tool</code> messages</li>
 <li><code>stream=true|false</code></li>
-<li>no tools</li>
-<li>no files, images, or audio</li>
-<li>no AIRelays local conversation reuse</li>
+<li>images (<code>image_url</code>: a PNG, JPEG, GIF or WebP data URL, an http(s) URL,
+  or a local <code>file_id</code>) and documents (<code>file</code> parts: PDF or UTF-8 text, as
+  <code>file_data</code> or a local <code>file_id</code>), in any user message; an image or
+  document Claude cannot read returns 422, never a silently degraded answer.
+  <code>detail</code> has no Claude equivalent</li>
+<li>function tools: Claude decides which of the client's tools to call, and
+  the calls come back as OpenAI <code>tool_calls</code> with
+  <code>finish_reason: "tool_calls"</code>; the client runs its tools and sends the
+  results back as <code>tool</code> messages, as with GPT models. AIRelays never runs
+  a tool: the CLI's built-in tools are off, the client's tools are only
+  descriptions behind a helper that executes nothing, every call is denied
+  before execution, and the run stops at the call. The CLI's startup report
+  is checked on every request, and a request stops if any tool appears that
+  AIRelays did not define (see <a href="#tool-calls-on-claude-models">Tool calls on Claude models</a>).
+  Refused with 422 because Claude cannot honour them: a forced call
+  (<code>tool_choice</code> <code>required</code> or a named tool), <code>parallel_tool_calls: false</code>,
+  non-function tools, and <code>parameters</code> that are not an object schema.
+  <code>strict: true</code> tools run non-strict, listed in
+  <code>x-airelays-ignored-parameters</code> (Claude has no strict tool mode). A
+  request whose tools the CLI could not load fails with 502
+  <code>cli_tools_unavailable</code> instead of answering without them; the
+  <code>/no-tools/</code> routes refuse tools as on GPT models</li>
+<li><code>conversation</code> works as on GPT models</li>
+<li>no audio</li>
 <li><code>reasoning_effort</code> supported (<code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>),
   mapped to the CLI's <code>--effort</code> flag; omitted means the model's adaptive
   default</li>
@@ -1597,9 +1691,9 @@ provider (<code>--json</code> supported).</p>
 <p>Claude runtime:</p>
 <ul>
 <li>discovered Claude aliases and concrete model ids, plus configured overrides</li>
-<li>text-only prompt-in, text-out</li>
+<li>text prompt in, text out (images, documents and tools are on
+  <code>/v1/chat/completions</code> and <code>/v1/responses</code>)</li>
 <li><code>stream=true|false</code></li>
-<li>no files, images, audio, or tools</li>
 <li><code>reasoning_effort</code> supported (same modes and mapping as chat completions)</li>
 <li><code>response_format</code> rejected loudly (not part of the completions API;
   ignoring it would silently hand unenforced text to a client that asked
@@ -1719,7 +1813,49 @@ Chat Completions shape on both runtimes:</p>
 <li>on <code>/v1/chat/completions</code>, a <code>tool</code> message may answer a tool call made
   in an earlier turn of the conversation</li>
 </ul>
-<p>The Claude runtime is stateless and does not use local conversations.</p>
+<p>Conversations work on Claude models too (chat completions and
+<code>/v1/responses</code>), and one conversation can continue across models and
+runtimes. Claude cannot replay other models' reasoning items, so they are
+skipped on Claude turns, and a conversation holding GPT <code>custom</code> tool calls
+cannot continue on a Claude model (422).</p>
+<h2 id="tool-calls-on-claude-models">Tool calls on Claude models<a class="headerlink" href="#tool-calls-on-claude-models" title="Permanent link">&para;</a></h2>
+<p>The <code>claude</code> CLI is an agent that would normally run tools itself. AIRelays
+uses it so that Claude only decides which tool to call, and the client runs
+it, exactly as with OpenAI:</p>
+<table>
+<thead>
+<tr>
+<th>Safeguard</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Built-in tools off</td>
+<td>The CLI starts with no shell, file, web or agent tools.</td>
+</tr>
+<tr>
+<td>Descriptions only</td>
+<td>The client's tools reach the CLI through a helper inside AIRelays that lists them and answers every call with "not executed"; it can run nothing.</td>
+</tr>
+<tr>
+<td>Startup check</td>
+<td>Every request checks the CLI's own list of available tools; anything AIRelays did not define stops the request.</td>
+</tr>
+<tr>
+<td>Pre-execution deny</td>
+<td>The CLI asks a check before running any tool, and the answer is always "deny".</td>
+</tr>
+<tr>
+<td>Stop at the call</td>
+<td>The run is interrupted as soon as Claude has made its calls.</td>
+</tr>
+</tbody>
+</table>
+<p>The first two make running a tool impossible; the other three add defence
+in depth. The CLI itself still starts its usual helper programs on every
+Claude request (a read-only <code>git</code> check of its empty working folder, <code>ps</code>,
+<code>ioreg</code> and, on macOS, the keychain reader for its sign-in).</p>
 <h2 id="unsupported-routes">Unsupported Routes<a class="headerlink" href="#unsupported-routes" title="Permanent link">&para;</a></h2>
 <p>These currently return <code>501 unsupported_error</code>. Every 501 AIRelays returns
 carries <code>x-should-retry: false</code>, so OpenAI SDKs do not retry it:</p>

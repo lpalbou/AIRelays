@@ -13,6 +13,10 @@
          <lastmod>2026-10-15</lastmod>
     </url>
     <url>
+         <loc>https://www.lpalbou.info/AIRelays/capabilities/</loc>
+         <lastmod>2026-10-15</lastmod>
+    </url>
+    <url>
          <loc>https://www.lpalbou.info/AIRelays/configuration/</loc>
          <lastmod>2026-10-15</lastmod>
     </url>
@@ -137,6 +141,10 @@
          <lastmod>2026-10-15</lastmod>
     </url>
     <url>
+         <loc>https://www.lpalbou.info/AIRelays/backlog/completed/providers/0027_images_and_claude_tools/</loc>
+         <lastmod>2026-10-15</lastmod>
+    </url>
+    <url>
          <loc>https://www.lpalbou.info/AIRelays/backlog/deprecated/accounts/0017_account_capacity_estimation/</loc>
          <lastmod>2026-10-15</lastmod>
     </url>
@@ -158,10 +166,6 @@
     </url>
     <url>
          <loc>https://www.lpalbou.info/AIRelays/backlog/planned/providers/</loc>
-         <lastmod>2026-10-15</lastmod>
-    </url>
-    <url>
-         <loc>https://www.lpalbou.info/AIRelays/backlog/planned/providers/0027_images_and_claude_tools/</loc>
          <lastmod>2026-10-15</lastmod>
     </url>
     <url>

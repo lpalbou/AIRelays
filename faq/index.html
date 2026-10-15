@@ -359,6 +359,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../api/" class="md-nav__link">
         
   
@@ -763,10 +790,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" >
         
           
-          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="0">
             
   
   
@@ -784,8 +811,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_12">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_13">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1320,15 +1347,16 @@ a limit on any window is benched until that window resets. Alternatives:
 airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
 <h2 id="does-airelays-support-claude">Does AIRelays support Claude?<a class="headerlink" href="#does-airelays-support-claude" title="Permanent link">&para;</a></h2>
-<p>Yes, in a constrained text-only form.</p>
+<p>Yes, through the same OpenAI-compatible endpoint as GPT models.</p>
 <ul>
 <li>discovered Claude aliases and concrete model ids, plus configured overrides</li>
 <li>local <code>claude</code> CLI only</li>
-<li>text <code>chat.completions</code></li>
-<li>text <code>completions</code></li>
+<li><code>chat.completions</code>, <code>completions</code> and <code>responses</code></li>
+<li>images, PDFs and text files as input; local files and conversations</li>
+<li>function tool calls returned to your application, which runs them;
+  AIRelays never runs a tool (see <a href="../api/#tool-calls-on-claude-models">docs/api.md</a>)</li>
 <li>follows the relay's protected or open local authentication mode</li>
 <li>loopback-only</li>
-<li>stateless</li>
 </ul>
 <h2 id="how-do-i-log-in-to-the-claude-runtime">How do I log in to the Claude runtime?<a class="headerlink" href="#how-do-i-log-in-to-the-claude-runtime" title="Permanent link">&para;</a></h2>
 <p>Use the local Claude CLI through AIRelays:</p>
@@ -1400,10 +1428,12 @@ reopen it, or right-click for the menu. <strong>Open Dashboard</strong> is avail
 tray menu on all platforms. In Overview, <strong>Connect Your App</strong> contains both
 connection details and the authentication/network access controls.</p>
 <h2 id="are-output-token-limits-enforced">Are output-token limits enforced?<a class="headerlink" href="#are-output-token-limits-enforced" title="Permanent link">&para;</a></h2>
-<p>No. AIRelays strips unsupported output-token limits such as <code>max_tokens</code>,
-<code>max_completion_tokens</code>, and <code>max_output_tokens</code> on both runtimes and reports
-them through the <code>x-airelays-ignored-parameters</code> response header. It does not
-silently truncate generated output. See <a href="../api/">API Notes</a>.</p>
+<p>Yes, on both account types. <code>max_completion_tokens</code>, <code>max_tokens</code> (chat and
+completions) and <code>max_output_tokens</code> (<code>/v1/responses</code>) are enforced by the
+providers themselves: GPT models apply the limit upstream (the minimum is 16),
+and on Claude models the run stops when the model reaches the limit. An answer
+cut by the limit reports <code>finish_reason: "length"</code> (<code>status: "incomplete"</code> on
+<code>/v1/responses</code>), as on OpenAI. See <a href="../capabilities/">Capabilities</a>.</p>
 <h2 id="why-did-i-get-401-and-then-429">Why did I get <code>401</code> and then <code>429</code>?<a class="headerlink" href="#why-did-i-get-401-and-then-429" title="Permanent link">&para;</a></h2>
 <p>The relay token was missing or wrong, and repeated bad attempts triggered the temporary IP block.</p>
 

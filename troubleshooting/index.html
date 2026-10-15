@@ -359,6 +359,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../api/" class="md-nav__link">
         
   
@@ -648,6 +675,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-claude-request-with-tools-fails-with-502-cli_tools_unavailable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A Claude request with tools fails with 502 cli_tools_unavailable
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#422-for-an-image-or-document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        422 for an image or document
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#an-answer-stops-early-with-finish_reason-length" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An answer stops early with finish_reason: "length"
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-claude-account-needs-to-sign-in-again" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -736,10 +796,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#413-on-uploads" class="md-nav__link">
+  <a href="#413-on-uploads-or-requests-with-files" class="md-nav__link">
     <span class="md-ellipsis">
       
-        413 on uploads
+        413 on uploads or requests with files
       
     </span>
   </a>
@@ -818,10 +878,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" >
         
           
-          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="0">
             
   
   
@@ -839,8 +899,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_12">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_13">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1257,6 +1317,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-claude-request-with-tools-fails-with-502-cli_tools_unavailable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A Claude request with tools fails with 502 cli_tools_unavailable
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#422-for-an-image-or-document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        422 for an image or document
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#an-answer-stops-early-with-finish_reason-length" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An answer stops early with finish_reason: "length"
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-claude-account-needs-to-sign-in-again" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1345,10 +1438,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#413-on-uploads" class="md-nav__link">
+  <a href="#413-on-uploads-or-requests-with-files" class="md-nav__link">
     <span class="md-ellipsis">
       
-        413 on uploads
+        413 on uploads or requests with files
       
     </span>
   </a>
@@ -1566,6 +1659,40 @@ answer was not a single JSON object. AIRelays checks JSON-mode answers before
 returning them, so you never receive broken JSON with a success status. Retry
 the request, or send <code>json_schema</code> with a schema: the Claude CLI enforces
 named schemas natively.</p>
+<h2 id="a-claude-request-with-tools-fails-with-502-cli_tools_unavailable">A Claude request with tools fails with <code>502 cli_tools_unavailable</code><a class="headerlink" href="#a-claude-request-with-tools-fails-with-502-cli_tools_unavailable" title="Permanent link">&para;</a></h2>
+<p>The Claude CLI could not load the request's tools, so AIRelays stopped the
+request instead of answering without them.</p>
+<ul>
+<li>check each tool's <code>parameters</code>: it must be a JSON Schema of type <code>object</code>
+  (other shapes are refused with <code>422</code>)</li>
+<li>the tool helper is a small file inside the installed AIRelays package,
+  started with the relay's own Python: if the installation was moved or
+  partly removed, reinstall AIRelays (or the desktop app)</li>
+<li>retry the request; the error names the tools that were missing</li>
+</ul>
+<p><code>502 cli_unexpected_tools</code> means the CLI reported or attempted a tool that
+AIRelays did not define. The request was stopped before anything ran; update
+AIRelays and the Claude CLI, then retry. Neither error pauses an account.</p>
+<h2 id="422-for-an-image-or-document"><code>422</code> for an image or document<a class="headerlink" href="#422-for-an-image-or-document" title="Permanent link">&para;</a></h2>
+<p>Both runtimes check images and documents before any upstream call.</p>
+<ul>
+<li>images must be PNG, JPEG, GIF or WebP, as a base64 <code>data:</code> URL, an http(s)
+  URL, or a <code>file_id</code> from <code>POST /v1/files</code>; a wrong declared type is
+  corrected automatically</li>
+<li>documents (<code>file</code> parts) must be PDFs or UTF-8 text files</li>
+<li>on Claude models, "Claude could not read N of the M images or documents"
+  means the CLI could not process a file (for example a CMYK JPEG or an
+  animated image): convert it to a standard PNG, JPEG or PDF and retry</li>
+</ul>
+<h2 id="an-answer-stops-early-with-finish_reason-length">An answer stops early with <code>finish_reason: "length"</code><a class="headerlink" href="#an-answer-stops-early-with-finish_reason-length" title="Permanent link">&para;</a></h2>
+<p>The request set an output-token limit (<code>max_completion_tokens</code>,
+<code>max_tokens</code>, or <code>max_output_tokens</code> on <code>/v1/responses</code>), and the model
+reached it. Both account types enforce the limit, as OpenAI does.</p>
+<ul>
+<li>raise the limit, or remove it to let the model finish</li>
+<li>on GPT models the minimum is 16; lower values return the upstream's <code>400</code></li>
+<li>check your client's defaults: some SDK helpers set a small <code>max_tokens</code></li>
+</ul>
 <h2 id="a-claude-account-needs-to-sign-in-again">A Claude account needs to sign in again<a class="headerlink" href="#a-claude-account-needs-to-sign-in-again" title="Permanent link">&para;</a></h2>
 <p>Use <code>airelays claude accounts</code> to find the account id, then
 <code>airelays claude login --replace ACCOUNT</code>. Choose the same account in the
@@ -1622,11 +1749,13 @@ usually heavy system load or a long request burst.</p>
 confirm it appears in <code>/v1/models</code> (a discovered alias, concrete
 <code>claude-*</code> id, configured override, or an OpenAI model your account's
 catalog lists).</p>
-<p>A <code>422</code> names what the relay cannot honor. The Claude runtime supports text
-<code>chat.completions</code> and text <code>completions</code>. Checks:</p>
+<p>A <code>422</code> names what the relay cannot honor. Checks:</p>
 <ul>
-<li>remove tools, files, images, audio, and <code>conversation</code> on Claude models
-  (<code>response_format</code> json_schema/json_object is supported on chat completions)</li>
+<li>on Claude models: remove audio, a forced tool call (<code>tool_choice</code>
+  <code>required</code> or a named tool), <code>parallel_tool_calls: false</code>, <code>strict: true</code>
+  tools, non-function tools, and <code>previous_response_id</code> (use
+  <code>conversation</code>); an image Claude cannot read (corrupt, CMYK, animated)
+  must be converted to a standard PNG, JPEG or PDF</li>
 <li>remove <code>stop</code>, <code>logprobs</code>, <code>top_logprobs</code>, <code>logit_bias</code>,
   <code>web_search_options</code> and <code>moderation</code>: neither upstream can honor them,
   so AIRelays rejects them rather than returning output that ignores them</li>
@@ -1689,10 +1818,13 @@ and rejects OpenAI model ids that are absent from a working live
 <li>update the client to the correct relay token</li>
 <li>rotate the token if needed</li>
 </ul>
-<h2 id="413-on-uploads"><code>413</code> on uploads<a class="headerlink" href="#413-on-uploads" title="Permanent link">&para;</a></h2>
+<h2 id="413-on-uploads-or-requests-with-files"><code>413</code> on uploads or requests with files<a class="headerlink" href="#413-on-uploads-or-requests-with-files" title="Permanent link">&para;</a></h2>
 <ul>
 <li>confirm the file is below the per-file upload ceiling</li>
 <li>confirm the relay has not reached the total stored-upload quota</li>
+<li><code>413 request_too_large</code> on a Claude request: the images and documents in
+  one request (inline or by <code>file_id</code>) are limited to 32 MB in total, the
+  Claude API's request limit; split the files across requests</li>
 </ul>
 <h2 id="502-429-with-server_is_overloaded-or-usage_limit_reached-or-slow-answers-while-the-upstream-is-degraded"><code>502</code> / <code>429</code> with <code>server_is_overloaded</code> or <code>usage_limit_reached</code>, or slow answers while the upstream is degraded<a class="headerlink" href="#502-429-with-server_is_overloaded-or-usage_limit_reached-or-slow-answers-while-the-upstream-is-degraded" title="Permanent link">&para;</a></h2>
 <ul>

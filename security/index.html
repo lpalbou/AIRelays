@@ -16,7 +16,7 @@
         <link rel="prev" href="../configuration/">
       
       
-        <link rel="next" href="../api/">
+        <link rel="next" href="../capabilities/">
       
       
         
@@ -494,6 +494,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../api/" class="md-nav__link">
         
   
@@ -664,10 +691,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" >
         
           
-          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="0">
             
   
   
@@ -685,8 +712,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_12">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_13">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1151,7 +1178,9 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <li>the relay's protected or open local auth mode applies</li>
 <li>loopback binding is required</li>
 <li><code>trust_x_forwarded_for</code> is rejected</li>
-<li>the runtime is stateless</li>
+<li>each request is a fresh CLI run with session persistence and built-in
+  tools off; client tool calls are returned, never run (see
+  <a href="../api/#tool-calls-on-claude-models">docs/api.md</a>)</li>
 <li>the runtime is local-only</li>
 </ul>
 <p>AIRelays uses only Claude accounts it owns: profiles added through
