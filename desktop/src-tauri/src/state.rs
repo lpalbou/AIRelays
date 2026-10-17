@@ -43,6 +43,9 @@ pub struct AppState {
     pub settings_path: PathBuf,
     /// True when no settings file existed at startup (first run).
     pub first_run: bool,
+    /// True until the dashboard has reported an in-app update's outcome,
+    /// when the updater reopened this app (`--after-update`).
+    pub after_update: std::sync::atomic::AtomicBool,
     /// PID of an in-flight sign-in subprocess. Only one login may run at a
     /// time (the OAuth callback binds a fixed localhost port).
     pub login_pid: Mutex<Option<u32>>,
@@ -88,6 +91,7 @@ impl AppState {
             auth_mismatch: Mutex::new(false),
             settings_path,
             first_run,
+            after_update: std::sync::atomic::AtomicBool::new(false),
             login_pid: Mutex::new(None),
             login_url: std::sync::Arc::new(Mutex::new(None)),
             login_code: std::sync::Arc::new(Mutex::new(None)),

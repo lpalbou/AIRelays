@@ -415,7 +415,29 @@ export async function mockInvoke(command, args = {}) {
     case "set_claude_token":
     case "submit_login_code":
     case "open_path":
+    case "open_url":
+    case "install_update":
       return null;
+    case "take_update_result": {
+      // ?mockUpdate=ok|failed previews the dashboard after an update.
+      const mode = new URLSearchParams(location.search).get("mockUpdate");
+      return {
+        after_update: Boolean(mode),
+        failure: mode === "failed" ? "Checksum mismatch for AIRelays_0.18.0_x64-setup.exe." : null,
+      };
+    }
+    case "check_for_update":
+      return {
+        current: "0.0.0-mock",
+        latest: "0.18.0",
+        update_available: true,
+        release_url: "https://github.com/lpalbou/AIRelays/releases/tag/v0.18.0",
+        release_notes: "### Added\n\n- Desktop: an About page with project links and one-click updates.",
+        published_at: "2026-10-18T09:00:00Z",
+        can_install: true,
+        install_hint: null,
+        log_path: "~/.airelays/update/update.log",
+      };
     case "run_login":
       if (args.provider === "claude" && !args.account) {
         const number = claudeAccounts.length + 1;

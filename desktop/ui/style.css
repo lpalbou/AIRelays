@@ -1054,3 +1054,55 @@ dialog {
 
 dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
 dialog h3 { margin: 0 0 12px; font-size: 15px; }
+
+/* ---------- about ---------- */
+
+.about-hero {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.about-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--heading-size);
+  font-weight: 700;
+}
+
+.about-tagline { margin: 4px 0 0 !important; max-width: 60ch; }
+.about-meta { margin-top: 6px; font-size: 12px; color: var(--warn); }
+.about-status { flex: 1; min-width: 220px; color: var(--text-dim); }
+.about-status strong { color: var(--text); }
+.about-status .badge { margin-right: 6px; }
+.about-notes { max-height: 34vh; }
+.about-hint { margin: 10px 0 0 !important; }
+
+.about-links {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+button.about-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button.about-link:hover { border-color: var(--accent); background: var(--bg-hover); }
+button.about-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button.about-link > .icon:first-child { color: var(--accent-strong); flex-shrink: 0; }
+button.about-link > .icon:last-child { color: var(--text-faint); flex-shrink: 0; }
+.about-link-text { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.about-link-text small { font-size: 12px; color: var(--text-dim); }
+.about-reopened { margin: 0 0 12px; }

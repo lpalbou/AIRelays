@@ -1,6 +1,25 @@
 # Changelog
 
-## 0.17.2
+## 0.18.0
+
+### Added
+
+- Desktop: an **About** page with the installed version and links to the
+  documentation, changelog, issue tracker, source code, license, and
+  disclaimer. It checks GitHub Releases for a newer version and shows its
+  release notes.
+- Desktop: one-click updates from the About page. AIRelays closes, installs
+  the new release with the same installer as the one-line install (pinned
+  to the release's published SHA-256), and reopens. Accounts and settings
+  are kept; if the install fails, the current version reopens and says why.
+  Available for copies installed by the one-line installers.
+- Installers: `AIRELAYS_SHA256` requires a specific SHA-256 for the
+  download, including when the GitHub API is unavailable.
+
+### Changed
+
+- The Windows installer stops only the AIRelays app it is replacing, not
+  every running copy.
 
 ### Fixed
 

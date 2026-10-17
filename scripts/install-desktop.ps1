@@ -10,6 +10,7 @@
 # Environment:
 #   $env:AIRELAYS_VERSION = "0.14.1"  install that release instead of the newest one
 #   $env:AIRELAYS_NO_LAUNCH = "1"     do not start the app after installing
+#   $env:AIRELAYS_SHA256 = "<hex>"    require this SHA-256 for the installer
 #   $env:GITHUB_TOKEN = "..."         optional; authenticates GitHub API lookups
 
 & {
@@ -29,7 +30,21 @@
 
     if ($env:AIRELAYS_VERSION) {
         $tag = 'v' + $env:AIRELAYS_VERSION.TrimStart('v')
-        $releases = @(Invoke-RestMethod -Headers $apiHeaders "$api/releases/tags/$tag")
+        try {
+            $releases = @(Invoke-RestMethod -Headers $apiHeaders "$api/releases/tags/$tag")
+        } catch {
+            # Release downloads are not rate-limited like the API. Without
+            # the API there is no published digest, so this fallback needs a
+            # pinned checksum (the app's in-place update provides one).
+            if (-not $env:AIRELAYS_SHA256) { throw }
+            Write-Host "==> The GitHub API is unavailable ($($_.Exception.Message)); using the release download link."
+            $name = "AIRelays_$($tag.Substring(1))_x64-setup.exe"
+            $releases = @([pscustomobject]@{ assets = @([pscustomobject]@{
+                name = $name
+                browser_download_url = "https://github.com/$repo/releases/download/$tag/$name"
+                digest = $null
+            }) })
+        }
     } else {
         # Desktop installers are attached a few minutes after a release is
         # created, so fall back to the newest release that has one.
@@ -43,7 +58,16 @@
     Write-Host "==> Downloading $($asset.name)"
     Invoke-WebRequest -Headers $headers -UseBasicParsing -Uri $asset.browser_download_url -OutFile $setup
 
-    if ($asset.digest -and $asset.digest.StartsWith('sha256:')) {
+    if ($env:AIRELAYS_SHA256) {
+        # A pinned checksum (the app's in-place update) is always enforced.
+        $expected = $env:AIRELAYS_SHA256.Trim().ToLowerInvariant()
+        $actual = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLowerInvariant()
+        if ($actual -ne $expected) {
+            Remove-Item $setup -Force
+            throw "Checksum mismatch for $($asset.name): expected $expected, got $actual"
+        }
+        Write-Host "==> Checksum verified (sha256 $actual)"
+    } elseif ($asset.digest -and $asset.digest.StartsWith('sha256:')) {
         $expected = $asset.digest.Substring(7)
         $actual = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLowerInvariant()
         if ($actual -ne $expected) {
@@ -55,14 +79,16 @@
         Write-Host "==> GitHub published no checksum for this asset; skipping verification."
     }
 
-    # The relay runs in the app's Job Object, so stopping the app stops it too.
-    Get-Process -Name 'airelays-desktop' -ErrorAction SilentlyContinue | Stop-Process -Force
+    # Stop only this installation's app; the relay runs in the app's Job
+    # Object, so stopping the app stops it too.
+    $exe = Join-Path $env:LOCALAPPDATA 'AIRelays\airelays-desktop.exe'
+    Get-Process -Name 'airelays-desktop' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path -eq $exe } | Stop-Process -Force
     Write-Host "==> Installing AIRelays"
     $process = Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru
     Remove-Item $setup -Force -ErrorAction SilentlyContinue
     if ($process.ExitCode -ne 0) { throw "The AIRelays installer exited with code $($process.ExitCode)." }
 
-    $exe = Join-Path $env:LOCALAPPDATA 'AIRelays\airelays-desktop.exe'
     if (Test-Path $exe) {
         Write-Host "==> Installed $exe"
         if (-not $env:AIRELAYS_NO_LAUNCH) { Start-Process -FilePath $exe }

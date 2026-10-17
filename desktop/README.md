@@ -78,6 +78,28 @@ npx tauri build                      # DMG / NSIS+MSI / AppImage+deb
 CI builds all three platforms from `.github/workflows/desktop.yml` on
 `desktop-v*` tags.
 
+## About and updates
+
+The **About** page shows the installed version and links to the
+documentation, changelog, issue tracker, source code, license, and
+disclaimer. Opening it checks GitHub Releases once per app session for a
+newer stable release with an installer for your system; **Check for
+updates** asks again. When one exists, the page shows its release notes and
+an **Update to X.Y.Z** button.
+
+From 0.18.0 on, updating closes the app, stops the relay, runs the same one-line installer
+described in the [README](../README.md#install) pinned to that release and
+to the SHA-256 digest GitHub publishes for its installer, then reopens
+AIRelays. Accounts, the API key, and settings are kept. If the install
+fails, the current version reopens and reports why. Progress is written to
+`~/.airelays/update/update.log`.
+
+In-place updates apply to copies installed by the one-line installers:
+`%LOCALAPPDATA%\AIRelays` on Windows, `AIRelays.app` in an Applications
+folder on macOS, and `~/.local/bin/airelays-desktop` on Linux. Other copies
+(the `.deb`, an AppImage elsewhere, a development build) show the release
+page instead.
+
 ## Supervision behavior
 
 - On app open, the relay starts automatically unless one is already

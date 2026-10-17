@@ -16,6 +16,8 @@
 #   AIRELAYS_VERSION=0.14.1  install that release instead of the newest one
 #   AIRELAYS_APP_DIR=DIR     macOS: install AIRelays.app into DIR
 #   AIRELAYS_NO_LAUNCH=1     do not start the app after installing
+#   AIRELAYS_SHA256=<hex>    require this SHA-256 for the download, even when
+#                            the GitHub API is unavailable
 #   GITHUB_TOKEN=...         optional; authenticates GitHub API lookups
 set -euo pipefail
 
@@ -86,8 +88,10 @@ else
   fi
   URL="https://github.com/$REPO/releases/download/$TAG/AIRelays_${TAG#v}$ASSET_SUFFIX"
   DIGEST="unverified"
-  say "The GitHub API is unavailable (rate limit?); installing $TAG without checksum verification."
-  say "Set GITHUB_TOKEN, or retry later, to verify the download."
+  if [[ -z "${AIRELAYS_SHA256:-}" ]]; then
+    say "The GitHub API is unavailable (rate limit?); installing $TAG without checksum verification."
+    say "Set GITHUB_TOKEN, or retry later, to verify the download."
+  fi
 fi
 
 TMP="$(mktemp -d)"
@@ -102,12 +106,18 @@ say "Downloading ${URL##*/}"
 curl -fL --progress-bar -o "$FILE" "$URL" \
   || die "download failed. A new release's desktop installers appear a few minutes after it is published; retry shortly."
 
-if [[ "$DIGEST" == sha256:* ]]; then
-  if command -v sha256sum >/dev/null; then
-    ACTUAL="$(sha256sum "$FILE" | cut -d' ' -f1)"
-  else
-    ACTUAL="$(shasum -a 256 "$FILE" | cut -d' ' -f1)"
-  fi
+sha256_of() {
+  if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+if [[ -n "${AIRELAYS_SHA256:-}" ]]; then
+  # A pinned checksum (the app's in-place update) is always enforced.
+  EXPECTED="$(printf '%s' "$AIRELAYS_SHA256" | tr 'A-F' 'a-f')"
+  ACTUAL="$(sha256_of "$FILE")"
+  [[ "$ACTUAL" == "$EXPECTED" ]] || die "checksum mismatch for ${URL##*/}: expected $EXPECTED, got $ACTUAL"
+  say "Checksum verified (sha256 $ACTUAL)"
+elif [[ "$DIGEST" == sha256:* ]]; then
+  ACTUAL="$(sha256_of "$FILE")"
   [[ "$ACTUAL" == "${DIGEST#sha256:}" ]] || die "checksum mismatch for ${URL##*/}: expected ${DIGEST#sha256:}, got $ACTUAL"
   say "Checksum verified (sha256 $ACTUAL)"
 elif [[ "$DIGEST" == "-" ]]; then

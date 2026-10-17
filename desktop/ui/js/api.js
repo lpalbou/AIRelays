@@ -36,6 +36,10 @@ export const api = {
   cancelLogin: () => invoke("cancel_login"),
   getModels: (refresh = false) => invoke("get_models", { refresh }),
   submitLoginCode: (code) => invoke("submit_login_code", { code }),
+  openUrl: (url) => invoke("open_url", { url }),
+  checkForUpdate: () => invoke("check_for_update"),
+  installUpdate: (version) => invoke("install_update", { version }),
+  takeUpdateResult: () => invoke("take_update_result"),
 };
 
 const toasts = () => document.getElementById("toasts");

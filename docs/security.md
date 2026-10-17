@@ -108,6 +108,16 @@ directory (for example device keys) regardless of `CLAUDE_CONFIG_DIR`. On
 macOS, run the relay in your login session, not over SSH or as a
 LaunchDaemon, so Claude Code can use the keychain.
 
+## Desktop Updates
+
+The desktop app's update check reads the public GitHub Releases list for
+`lpalbou/AIRelays`; it sends no account, token, or usage data. An in-place
+update installs only the release that check offered, and the installer
+refuses a download whose SHA-256 differs from the digest GitHub publishes
+for that release asset. Downloads are trusted through HTTPS to GitHub; the
+installers are not code-signed. See
+[desktop/README.md](../desktop/README.md#about-and-updates).
+
 ## Rate Limits
 
 Default single-process protections:

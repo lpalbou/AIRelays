@@ -77,7 +77,9 @@ SHA-256 digest, install without sudo or admin rights, and start the app:
 - Windows: the NSIS setup, run silently for the current user.
 
 The app is self-contained: it embeds its own Python and relay, so it needs
-neither Python nor Node. Run the same command again to update. Set
+neither Python nor Node. From 0.18.0 on, to update, open **About** in the
+dashboard and choose **Update** (see [desktop/](desktop/README.md#about-and-updates)), or run the
+same command again. Set
 `AIRELAYS_VERSION=0.16.2` (or `$env:AIRELAYS_VERSION` on Windows) with any
 installer to pin a release, and `AIRELAYS_NO_LAUNCH=1` to skip starting the
 app. You can also download the DMG, AppImage, deb, or setup `.exe` from the

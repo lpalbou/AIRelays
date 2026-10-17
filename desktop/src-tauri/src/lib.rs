@@ -7,6 +7,7 @@ mod settings;
 mod state;
 pub mod traffic;
 mod tray;
+mod updates;
 
 use state::AppState;
 use tauri::Manager;
@@ -45,7 +46,10 @@ pub fn run() {
                 .app_config_dir()
                 .expect("app config dir")
                 .join("app-settings.json");
-            app.manage(AppState::load(settings_path));
+            let state = AppState::load(settings_path);
+            let reopened = std::env::args().any(|arg| arg == updates::AFTER_UPDATE_ARG);
+            state.after_update.store(reopened, std::sync::atomic::Ordering::SeqCst);
+            app.manage(state);
 
             // Re-register an existing login item so it carries the current
             // launch arguments.
@@ -74,7 +78,13 @@ pub fn run() {
             // not leave the app invisible: fall back to showing the window.
             let tray_ok = tray::init(app.handle()).is_ok();
             let first_run = app.state::<state::AppState>().first_run;
-            if !tray_ok || first_run {
+            // After an in-app update, show the dashboard: it reports the
+            // outcome, and a tray-only reopen looks like the app vanished.
+            let after_update = app
+                .state::<state::AppState>()
+                .after_update
+                .load(std::sync::atomic::Ordering::SeqCst);
+            if !tray_ok || first_run || after_update {
                 commands::show_dashboard(app.handle());
             }
             state::spawn_status_loop(app.handle().clone());
@@ -141,6 +151,10 @@ pub fn run() {
             commands::get_models,
             commands::get_log_retention,
             commands::set_log_retention,
+            commands::open_url,
+            commands::check_for_update,
+            commands::install_update,
+            commands::take_update_result,
         ])
         .build(tauri::generate_context!())
         .expect("error building AIRelays desktop app")

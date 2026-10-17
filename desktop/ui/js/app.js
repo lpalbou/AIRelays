@@ -5,13 +5,14 @@
 // implements mount(container, ctx, mountToken), optional update(state),
 // optional canLeave() -> bool, and unmount().
 
-import { api } from "./api.js";
+import { api, toast } from "./api.js";
 import { icon } from "./icons.js";
 import { overviewView } from "./views/overview.js";
 import { modelsView } from "./views/models.js";
 import { trafficView } from "./views/traffic.js";
 import { consoleView } from "./views/console.js";
 import { settingsView } from "./views/settings.js";
+import { aboutView, noteUpdateResult } from "./views/about.js";
 
 const views = {
   overview: overviewView,
@@ -19,6 +20,7 @@ const views = {
   traffic: trafficView,
   console: consoleView,
   settings: settingsView,
+  about: aboutView,
 };
 
 let activeName = "overview";
@@ -147,5 +149,24 @@ window.addEventListener("hashchange", () => {
 
 const initialView = location.hash.replace("#", "");
 await poll();
+
+// After the in-app updater reopened the app, report the outcome on About
+// (it stays there until the next check) and in a toast.
+let startView = views[initialView] ? initialView : "overview";
+try {
+  const result = await api.takeUpdateResult();
+  const version = latestState?.app_version ?? "";
+  if (result?.failure) {
+    noteUpdateResult({ failure: result.failure, version });
+    toast("The update did not install", `You are still on AIRelays ${version}. See About for details.`, "error");
+    startView = "about";
+  } else if (result?.after_update) {
+    noteUpdateResult({ version });
+    toast(`AIRelays updated to ${version}`, "", "success");
+    startView = "about";
+  }
+} catch {
+  // Older backends have no update result.
+}
 activeName = ""; // force the first switch
-await switchView(views[initialView] ? initialView : "overview");
+await switchView(startView);

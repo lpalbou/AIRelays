@@ -7,7 +7,7 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - [README.md](README.md): overview, install (CLI and desktop), quick start, compatibility layer
 - [docs/getting-started.md](docs/getting-started.md): setup, custom CLI configuration, multi-account sign-in, verification
 - [docs/configuration.md](docs/configuration.md): config file shape, environment overrides, and traffic-log retention
-- [docs/security.md](docs/security.md): relay auth, open local relay mode, Claude guardrails
+- [docs/security.md](docs/security.md): relay auth, open local relay mode, Claude guardrails, desktop update integrity
 - [docs/capabilities.md](docs/capabilities.md): what works on GPT models and on Claude models, side by side
 - [docs/api.md](docs/api.md): routes, compatibility adaptations, provider limits
 - [docs/architecture.md](docs/architecture.md): request flow and module boundaries
@@ -15,7 +15,7 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - [docs/faq.md](docs/faq.md): common questions and limits
 - [docs/troubleshooting.md](docs/troubleshooting.md): symptoms, causes, fixes
 - [docs/adr/README.md](docs/adr/README.md): durable design decisions
-- [desktop/README.md](desktop/README.md): combined connection/access card, hide-on-blur dashboard, tray controls, build, supervision
+- [desktop/README.md](desktop/README.md): combined connection/access card, hide-on-blur dashboard, tray controls, About page and in-place updates, build, supervision
 - [DISCLAIMER.md](DISCLAIMER.md): independence and intended use
 
 ## Install

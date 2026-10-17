@@ -1051,3 +1051,79 @@ fn open_path_blocking(path: &str) -> Result<(), String> {
     });
     Ok(())
 }
+
+/// Web pages the dashboard may open: the project's own sites. Anything
+/// else (and anything that is not plain https) is refused, so page content
+/// cannot turn this into a way to launch local programs or files.
+const ALLOWED_URL_PREFIXES: [&str; 2] = ["https://github.com/lpalbou/AIRelays", "https://www.lpalbou.info/AIRelays"];
+
+fn is_allowed_url(url: &str) -> bool {
+    ALLOWED_URL_PREFIXES.iter().any(|prefix| {
+        url.strip_prefix(prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    }) && url.chars().all(|c| c.is_ascii_graphic() && !matches!(c, '"' | ',' | '^' | '&' | '|' | '<' | '>'))
+}
+
+#[tauri::command]
+pub async fn open_url(url: String) -> Result<(), String> {
+    if !is_allowed_url(&url) {
+        return Err(format!("Not an AIRelays web page: {url}"));
+    }
+    open_path(url).await
+}
+
+#[tauri::command]
+pub async fn check_for_update(app: AppHandle) -> Result<crate::updates::UpdateInfo, String> {
+    crate::updates::check(&app).await
+}
+
+/// Starts the updater for the release the last check offered, then quits
+/// the way the tray's Quit does so the updater can replace the app. The
+/// updater installs the release and reopens AIRelays, or reopens this
+/// version and records why the update failed.
+#[tauri::command]
+pub async fn install_update(app: AppHandle, version: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::updates::launch(&version))
+        .await
+        .map_err(|error| error.to_string())??;
+    tauri::async_runtime::spawn_blocking(move || {
+        // Let the dashboard show that the app is about to close.
+        std::thread::sleep(Duration::from_millis(1200));
+        app.state::<AppState>().supervisor.stop();
+        app.exit(0);
+    });
+    Ok(())
+}
+
+/// Whether this launch is the updater's reopen, and why the update failed
+/// if it did; the failure is reported once.
+#[tauri::command]
+pub fn take_update_result(app: AppHandle) -> crate::updates::UpdateResult {
+    // Reported once: a dashboard reload must not announce the update again.
+    let after_update = app.state::<AppState>().after_update.swap(false, std::sync::atomic::Ordering::SeqCst);
+    crate::updates::take_result(after_update)
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::is_allowed_url;
+
+    #[test]
+    fn only_project_pages_open() {
+        assert!(is_allowed_url("https://github.com/lpalbou/AIRelays"));
+        assert!(is_allowed_url("https://github.com/lpalbou/AIRelays/releases/tag/v0.18.0"));
+        assert!(is_allowed_url("https://www.lpalbou.info/AIRelays/"));
+        for bad in [
+            "http://github.com/lpalbou/AIRelays",
+            "https://github.com/lpalbou/AIRelaysEvil",
+            "https://github.com/lpalbou/AIRelays/a,b",
+            "https://github.com/lpalbou/AIRelays/a b",
+            "https://github.com/lpalbou/AIRelays/\"x",
+            "https://github.com/lpalbou/AIRelays/a&calc",
+            "file:///C:/Windows/System32/calc.exe",
+            r"C:\Windows\System32\calc.exe",
+        ] {
+            assert!(!is_allowed_url(bad), "{bad}");
+        }
+    }
+}

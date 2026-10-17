@@ -26,7 +26,7 @@ macOS and Linux.
 - Windows, AIRelays 0.17.1 and earlier: the relay shows **Failed** and the
   Console tab (or an OpenAI sign-in) reports
   `ModuleNotFoundError: No module named 'threading'`. Those Windows builds
-  shipped an incomplete embedded Python. Install 0.17.2 or later by running
+  shipped an incomplete embedded Python. Install 0.18.0 or later by running
   the PowerShell installer again; your accounts and settings are kept.
 - Linux: the AppImage does not start from a terminal with a FUSE error:
   install `libfuse2` (`libfuse2t64` on Ubuntu 24.04), or run it with
@@ -36,6 +36,20 @@ macOS and Linux.
 - The headless installer warns that `~/.local/bin` is not on your `PATH`:
   add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile and open
   a new terminal.
+
+## A desktop update did not install
+
+AIRelays reopens on the version you had and shows why the update failed.
+The full log is `~/.airelays/update/update.log`.
+
+- "Checksum mismatch": the download did not match the digest GitHub
+  publishes. Nothing was installed. Retry later from **About**.
+- "Check for updates again before installing": the dashboard was open
+  across a new release; choose **Check for updates**, then update.
+- The updater does not start (for example where policy blocks PowerShell
+  scripts): run the one-line installer from the
+  [README](../README.md#install), or download the installer from the
+  release page.
 
 ## Traffic logs report a cleanup error
 
