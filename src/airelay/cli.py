@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -1312,6 +1313,196 @@ def _print_accounts_summary(payload: dict[str, object]) -> None:
     print()
 
 
+def _relay_get(settings: Settings, path: str, *, timeout: float = 20.0):
+    """One GET against the running relay with its bearer token."""
+    import httpx
+
+    url = f"{settings.client_base_url().rstrip('/')}{path}"
+    headers = {}
+    if settings.require_bearer_auth:
+        token = settings.resolve_bearer_token()
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+    try:
+        return httpx.get(url, headers=headers, timeout=timeout)
+    except httpx.HTTPError:
+        raise SystemExit(
+            f"No running relay at {settings.client_base_url()}. Start it with `airelays serve`."
+        )
+
+
+def _relay_error_detail(response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        detail = payload.get("detail")
+        if isinstance(detail, str) and detail:
+            return detail
+        error = payload.get("error")
+        if isinstance(error, dict) and isinstance(error.get("message"), str):
+            return error["message"]
+    return f"relay answered {response.status_code}"
+
+
+def _run_usage(args: argparse.Namespace) -> None:
+    """Subscription usage as the running relay reports it: every text
+    window plus the image-generation quota, per account and provider."""
+    settings = _base_settings(args)
+    payload: dict[str, object] = {"object": "usage"}
+    response = _relay_get(settings, "/subscription/status?all_accounts=true")
+    payload["openai"] = (
+        response.json() if response.status_code < 400 else {"error": _relay_error_detail(response)}
+    )
+    if settings.enable_claude:
+        response = _relay_get(settings, "/subscription/status?provider=claude&all_accounts=true")
+        payload["claude"] = (
+            response.json() if response.status_code < 400 else {"error": _relay_error_detail(response)}
+        )
+    if _json_requested(args):
+        _emit_json(payload)
+        return
+    _print_usage_summary(payload)
+
+
+def _format_duration(seconds: float) -> str:
+    rest = max(0, int(seconds))
+    parts: list[str] = []
+    for size, label in ((86400, "d"), (3600, "h"), (60, "m")):
+        if rest >= size:
+            parts.append(f"{rest // size}{label}")
+            rest %= size
+        if len(parts) == 2:
+            break
+    return " ".join(parts) if parts else "<1m"
+
+
+def _format_usage_window(window: dict[str, object]) -> tuple[str, str]:
+    """("41% used · resets in 3h 2m", kind) for one normalized window."""
+    used = window.get("used_percent")
+    if isinstance(used, bool) or not isinstance(used, (int, float)):
+        return "awaiting fresh data", "plain"
+    reset_at = window.get("reset_at")
+    if isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool):
+        seconds: float | None = float(reset_at) - time.time()
+    else:
+        after = window.get("reset_after_seconds")
+        seconds = float(after) if isinstance(after, (int, float)) and not isinstance(after, bool) else None
+    text = f"{used:.0f}% used"
+    if seconds is not None and seconds > 0:
+        text += f" · resets in {_format_duration(seconds)}"
+    kind = "bad" if used >= 100 else "warn" if used >= 80 else "good"
+    return text, kind
+
+
+def _usage_window_rows(status: dict[str, object]) -> list[tuple[str, dict[str, object]]]:
+    """Every window a normalized status carries, labelled: the default
+    text windows, named extra quotas, and the image-generation quota."""
+    limits = status.get("rate_limits") if isinstance(status.get("rate_limits"), dict) else {}
+    rows: list[tuple[str, dict[str, object]]] = []
+
+    def label(prefix: str, window: dict[str, object]) -> str:
+        window_label = window.get("window_label")
+        return f"{prefix} {window_label}" if isinstance(window_label, str) and window_label else prefix
+
+    default = limits.get("default") if isinstance(limits.get("default"), dict) else {}
+    for slot in ("primary_window", "secondary_window"):
+        window = default.get(slot)
+        if isinstance(window, dict):
+            rows.append((label("Requests", window), window))
+    named: list[tuple[str, dict[str, object]]] = []
+    if isinstance(limits.get("code_review"), dict):
+        named.append(("Code review", limits["code_review"]))
+    for extra in limits.get("additional") or []:
+        if isinstance(extra, dict) and isinstance(extra.get("rate_limit"), dict):
+            named.append((str(extra.get("limit_name") or extra.get("metered_feature") or "Other"), extra["rate_limit"]))
+    if isinstance(limits.get("image_generation"), dict):
+        named.append(("Images", limits["image_generation"]))
+    for name, rate in named:
+        for slot in ("primary_window", "secondary_window"):
+            window = rate.get(slot)
+            if isinstance(window, dict):
+                rows.append((label(name, window), window))
+    return rows
+
+
+def _print_usage_status(status: dict[str, object]) -> None:
+    rows = _usage_window_rows(status)
+    if not rows:
+        _print_field("Usage", "no windows reported")
+    for name, window in rows:
+        text, kind = _format_usage_window(window)
+        _print_field(name, text, kind=kind)
+    limits = status.get("rate_limits") if isinstance(status.get("rate_limits"), dict) else {}
+    images = limits.get("image_generation") if isinstance(limits.get("image_generation"), dict) else None
+    if images:
+        relay = images.get("relay") if isinstance(images.get("relay"), dict) else {}
+        count = relay.get("images")
+        tokens = relay.get("image_tokens")
+        if isinstance(count, int):
+            detail = f"{count} image{'s' if count != 1 else ''} in the last {images.get('primary_window', {}).get('window_label') or 'window'}"
+            if isinstance(tokens, int) and tokens:
+                detail += f" ({tokens} image tokens)"
+            _print_field("  via this relay", detail)
+        source = images.get("source")
+        observed = images.get("observed_at")
+        if isinstance(source, str) and isinstance(observed, str):
+            how = "probe" if source == "probe" else "last image response"
+            _print_field("  reading", f"{how}, {observed}")
+
+
+def _print_usage_summary(payload: dict[str, object]) -> None:
+    _print_title("AIRelays Usage")
+    openai = payload.get("openai")
+    if isinstance(openai, dict):
+        if openai.get("error"):
+            _print_section("OpenAI")
+            _print_field("Usage", str(openai["error"]), kind="warn")
+        else:
+            entries = openai.get("accounts")
+            if not isinstance(entries, list):
+                entries = [{"email": (openai.get("account") or {}).get("email"), "status": openai}]
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                status = entry.get("status")
+                plan = (status or {}).get("account", {}).get("plan_type") if isinstance(status, dict) else None
+                heading = f"OpenAI · {entry.get('email') or entry.get('slug') or 'account'}"
+                if plan:
+                    heading += f" ({plan})"
+                _print_section(heading)
+                if isinstance(status, dict):
+                    _print_usage_status(status)
+                else:
+                    _print_field("Usage", str(entry.get("error") or "unavailable"), kind="warn")
+    claude = payload.get("claude")
+    if isinstance(claude, dict):
+        if claude.get("error"):
+            _print_section("Claude")
+            _print_field("Usage", str(claude["error"]), kind="warn")
+        else:
+            for entry in claude.get("accounts") or []:
+                if not isinstance(entry, dict):
+                    continue
+                status = entry.get("status")
+                plan = (status or {}).get("account", {}).get("plan_type") if isinstance(status, dict) else None
+                heading = f"Claude · {entry.get('email') or entry.get('slug') or 'account'}"
+                if plan:
+                    heading += f" ({plan})"
+                _print_section(heading)
+                if isinstance(status, dict):
+                    _print_usage_status(status)
+                elif entry.get("usage_unsupported"):
+                    _print_field("Usage", "not reported for setup tokens")
+                else:
+                    _print_field("Usage", str(entry.get("error") or "unavailable"), kind="warn")
+    print()
+    print("  Images: the image-generation quota is a separate 24-hour upstream bucket;")
+    print("  text windows do not include it.")
+    print()
+
+
 def _run_claude_set_token(args: argparse.Namespace) -> None:
     settings = _base_settings(args)
     _print_title("Claude Token")
@@ -1826,6 +2017,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_json_argument(models)
     models.set_defaults(func=_run_models)
+
+    usage = subparsers.add_parser(
+        "usage",
+        parents=[shared],
+        help="Show subscription usage from the running relay: text windows and the image-generation quota",
+    )
+    _add_json_argument(usage)
+    usage.set_defaults(func=_run_usage)
 
     token = subparsers.add_parser(
         "token",

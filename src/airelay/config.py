@@ -241,6 +241,15 @@ class Settings:
     # count repeats its last delay.
     openai_retry_attempts: int = 3
     openai_retry_backoff_seconds: tuple[float, ...] = (5.0, 20.0, 60.0)
+    # Image generation and edits on the subscription backend take 10 s to a
+    # few minutes per image (quality and size dependent), far beyond the
+    # text request timeout.
+    image_timeout_seconds: float = 300.0
+    # The image quota lives in its own upstream bucket that the usage
+    # endpoint never reports; a prompt-less image request (a free 400)
+    # carries its headers. The probe keeps the image meter live between
+    # image requests; off, the meter updates only when images are made.
+    image_usage_probe: bool = True
     enable_claude: bool = True
     claude_bin: str = "claude"
     # Full argv prefix for the Claude CLI; wins over `claude_bin` (e.g. an
@@ -472,6 +481,19 @@ class Settings:
                 or _cfg(payload, "providers", "openai", "retry_backoff_seconds"),
                 (5.0, 20.0, 60.0),
             ),
+            image_timeout_seconds=max(
+                1.0,
+                _float(
+                    _env("AIRELAYS_IMAGE_TIMEOUT_SECONDS")
+                    or _cfg(payload, "providers", "openai", "image_timeout_seconds"),
+                    300.0,
+                ),
+            ),
+            image_usage_probe=_bool(
+                _env("AIRELAYS_IMAGE_USAGE_PROBE")
+                or _cfg(payload, "providers", "openai", "image_usage_probe"),
+                True,
+            ),
             enable_claude=_bool(
                 _env(
                     "AIRELAYS_ENABLE_CLAUDE",
@@ -691,6 +713,8 @@ account_cooldown_seconds = {self.openai_account_cooldown_seconds}
 retry_attempts = {self.openai_retry_attempts}
 retry_backoff_seconds = [{", ".join(str(delay) for delay in self.openai_retry_backoff_seconds)}]
 extra_models = [{", ".join(_toml_str(model) for model in self.openai_extra_models)}]
+image_timeout_seconds = {self.image_timeout_seconds}
+image_usage_probe = {str(self.image_usage_probe).lower()}
 
 [providers.claude]
 enabled = {str(self.enable_claude).lower()}

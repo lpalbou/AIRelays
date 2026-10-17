@@ -9,6 +9,8 @@ import httpx
 
 from airelay.auth import AuthManager
 from airelay.config import Settings
+from airelay.image_usage import ImageUsageWindow, parse_image_usage_headers
+from airelay.images import summarize_image_payload
 from airelay.traffic import TrafficLogger, snapshot_body
 
 
@@ -17,6 +19,10 @@ class BackendError(RuntimeError):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+        # The image bucket as reported by the failing image response's
+        # headers (a 429 still carries them), so the pool can bench the
+        # image quota without a second call. None on every other route.
+        self.image_usage: ImageUsageWindow | None = None
 
 
 # The status assigned to an upstream in-stream failure decides everything
@@ -73,6 +79,9 @@ _CLIENT_ERROR_CODES = frozenset(
 # response (with output and billed usage) versus the ones that abort it.
 SUCCESS_TERMINAL_EVENTS = ("response.completed", "response.incomplete")
 FAILURE_EVENTS = ("response.failed", "error")
+
+# The image routes, relative to the upstream base URL.
+IMAGE_OPERATION_PATHS = {"generation": "images/generations", "edit": "images/edits"}
 
 
 def stream_error_object(parsed: Any) -> dict[str, Any] | None:
@@ -191,6 +200,133 @@ class ChatGptCodexBackend:
         if not isinstance(response, dict):
             raise BackendError(502, "Upstream usage endpoint returned a non-object payload.")
         return response
+
+    # ----- images -----
+    #
+    # The subscription backend serves OpenAI's Images API shape on
+    # `images/generations` and `images/edits` (JSON bodies on both; verified
+    # live 2026-10-18) for the Codex client's built-in image tool. Answers
+    # are not streamed: one JSON document per call, images as `b64_json`.
+
+    async def create_image(
+        self, operation: str, payload: dict[str, Any], request_id: str
+    ) -> tuple[dict[str, Any], ImageUsageWindow | None]:
+        """One image generation (`operation="generation"`) or edit
+        (`"edit"`). Returns the upstream Images response and the image
+        quota window its headers report."""
+        path = IMAGE_OPERATION_PATHS[operation]
+        body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+        url = f"{self._settings.upstream_base_url.rstrip('/')}/{path}"
+        self._traffic.write(
+            {
+                "request_id": request_id,
+                "phase": "upstream_request",
+                "method": "POST",
+                "url": url,
+                "body": {
+                    "kind": "json",
+                    "bytes": len(body),
+                    "json": summarize_image_payload(payload),
+                },
+            }
+        )
+        response = await self._post_json_bytes(url, body, request_id, self._settings.image_timeout_seconds)
+        window = parse_image_usage_headers(response.headers)
+        raw = response.content
+        if response.status_code >= 400:
+            self._traffic.write(
+                {
+                    "request_id": request_id,
+                    "phase": "upstream_response_error",
+                    "status_code": response.status_code,
+                    "body": snapshot_body(response.headers.get("content-type"), raw),
+                }
+            )
+            error = BackendError(response.status_code, raw.decode("utf-8", errors="replace"))
+            error.image_usage = window
+            raise error
+        try:
+            parsed = response.json()
+        except ValueError as exc:
+            raise BackendError(502, "Upstream image response was not JSON.") from exc
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("data"), list):
+            raise BackendError(502, "Upstream image response carried no image data.")
+        self._traffic.write(
+            {
+                "request_id": request_id,
+                "phase": "upstream_response",
+                "method": "POST",
+                "url": url,
+                "status_code": response.status_code,
+                "body": {"kind": "json", "bytes": len(raw), "json": summarize_image_payload(parsed)},
+            }
+        )
+        self._traffic.write(
+            {
+                "request_id": request_id,
+                "phase": "upstream_usage",
+                "model": payload.get("model"),
+                "images": len(parsed["data"]),
+                "usage": parsed.get("usage"),
+                "image_quota": None if window is None else {
+                    "limit_id": window.limit_id,
+                    "used_percent": window.used_percent,
+                    "reset_at": window.reset_at,
+                },
+            }
+        )
+        return parsed, window
+
+    async def probe_image_usage(self, request_id: str) -> ImageUsageWindow | None:
+        """The image quota window without generating anything: a body
+        with no prompt is refused upstream (400, no quota spent) and the
+        refusal carries the same `x-codex-*` usage headers as a success.
+        None when the answer carries no usage headers."""
+        url = f"{self._settings.upstream_base_url.rstrip('/')}/{IMAGE_OPERATION_PATHS['generation']}"
+        response = await self._post_json_bytes(url, b"{}", request_id, min(30.0, self._settings.image_timeout_seconds))
+        window = parse_image_usage_headers(response.headers)
+        self._traffic.write(
+            {
+                "request_id": request_id,
+                "phase": "upstream_image_usage_probe",
+                "status_code": response.status_code,
+                "image_quota": None if window is None else {
+                    "limit_id": window.limit_id,
+                    "used_percent": window.used_percent,
+                    "window_seconds": window.window_seconds,
+                    "reset_at": window.reset_at,
+                },
+            }
+        )
+        if response.status_code == 401:
+            raise BackendError(401, response.content.decode("utf-8", errors="replace"))
+        return window
+
+    async def _post_json_bytes(
+        self, url: str, body: bytes, request_id: str, timeout: float
+    ) -> httpx.Response:
+        """A non-streaming JSON POST with the subscription headers and the
+        one refresh-and-retry on 401 every upstream call gets. Transport
+        failures become 502s like everywhere else."""
+        del request_id
+        retried = False
+        while True:
+            record = await self._auth_manager.ensure_fresh_tokens()
+            headers = {
+                "Authorization": f"Bearer {record.access_token}",
+                "ChatGPT-Account-ID": record.account_id or "",
+                "Content-Type": "application/json",
+                "originator": "codex_cli_rs",
+            }
+            try:
+                response = await self._client.post(url, content=body, headers=headers, timeout=timeout)
+            except httpx.HTTPError as exc:
+                raise BackendError(502, f"Upstream connection failed: {exc}") from exc
+            if response.status_code == 401 and not retried:
+                retried = True
+                await self._auth_manager.refresh_tokens()
+                continue
+            return response
 
     async def collect_response(
         self, payload: dict[str, Any], request_id: str, session_id: str | None

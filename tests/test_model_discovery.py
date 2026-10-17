@@ -132,7 +132,8 @@ async def test_catalog_refresh_discovers_new_models_and_preserves_capabilities(t
     await providers.list_models("cached")
     assert backend.calls == 1
     refreshed = await providers.list_models("refresh", refresh=True)
-    assert [m["id"] for m in refreshed["data"]] == ["gpt-6-astra", "gpt-5.6-luna"]
+    # The image model is always appended after the catalog's text models.
+    assert [m["id"] for m in refreshed["data"]] == ["gpt-6-astra", "gpt-5.6-luna", "gpt-image-2"]
     assert backend.invalidations == 1
     assert refreshed["data"][0]["airelays"]["reasoning"] == {
         "parameter": "reasoning_effort", "modes": ["low", "max", "ultra"], "default": "max",

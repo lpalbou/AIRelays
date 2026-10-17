@@ -44,6 +44,34 @@ With multiple enrolled accounts:
   the bare single-account shape)
 - `?raw=true` includes the raw upstream payload
 
+## Image generation quota
+
+Image generation on the ChatGPT subscription is metered in its own upstream
+bucket (`imagegen_premium`, a 24-hour window observed live), not in the text
+windows above, and the usage endpoint does not report it. The image routes
+do, in every response's headers, so AIRelays reads the quota there and
+reports it as `rate_limits.image_generation` in the same window shape, with:
+
+- `source`: `image_response` when the reading came with an image, `probe`
+  when it came from the relay's quota probe
+- `observed_at`: when that reading was taken
+- `relay`: the images this relay produced on the account in the last window
+  (`images`, `requests`, `image_tokens`), from its own records
+
+The probe is a prompt-less image request the upstream refuses with `400`
+without spending quota; the refusal carries the quota headers. It runs with
+each usage probe (cached for a minute; every five minutes in the background
+with several accounts) so the meter stays current between image requests.
+Set `[providers.openai] image_usage_probe = false` to turn it off; the meter
+then updates only when images are generated. Readings survive restarts
+(`~/.airelays/openai-image-usage.json`).
+
+The desktop shows the quota as an **Images · 24h window** bar under each
+OpenAI account, with the relay's image count and the reading's source in the
+**?** details; `airelays usage` prints the same windows in the terminal. An
+exhausted image bucket benches the account for images only; text requests
+keep flowing, and the other way round.
+
 ## Claude
 
 ```bash

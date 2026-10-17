@@ -2,8 +2,13 @@
 
 AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes.
 
-- OpenAI runtime: ChatGPT subscription access with multi-account balancing
+- OpenAI runtime: ChatGPT subscription access with multi-account balancing, plus image generation and edits (`gpt-image-2`)
 - Claude runtime: chat, completions and Responses with images, files, conversations and tool calls, balanced across AIRelays-owned `claude` CLI subscription profiles, separate from your personal Claude Code sign-in
+
+![A compact matte-black device with a thin green light line and the word AIRelays engraved on top, photographed on a slate pedestal](assets/images/airelays-product-shot.jpg)
+
+*Generated through AIRelays with `POST /v1/images/generations`; the request is
+in [API Notes](api.md#image-examples).*
 
 Install the headless relay and CLI (macOS, Linux):
 

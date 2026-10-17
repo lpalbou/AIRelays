@@ -1199,6 +1199,7 @@ def normalize_subscription_status_payload(
     *,
     include_raw: bool = False,
     captured_at: str | None = None,
+    image_usage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized = {
         "object": "subscription_status",
@@ -1217,6 +1218,9 @@ def normalize_subscription_status_payload(
             "default": _normalize_rate_limit_details(payload.get("rate_limit")),
             "code_review": _normalize_rate_limit_details(payload.get("code_review_rate_limit")),
             "additional": _normalize_additional_rate_limits(payload.get("additional_rate_limits")),
+            # Not in the upstream usage payload: observed on the image
+            # routes' response headers (see airelay.image_usage).
+            "image_generation": _normalize_image_generation(image_usage),
         },
         "credits": _normalize_credits(payload.get("credits")),
         "model_usage": copy.deepcopy(payload.get("model_usage"))
@@ -1249,6 +1253,33 @@ def _normalize_additional_rate_limits(value: Any) -> list[dict[str, Any]]:
             }
         )
     return normalized
+
+
+def _normalize_image_generation(snapshot: Any) -> dict[str, Any] | None:
+    """The image quota in the same shape as the other rate limits, plus
+    where the reading came from (`source`: `image_response` or `probe`,
+    `observed_at`) and what this relay generated in the window (`relay`)."""
+    if not isinstance(snapshot, dict):
+        return None
+    window = _normalize_rate_limit_window({
+        "used_percent": snapshot.get("used_percent"),
+        "limit_window_seconds": snapshot.get("window_seconds"),
+        "reset_after_seconds": snapshot.get("reset_after_seconds"),
+        "reset_at": snapshot.get("reset_at"),
+    })
+    if window is not None and isinstance(snapshot.get("window_label"), str):
+        window["window_label"] = snapshot["window_label"]
+    used = _optional_number(snapshot.get("used_percent"))
+    return {
+        "limit_id": _optional_str(snapshot.get("limit_id")),
+        "allowed": None if used is None else used < 100,
+        "limit_reached": None if used is None else used >= 100,
+        "primary_window": window,
+        "secondary_window": None,
+        "observed_at": _optional_str(snapshot.get("observed_at")),
+        "source": _optional_str(snapshot.get("source")),
+        "relay": copy.deepcopy(snapshot["relay"]) if isinstance(snapshot.get("relay"), dict) else None,
+    }
 
 
 def _normalize_rate_limit_details(value: Any) -> dict[str, Any] | None:

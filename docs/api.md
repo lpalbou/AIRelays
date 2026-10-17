@@ -134,6 +134,20 @@ adaptation records when the request shape itself is repaired:
   `best_of: 1`, `modalities: ["text"]`) are accepted on both runtimes;
   on `/v1/completions`, an integer `logprobs` (including `0`) is a
   request.
+- **Image generation:** `/v1/images/generations` and `/v1/images/edits`
+  forward only what the subscription's image service applies (verified
+  live): `prompt`, `model`, `background` and `moderation`; `quality` and
+  `size` are forwarded too, but the service picks its own. The service
+  does not validate the rest, so AIRelays checks every parameter against
+  OpenAI's published values first (`422` with the offending `param`),
+  produces `n` images with `n` upstream calls, answers `stream: true` with
+  one completed event per image, and lists the parameters it dropped
+  (`output_format`, `output_compression`, `partial_images`,
+  `response_format`, `style`, `user`, `safety_identifier`,
+  `input_fidelity`), plus `quality` and `size` whenever the rendered image
+  differs from the request, in `x-airelays-ignored-parameters` with a
+  `compatibility_adaptation` record. A `mask` is refused (`422`).
+  See [`POST /v1/images/...`](#post-v1imagesgenerations-and-post-v1imagesedits).
 - **OpenAI model admission:** when AIRelays can fetch the live ChatGPT
   Codex model catalog for the authenticated OpenAI account(s), OpenAI
   requests are forwarded only for model ids that appear in that catalog
@@ -208,6 +222,11 @@ upstream policy; only reported windows are returned.
   OpenAI account (an entry carries an `error` instead of a `status` when
   that account's usage probe fails)
 - `?raw=true` includes the raw upstream payload (OpenAI only)
+- `rate_limits.image_generation` reports the image-generation quota, a
+  separate 24-hour upstream bucket the usage endpoint does not include: the
+  same window fields, plus `source` (`image_response` or `probe`),
+  `observed_at`, and `relay` (the images this relay made in the window). See
+  [Subscription Status](subscription-status.md#image-generation-quota)
 - `?provider=claude&all_accounts=true` returns
   `{"object": "subscription_status_list", "provider": "claude", "accounts": [...]}`,
   keyed by stable account `slug`. Each entry has `slug`, `email`, and one of
@@ -249,6 +268,12 @@ strategy. A second ready profile of the same subscription carries
 `duplicate_of` and is counted once; an account whose identity differs from its
 enrollment is not eligible.
 
+`providers.openai.accounts[]` (or `providers.openai` itself with a single
+account) carries `image_usage`: the image-generation quota as last read and
+the relay's own image count for the window; `image_limited` and
+`image_limited_for_seconds` appear while an account's image bucket is
+benched (text requests are unaffected).
+
 `GET /v1/relay/status?activity_only=true` returns only
 `{"requests_total": N}`. It requires the same authentication as the full
 status, but it does not scan storage or probe providers, is not itself
@@ -256,6 +281,10 @@ counted, and does not consume rate-limit quota or a concurrency slot, so
 clients such as the desktop tray can poll it frequently.
 
 ## CLI Diagnostics
+
+`airelays usage` prints every usage window the running relay reports, per
+account and provider, text windows and the image-generation quota alike
+(`--json` for the raw payloads).
 
 `airelays status` reports local config, relay-token, and provider readiness
 state. `airelays doctor` runs the same local checks and also probes the OpenAI
@@ -398,6 +427,112 @@ Claude runtime:
   on `/v1/completions`) return 503 `provider_auth_error`: "No Claude account
   is connected to AIRelays. Run `airelays claude login` or
   `airelays claude set-token`."
+
+## `POST /v1/images/generations` and `POST /v1/images/edits`
+
+OpenAI's Images API on the ChatGPT subscription runtime (GPT models only;
+`claude:*` models return `422 unsupported_for_provider`). The subscription
+serves the GPT image model; `/v1/models` lists it as `gpt-image-2` and the
+routes accept any `gpt-image-*` id (the upstream does not report which model
+answered). Other ids return `404 model_not_found`.
+
+- `prompt` (required, up to 32,000 characters), `model` (default
+  `gpt-image-2`), `background` (`transparent`, `opaque`, `auto`) and
+  `moderation` (`low`, `auto`) are forwarded; `background` is applied
+  (verified live, transparent images carry an alpha channel).
+- `quality` (`auto`, `low`, `medium`, `high`) and `size` (`auto`, or
+  `WIDTHxHEIGHT` with both sides multiples of 16, an aspect ratio between
+  1:3 and 3:1, a longest edge up to 3840 and 655,360 to 8,294,400 pixels)
+  are checked and forwarded, but the service decides on its own: observed
+  live, flat-shape prompts came back `1254x1254` at `low` whatever was
+  asked (portrait, square, landscape, low, medium or high), and
+  photographic prompts `1536x1024` at `medium`. The response's `size` and
+  `quality` report what was rendered, and whenever they differ from the
+  request the parameter is listed in `x-airelays-ignored-parameters`.
+  Values outside OpenAI's sets are refused with `422` naming the field in
+  `param` (verified live: an unknown `quality` renders at `low`, any
+  `model` is accepted, an impossible `size` is replaced).
+- `n` (1 to 10) runs one upstream call per image, up to three at a time, and
+  merges the images and `usage` into one response; one failed image fails
+  the request, as on OpenAI.
+- `stream: true` answers `text/event-stream` with one
+  `image_generation.completed` (edits: `image_edit.completed`) event per
+  image in OpenAI's event shape, once the images exist. There are no
+  partial images, so `partial_images` is listed as ignored. Failures surface
+  as real HTTP statuses, never as an empty stream.
+- the answer is OpenAI's `ImagesResponse`: `created`, `data[].b64_json`,
+  `background`, `output_format` (`png`), `quality`, `size`, `usage`
+  (`input_tokens`, `output_tokens`, `total_tokens` with image/text details).
+  `size` is the rendered resolution, which may differ from the request. Each
+  image also carries the upstream's `generation_id`.
+- `output_format`, `output_compression`, `partial_images`,
+  `response_format: "url"`, `style`, `user` and `safety_identifier` are
+  accepted, checked, dropped and listed in `x-airelays-ignored-parameters`:
+  the upstream returns PNG `b64_json` whatever they say. Unknown parameters
+  are dropped and listed the same way; `null` values are not listed.
+- edits take OpenAI's multipart form (`image` or `image[]` files, PNG, JPEG
+  or WebP, up to 16 and 20 MiB each, plus text fields) or a JSON body whose
+  `image` is a data URL, a local `file_id` from `/v1/files`, or an array of
+  them. `input_fidelity` is listed as ignored (the model always uses high
+  fidelity). `mask` is refused with `422`: the upstream edits whole images
+  and dropping the mask would change the output.
+- an image call waits up to `[providers.openai] image_timeout_seconds`
+  (default 300). Quota rejections (`429 usage_limit_reached`) carry
+  `Retry-After`; with several accounts the request fails over to one whose
+  image quota is open (the image bucket is benched separately from the text
+  windows), and automatic retry applies as on the text routes.
+- the traffic log keeps request and response shapes with image sizes, never
+  the image bytes; `upstream_usage` records carry the image quota reading.
+
+```bash
+curl http://127.0.0.1:8080/v1/images/generations \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
+  -H 'content-type: application/json' \
+  -d '{"prompt": "a watercolor fox", "size": "1024x1024", "quality": "low"}' \
+  | python3 -c 'import base64,json,sys; open("fox.png","wb").write(base64.b64decode(json.load(sys.stdin)["data"][0]["b64_json"]))'
+
+curl http://127.0.0.1:8080/v1/images/edits \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
+  -F image=@fox.png -F prompt='make the fox blue'
+```
+
+With the OpenAI SDK, `client.images.generate(model="gpt-image-2", prompt=...)`
+and `client.images.edit(model="gpt-image-2", image=open("fox.png", "rb"), prompt=...)`
+work as documented; `client.images.generate(..., stream=True)` yields
+`image_generation.completed` events.
+
+### Image examples
+
+Both images were generated through AIRelays with the requests shown. The
+service chose the rendered size and quality in each case, so each response
+listed `quality,size` in `x-airelays-ignored-parameters` and reported the
+rendered values in `size` and `quality`.
+
+![A compact matte-black device with a thin green light line and the word AIRelays engraved on top, photographed on a slate pedestal](assets/images/airelays-product-shot.jpg)
+
+```json
+{
+  "model": "gpt-image-2",
+  "prompt": "Studio product photograph of a compact matte-black aluminum device with softly rounded edges resting on a slate pedestal, one thin illuminated green line across its front, the word AIRelays engraved in small clean sans-serif lettering on its top, seamless dark grey backdrop, soft key light and rim light, photorealistic.",
+  "size": "1024x1024",
+  "quality": "high"
+}
+```
+
+Rendered at `1536x1024`, reported quality `low`, 343 image tokens, 16 seconds.
+
+![Dozens of grey network cables in a server rack converging into one green cable that leads to a small black box](assets/images/airelays-one-relay.jpg)
+
+```json
+{
+  "model": "gpt-image-2",
+  "prompt": "Photorealistic photograph inside a dim server room: dozens of grey network cables converging into one single bright green cable that leads to a small sleek black box mounted on a rack, cinematic lighting with cool blue ambient and one warm highlight, shot on a full-frame camera, no text.",
+  "size": "1024x1536",
+  "quality": "high"
+}
+```
+
+Rendered at `1536x1024`, reported quality `medium`, 601 image tokens, 20 seconds.
 
 ## `POST /v1/completions`
 
@@ -571,7 +706,8 @@ These currently return `501 unsupported_error`. Every 501 AIRelays returns
 carries `x-should-retry: false`, so OpenAI SDKs do not retry it:
 
 - embeddings
-- image generation
+- image variations (`/v1/images/variations`); generations and edits are
+  served, see above
 - audio
 - realtime sessions
 

@@ -8,6 +8,11 @@
 - AIRelays protects the relay with its own bearer token by default.
 - Traffic is logged to JSONL files with automatic rotation and retention (7 days, 1 GiB total by default).
 
+![A compact matte-black device with a thin green light line and the word AIRelays engraved on top, photographed on a slate pedestal](docs/assets/images/airelays-product-shot.jpg)
+
+*Generated through AIRelays with `POST /v1/images/generations` on the ChatGPT
+subscription; the request is in [docs/api.md](docs/api.md#image-examples).*
+
 ## Independence And Intended Use
 
 - AIRelays is an independent third-party project. It is not affiliated with, endorsed by, or sponsored by any provider.
@@ -86,7 +91,8 @@ Releases page directly; the builds are not notarized or code-signed, see
 
 The tray app ([desktop/](desktop/README.md)) provides a dashboard with relay
 start/stop, auth and network modes, OpenAI and Claude sign-in/sign-out,
-per-account usage bars, a model list with copy-ready ids, live traffic, and
+per-account usage bars (text windows and the 24-hour image quota), a model
+list with copy-ready ids, live traffic, and
 diagnostics. The tray icon shows connection state and pulses on request
 activity; the app can start at login, starts the relay when it opens, and
 restarts a crashed relay automatically.
@@ -235,6 +241,8 @@ airelays models
 ```
 
 Use `airelays doctor --skip-response` to skip the tiny `/responses` smoke request.
+`airelays usage` prints the running relay's usage windows per account,
+including the image-generation quota.
 
 Public health:
 
@@ -457,6 +465,11 @@ is in [docs/capabilities.md](docs/capabilities.md).
 OpenAI runtime:
 
 - first-class routes: `/v1/responses`, `/v1/chat/completions`, `/v1/completions`
+- image generation and edits: `/v1/images/generations` and `/v1/images/edits`
+  (`gpt-image-2`; `n`, `stream` and `background` as on OpenAI; the service
+  picks size and quality itself and the relay says so when they differ; the
+  image quota is a separate 24-hour window shown in the dashboard and by
+  `airelays usage`)
 - local files and local conversations are supported
 - non-stream responses are reconstructed from streamed upstream events
 - `store=true` is rejected
@@ -469,7 +482,7 @@ Claude runtime:
 - images, PDFs and text files as input; local files and conversations
 - function tool calls are returned to your application, which runs them;
   AIRelays never runs a tool (forced calls are refused; strict tools run non-strict)
-- no audio
+- no audio, no image generation
 - structured outputs on chat completions: `response_format` `json_schema` maps
   to the CLI's native `--json-schema` enforcement; `json_object` answers are
   checked to be one JSON object

@@ -863,6 +863,9 @@ function usageWindows(status) {
   // top-level slot in the payload) plus whatever `additional` carries.
   const named = [];
   if (limits.code_review) named.push(["Code review", limits.code_review]);
+  // The image-generation quota: its own upstream bucket (24h), read from
+  // the image routes' response headers rather than the usage endpoint.
+  if (limits.image_generation) named.push(["Images", limits.image_generation]);
   for (const extra of limits.additional ?? []) {
     named.push([extra.limit_name || extra.metered_feature || "Other", extra.rate_limit]);
   }
@@ -1031,6 +1034,7 @@ function openaiAccountList(openai) {
       ready_for_requests: openai.ready_for_requests,
       limited: false,
       window_tokens: openai.window_tokens,
+      image_usage: openai.image_usage,
     }];
   }
   return [];
@@ -1142,7 +1146,7 @@ function accountBlock(account, index, total, balance) {
   const identity = document.createElement("div");
   identity.className = "account-identity";
   identity.append(emailEl, windowTokensDetail(account.window_tokens, usageEntry?.status, true,
-    email, `openai:${account.slug ?? email}`));
+    email, `openai:${account.slug ?? email}`, account.image_usage));
   const plan = document.createElement("span");
   plan.className = "account-plan";
   plan.textContent = account.plan_type ?? "";
@@ -1213,6 +1217,16 @@ function usageFacts(status) {
   }
   if (status.rate_limit_reached_type) {
     facts.push(["limit reached", status.rate_limit_reached_type]);
+  }
+  // The image quota is read from image responses or a prompt-less probe,
+  // not from the usage endpoint: say which, and how fresh it is.
+  const images = status.rate_limits?.image_generation;
+  if (images?.observed_at) {
+    const observed = new Date(images.observed_at);
+    if (!Number.isNaN(observed.getTime())) {
+      const how = images.source === "probe" ? "probe" : "last image";
+      facts.push(["image quota reading", `${how} · ${observed.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`]);
+    }
   }
   const credits = status.credits;
   if (credits) {
@@ -1288,7 +1302,7 @@ function closeAccountDetails() {
 // so the title names the window the tally payload reports instead of
 // hardcoding "5h". Every account gets the affordance; without data the
 // panel says so instead of the trigger silently missing.
-function windowTokensDetail(windowTokens, status, showTokens = true, accountName = "account", accountKey = accountName) {
+function windowTokensDetail(windowTokens, status, showTokens = true, accountName = "account", accountKey = accountName, imageUsage = null) {
   const models = Array.isArray(windowTokens?.models) ? windowTokens.models : [];
   const wrap = document.createElement("div");
   wrap.className = "account-more";
@@ -1395,6 +1409,8 @@ function windowTokensDetail(windowTokens, status, showTokens = true, accountName
     empty.className = "account-more-note";
     empty.textContent = "No requests served through AIRelays on this account in the current window yet.";
     panel.appendChild(empty);
+    const images = imageUsageLine(imageUsage);
+    if (images) panel.appendChild(images);
     wrap.append(trigger, panel);
     return wrap;
   }
@@ -1426,12 +1442,29 @@ function windowTokensDetail(windowTokens, status, showTokens = true, accountName
   }
   table.appendChild(totalRow);
   panel.appendChild(table);
+  const images = imageUsageLine(imageUsage);
+  if (images) panel.appendChild(images);
   const note = document.createElement("div");
   note.className = "account-more-note";
   note.textContent = "Counts requests served through AIRelays only; usage from other apps on this account is not included.";
   panel.appendChild(note);
   wrap.append(trigger, panel);
   return wrap;
+}
+
+// Images this relay generated on the account inside the image quota's own
+// window (24h upstream), from the relay-status `image_usage` tally. Null when
+// no image was ever made here, so plain text accounts keep a short panel.
+function imageUsageLine(imageUsage) {
+  const relay = imageUsage?.relay;
+  if (!relay || !Number.isFinite(relay.images)) return null;
+  const line = document.createElement("div");
+  line.className = "account-more-note";
+  const label = typeof imageUsage.window_label === "string" ? imageUsage.window_label : "window";
+  const tokens = Number.isFinite(relay.image_tokens) && relay.image_tokens > 0
+    ? ` (${formatTokens(relay.image_tokens)} image tokens)` : "";
+  line.textContent = `Images: ${relay.images} generated via this relay in the last ${label}${tokens}.`;
+  return line;
 }
 
 function renderAccounts(state) {
