@@ -74,9 +74,12 @@ def refresh_locks() -> None:
         print("  desktop/src-tauri/Cargo.lock refreshed")
     else:
         print("  WARNING: cargo not found; refresh Cargo.lock manually")
-    if shutil.which("npm"):
+    # The resolved path, not "npm": on Windows npm is npm.cmd, which
+    # CreateProcess cannot find from a bare name.
+    npm = shutil.which("npm")
+    if npm:
         subprocess.run(
-            ["npm", "install", "--package-lock-only", "--silent"],
+            [npm, "install", "--package-lock-only", "--silent"],
             cwd=ROOT / "desktop",
             check=True,
         )

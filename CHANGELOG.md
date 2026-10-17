@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.17.2
+
+### Fixed
+
+- Windows desktop app: the relay starts again, and OpenAI sign-in no longer
+  fails with `ModuleNotFoundError: No module named 'threading'`. The
+  embedded Python runtime is complete on Windows. Reinstall with the
+  PowerShell installer; accounts and settings are kept.
+- Desktop installers are checked before release: every platform's embedded
+  runtime must import the whole relay and run `airelays --help`.
+
 ## 0.17.1
 
 ### Fixed

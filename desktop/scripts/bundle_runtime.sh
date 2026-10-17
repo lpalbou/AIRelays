@@ -86,10 +86,17 @@ for stdlib in "$RUNTIME_DIR"/lib/python*/ "$RUNTIME_DIR/Lib/"; do
   rm -f "$stdlib/turtle.py"
   rm -f "$stdlib"/lib-dynload/_tkinter*.so
 done
-rm -rf "$RUNTIME_DIR"/lib/tcl* "$RUNTIME_DIR"/lib/tk* "$RUNTIME_DIR"/lib/itcl* \
-  "$RUNTIME_DIR"/lib/thread* "$RUNTIME_DIR"/lib/sqlite3-tcl* "$RUNTIME_DIR/tcl"
-rm -f "$RUNTIME_DIR"/lib/libtcl* "$RUNTIME_DIR"/lib/libtk* \
-  "$RUNTIME_DIR"/DLLs/_tkinter.pyd "$RUNTIME_DIR"/DLLs/tcl*.dll "$RUNTIME_DIR"/DLLs/tk*.dll
+# The unix globs must never run on Windows: its filesystem is
+# case-insensitive, so "lib/thread*" (Tcl's thread extension) matches the
+# stdlib's Lib/threading.py and ships a runtime that cannot import logging.
+if [[ "$PLATFORM" == "windows-x64" ]]; then
+  rm -rf "$RUNTIME_DIR/tcl"
+  rm -f "$RUNTIME_DIR"/DLLs/_tkinter.pyd "$RUNTIME_DIR"/DLLs/tcl*.dll "$RUNTIME_DIR"/DLLs/tk*.dll
+else
+  rm -rf "$RUNTIME_DIR"/lib/tcl* "$RUNTIME_DIR"/lib/tk* "$RUNTIME_DIR"/lib/itcl* \
+    "$RUNTIME_DIR"/lib/thread* "$RUNTIME_DIR"/lib/sqlite3-tcl*
+  rm -f "$RUNTIME_DIR"/lib/libtcl* "$RUNTIME_DIR"/lib/libtk*
+fi
 
 # Console-script shebangs embed absolute build paths (leaking CI paths and
 # breaking relocation); the app always invokes `python -m airelays`, so all
@@ -104,5 +111,12 @@ fi
 echo "Precompiling bytecode (hash-based: resource copying does not preserve mtimes)"
 "$PYTHON" -m compileall -qq --invalidation-mode unchecked-hash \
   "$RUNTIME_DIR/lib" "$RUNTIME_DIR/Lib" 2>/dev/null || true
+
+# Smoke-test the pruned runtime exactly as the app runs it: a stdlib module
+# lost to the pruning above only shows up when the relay imports it.
+echo "Smoke-testing the embedded runtime"
+PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -I -B -c \
+  "import importlib, pkgutil, airelay, airelays; [importlib.import_module(m.name) for p in (airelay, airelays) for m in pkgutil.walk_packages(p.__path__, p.__name__ + '.')]; import ssl, uvicorn.main"
+PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -I -B -m airelays --help > /dev/null
 
 echo "Embedded runtime ready: $RUNTIME_DIR ($PLATFORM)"

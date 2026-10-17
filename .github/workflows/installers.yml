@@ -66,6 +66,13 @@ jobs:
         run: |
           $exe = Join-Path $env:LOCALAPPDATA 'AIRelays\airelays-desktop.exe'
           if (-not (Test-Path $exe)) { Get-ChildItem -Recurse "$env:LOCALAPPDATA\AIRelays" | Select-Object -First 20; throw "missing $exe" }
+          # Run the embedded relay the way the app does: a stdlib module
+          # missing from the runtime only fails at import time.
+          $python = Join-Path $env:LOCALAPPDATA 'AIRelays\runtime\python.exe'
+          & $python -I -B -c "import threading, logging, airelay.app; print('embedded relay', airelay.__version__)"
+          if ($LASTEXITCODE -ne 0) { throw "the embedded relay runtime cannot import the relay" }
+          & $python -I -B -m airelays --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "the embedded relay CLI does not start" }
 
   headless:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
