@@ -22,6 +22,13 @@ from typing import Any, AsyncIterator
 from airelay.accounts import keyring_era_sign_ins
 from airelay.auth import AuthManager
 from airelay.backend import ChatGptCodexBackend
+from airelay.images import (
+    IMAGE_BACKGROUNDS,
+    IMAGE_MODEL_IDS,
+    IMAGE_QUALITIES,
+    MAX_EDIT_IMAGES,
+    MAX_IMAGES_PER_REQUEST,
+)
 from airelay.config import Settings
 from airelay.claude_auth import ClaudeProfile, account_identity, token_profile
 from airelay.claude_content import (
@@ -129,6 +136,12 @@ class ProviderModel:
     account_availability: dict[str, int] | None = None
     catalog_visibility: str | None = None
     description: str | None = None
+    # Text models on both runtimes take function tools and read images and
+    # documents; the image model takes neither tools nor documents.
+    tool_calls: bool = True
+    inputs: tuple[str, ...] = ("text", "image", "document")
+    # The image routes' controls, for the image model only.
+    image_generation: dict[str, Any] | None = None
 
     def as_wire(self) -> dict[str, Any]:
         return {
@@ -148,10 +161,9 @@ class ProviderModel:
                 "capabilities": {
                     "routes": self.routes,
                     "stateful_conversations": self.stateful_conversations,
-                    # Both runtimes: function tool calls, images and documents
-                    # (PDF, text) as input.
-                    "tool_calls": True,
-                    "inputs": ["text", "image", "document"],
+                    "tool_calls": self.tool_calls,
+                    "inputs": list(self.inputs),
+                    "image_generation": self.image_generation,
                 },
                 "reasoning": {
                     "parameter": "reasoning_effort",
@@ -226,6 +238,7 @@ def _openai_model_record(model_id: str, catalog: dict[str, Any] | None = None) -
             "files": True,
             "conversations": True,
             "subscription_status": True,
+            "images": False,
         },
         stateful_conversations=True,
         reasoning_modes=modes,
@@ -236,6 +249,53 @@ def _openai_model_record(model_id: str, catalog: dict[str, Any] | None = None) -
         account_availability=catalog.get("account_availability") if catalog else None,
         catalog_visibility=catalog.get("visibility") if catalog else None,
         description=catalog.get("description") if catalog else None,
+    )
+
+
+def _openai_image_model_record(model_id: str) -> ProviderModel:
+    """The image model served by the subscription backend's image routes
+    (verified live 2026-10-18). Not in the upstream text catalog, so it is
+    advertised here whenever the OpenAI runtime is up."""
+    return ProviderModel(
+        id=model_id,
+        provider="openai",
+        owned_by="airelays-openai-subscription",
+        upstream_id=model_id,
+        routes={
+            "responses": False,
+            "chat_completions": False,
+            "completions": False,
+            "files": True,
+            "conversations": False,
+            "subscription_status": True,
+            "images": True,
+        },
+        stateful_conversations=False,
+        reasoning_modes=(),
+        reasoning_default=None,
+        structured_output_types=(),
+        discovery_source="configured",
+        display_name="GPT Image 2",
+        description=(
+            "Image generation and edits on the ChatGPT subscription "
+            "(`POST /v1/images/generations`, `POST /v1/images/edits`)."
+        ),
+        tool_calls=False,
+        inputs=("text", "image"),
+        image_generation={
+            "routes": ["/v1/images/generations", "/v1/images/edits"],
+            "quality": list(IMAGE_QUALITIES),
+            "background": list(IMAGE_BACKGROUNDS),
+            "size": "auto, or WIDTHxHEIGHT with both sides multiples of 16, aspect 1:3 to 3:1, longest edge <= 3840",
+            "advisory": "quality and size are forwarded but the service picks its own; when the result differs "
+                        "they are listed in x-airelays-ignored-parameters and the response reports what was rendered",
+            "n": {"max": MAX_IMAGES_PER_REQUEST, "note": "each image is one upstream call"},
+            "edit_images_max": MAX_EDIT_IMAGES,
+            "mask": False,
+            "output_format": ["png"],
+            "stream": True,
+            "partial_images": False,
+        },
     )
 
 
@@ -322,6 +382,7 @@ def _claude_routes() -> dict[str, bool]:
         "files": True,
         "conversations": True,
         "subscription_status": False,
+        "images": False,
     }
 
 
@@ -2198,6 +2259,12 @@ class ProviderRegistry:
                 for model_id in self._settings.openai_extra_models:
                     if model_id and model_id not in listed:
                         data.append(_openai_model_record(model_id).as_wire())
+                # The image routes are served by every signed-in account;
+                # the image model is listed with the text models.
+                listed = {item["id"] for item in data}
+                for model_id in IMAGE_MODEL_IDS:
+                    if model_id not in listed:
+                        data.append(_openai_image_model_record(model_id).as_wire())
         if self._claude is not None:
             await self._claude.refresh_models(force=refresh)
             data.extend(self._claude.list_models())
@@ -2402,6 +2469,8 @@ class ProviderRegistry:
             statuses = self._account_pool.account_statuses()
             if statuses and "window_tokens" in statuses[0]:
                 openai_status["window_tokens"] = statuses[0]["window_tokens"]
+            if statuses and "image_usage" in statuses[0]:
+                openai_status["image_usage"] = statuses[0]["image_usage"]
         if self._settings.enable_openai_provider:
             keyring_era = keyring_era_sign_ins(self._settings)
             if keyring_era:

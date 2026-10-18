@@ -107,6 +107,19 @@ const state = () => ({
                     { model: "gpt-5.5", input_tokens: 84210, output_tokens: 6021, cached_input_tokens: 41000 },
                   ],
                   totals: { input_tokens: 84210, output_tokens: 6021, cached_input_tokens: 41000 },
+                },
+                // Image-generation quota (its own 24h upstream bucket) as last
+                // read from an image response, plus the relay's own count.
+                image_usage: {
+                  object: "relay_image_usage",
+                  limit_id: "imagegen_premium",
+                  used_percent: 12,
+                  window_seconds: 86400,
+                  window_label: "24h",
+                  reset_at: Math.floor(Date.now() / 1000) + 80000,
+                  observed_at: new Date().toISOString(),
+                  source: "image_response",
+                  relay: { scope: "last_window_via_this_relay", window_seconds: 86400, requests: 4, images: 5, image_tokens: 2890 },
                 } },
               // Exhausted Plus-shaped account: keeps the "At limit" badge,
               // the full-bar tint, and the empty "more" panel reviewable in
@@ -336,6 +349,26 @@ export async function mockInvoke(command, args = {}) {
                     reset_after_seconds: 518000,
                   },
                 },
+                // The image-generation quota: a separate 24h upstream bucket
+                // the relay reads from image responses (or a free probe).
+                image_generation: {
+                  limit_id: "imagegen_premium",
+                  allowed: true,
+                  limit_reached: false,
+                  source: "image_response",
+                  observed_at: new Date().toISOString(),
+                  primary_window: {
+                    used_percent: 12,
+                    window_seconds: 86400,
+                    window_minutes: 1440,
+                    window_label: "24h",
+                    reset_after_seconds: 80000,
+                    reset_at: Math.floor(Date.now() / 1000) + 80000,
+                    reset_at_iso: new Date(Date.now() + 80000 * 1000).toISOString(),
+                  },
+                  secondary_window: null,
+                  relay: { scope: "last_window_via_this_relay", window_seconds: 86400, requests: 4, images: 5, image_tokens: 2890 },
+                },
                 additional: [],
               },
               credits: {
@@ -423,15 +456,15 @@ export async function mockInvoke(command, args = {}) {
       const mode = new URLSearchParams(location.search).get("mockUpdate");
       return {
         after_update: Boolean(mode),
-        failure: mode === "failed" ? "Checksum mismatch for AIRelays_0.18.0_x64-setup.exe." : null,
+        failure: mode === "failed" ? "Checksum mismatch for AIRelays_0.19.0_x64-setup.exe." : null,
       };
     }
     case "check_for_update":
       return {
         current: "0.0.0-mock",
-        latest: "0.18.0",
+        latest: "0.19.0",
         update_available: true,
-        release_url: "https://github.com/lpalbou/AIRelays/releases/tag/v0.18.0",
+        release_url: "https://github.com/lpalbou/AIRelays/releases/tag/v0.19.0",
         release_notes: "### Added\n\n- Desktop: an About page with project links and one-click updates.",
         published_at: "2026-10-18T09:00:00Z",
         can_install: true,

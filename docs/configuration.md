@@ -162,6 +162,12 @@ account_cooldown_seconds = 300
 # backoff budget) are skipped so the honest 429 is not delayed.
 retry_attempts = 3
 retry_backoff_seconds = [5, 20, 60]
+# Image generation (/v1/images/*): the per-image upstream timeout, and
+# whether to read the image quota with a prompt-less probe (a free 400 that
+# carries the quota headers) alongside each usage probe. Off, the image
+# meter updates only when images are generated.
+image_timeout_seconds = 300.0
+image_usage_probe = true
 
 [providers.claude]
 enabled = false
@@ -202,6 +208,8 @@ oauth_token_file = "~/.airelays/claude-token"   # written by `airelays claude se
 - `AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS`
 - `AIRELAYS_OPENAI_RETRY_ATTEMPTS` (automatic retries for failed upstream calls; `3` default, `0` disables)
 - `AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS` (comma-separated wait before each retry; `5,20,60` default)
+- `AIRELAYS_IMAGE_TIMEOUT_SECONDS` (per-image upstream timeout for `/v1/images/*`; `300` default)
+- `AIRELAYS_IMAGE_USAGE_PROBE` (read the image quota with a free prompt-less probe on each usage probe; `true` default)
 - `AIRELAYS_ENABLE_CLAUDE` (legacy `AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL` is still honored)
 - `AIRELAYS_CLAUDE_BIN`
 - `AIRELAYS_CLAUDE_TIMEOUT_SECONDS`

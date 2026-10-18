@@ -2886,8 +2886,11 @@ def test_models_route_advertises_configured_extra_models_with_dedupe(tmp_path) -
     ids = [item["id"] for item in openai_models]
     assert "gpt-5.6-sol" in ids
     assert ids.count("gpt-5.5") == 1  # deduped against the catalog
-    # Every OpenAI record advertises its reasoning modes for API consumers.
-    for item in openai_models:
+    # The image model is listed with the text models, flagged by its route.
+    assert "gpt-image-2" in ids
+    text_models = [item for item in openai_models if not item["airelays"]["capabilities"]["routes"]["images"]]
+    # Every OpenAI text record advertises its reasoning modes for API consumers.
+    for item in text_models:
         assert item["airelays"]["reasoning"]["modes"] == ["none", "low", "medium", "high", "xhigh"]
         assert item["airelays"]["reasoning"]["default"] == "none"
 

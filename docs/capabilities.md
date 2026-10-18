@@ -82,11 +82,41 @@ before any upstream call.
 
 | Capability | GPT models | Claude models |
 |---|---|---|
+| Image generation and edits (`/v1/images/generations`, `/v1/images/edits`) | ✅ `gpt-image-2` ([details](#image-generation)) | ❌ `422` |
 | Embeddings (`/v1/embeddings`) | ❌ `501` | ❌ `501` |
-| Image generation, audio, realtime | ❌ `501` | ❌ `501` |
+| Image variations, audio, realtime | ❌ `501` | ❌ `501` |
 
 Neither subscription offers embeddings: the ChatGPT subscription refuses
-embedding models, and Anthropic has no embedding model.
+embedding models, and Anthropic has no embedding model. Neither offers
+text-to-speech or transcription.
+
+## Image generation
+
+The ChatGPT subscription serves the GPT image model on two OpenAI Images
+routes; `/v1/models` lists it as `gpt-image-2` with these controls under
+`airelays.capabilities.image_generation`. Images come back as PNG
+`b64_json`, as OpenAI's GPT image models return them. The image quota is a
+separate 24-hour window (see
+[Subscription Status](subscription-status.md#image-generation-quota)).
+
+| Capability | GPT models | Claude models |
+|---|---|---|
+| `POST /v1/images/generations`: `prompt`, `model` (`gpt-image-*`), `background`, `moderation` | ✅ checked locally, forwarded | ❌ `422` |
+| `quality` (`auto`, `low`, `medium`, `high`) and `size` (`auto` or `WIDTHxHEIGHT`) | ⚠️ checked and forwarded, but the service picks its own; a difference is listed in `x-airelays-ignored-parameters` and the response reports what was rendered | ❌ |
+| `n` up to 10 | ✅ one upstream image per count | ❌ |
+| `stream: true` | ✅ one `image_generation.completed` (edits: `image_edit.completed`) event per image, no partial images | ❌ |
+| `POST /v1/images/edits`: `image` files (multipart, up to 16 PNG/JPEG/WebP), or data URLs and local `file_id`s (JSON) | ✅ | ❌ `422` |
+| `output_format`, `output_compression`, `partial_images`, `response_format: "url"`, `style`, `user`, `safety_identifier`, `input_fidelity` | ⚠️ the answer is always PNG `b64_json` | ❌ |
+| `mask` | ❌ `422` | ❌ |
+| Image model ids on the text routes | ❌ `404` | ❌ |
+
+The upstream reports the resolution and quality it rendered in `size` and
+`quality`. Observed live: four flat-shape requests asking for portrait,
+square and landscape sizes at low, medium and high quality all came back
+`1254x1254` at `low`, while photographic prompts came back `1536x1024` at
+`medium`. Details for both routes are in
+[API Notes](api.md#post-v1imagesgenerations-and-post-v1imagesedits).
+
 
 ## Accounts
 

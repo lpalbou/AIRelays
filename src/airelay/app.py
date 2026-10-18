@@ -16,6 +16,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from airelay import __version__
@@ -42,6 +43,20 @@ from airelay.chat_responses import (
 )
 from airelay.conversations import ConversationTurn
 from airelay.html import render_home
+from airelay.images import (
+    IMAGE_ADAPTATION_REASON,
+    EditImage,
+    ImageRequest,
+    coerce_image_form,
+    edit_image_from_bytes,
+    edit_image_from_data_url,
+    image_stream_events,
+    merge_image_responses,
+    prepare_image_edit,
+    prepare_image_generation,
+    summarize_image_payload,
+    unapplied_image_parameters,
+)
 from airelay.providers import (
     CLAUDE_CHAT_PARAMETERS,
     CLAUDE_COMPLETION_PARAMETERS,
@@ -103,6 +118,10 @@ CHAT_ROUTE_RESPONSES_SHAPE_REASON = (
 
 # OpenAI SDKs retry 5xx responses; a 501 cannot succeed on retry.
 NOT_RETRYABLE = {"x-should-retry": "false"}
+
+# `n` images are `n` upstream calls (the backend returns one image per call,
+# verified live); this many run at once per request.
+IMAGE_FANOUT_CONCURRENCY = 3
 
 MAX_DISCLOSURE_HEADER = 2048
 
@@ -276,6 +295,26 @@ def _file_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _first_exception(group: BaseException) -> BaseException:
+    """The error to report for a failed image fan-out: the first upstream
+    or request error inside the (possibly nested) group, else the first
+    exception of any kind."""
+    flat: list[BaseException] = []
+
+    def walk(error: BaseException) -> None:
+        if isinstance(error, BaseExceptionGroup):
+            for inner in error.exceptions:
+                walk(inner)
+        else:
+            flat.append(error)
+
+    walk(group)
+    for error in flat:
+        if isinstance(error, (BackendError, HTTPException, AuthenticationError, InvalidRequestError, ProviderError)):
+            return error
+    return flat[0] if flat else group
+
+
 def create_app(settings: Settings) -> FastAPI:
     settings.ensure_directories()
     settings.validate_provider_guardrails()
@@ -313,6 +352,8 @@ def create_app(settings: Settings) -> FastAPI:
         "/v1/completions",
         "/v1/responses",
         "/v1/chat/completions",
+        "/v1/images/generations",
+        "/v1/images/edits",
         "/v1/files",
         "/v1/conversations",
         "/no-tools/v1/models",
@@ -469,7 +510,8 @@ def create_app(settings: Settings) -> FastAPI:
     # desktop reads it from /v1/relay/status to blink the tray on activity.
     request_counter = {"total": 0}
 
-    async def log_inbound(request_id: str, request: Request, body: bytes) -> None:
+    async def log_inbound(request_id: str, request: Request, body: bytes,
+                          snapshot: dict[str, Any] | None = None) -> None:
         if request.url.path in MONITORING_PATHS:
             return
         request_counter["total"] += 1
@@ -482,7 +524,8 @@ def create_app(settings: Settings) -> FastAPI:
                 "query": dict(request.query_params),
                 "headers": dict(request.headers.items()),
                 "client_ip": getattr(request.state, "client_ip", None),
-                "body": snapshot_body(request.headers.get("content-type"), body),
+                # Callers whose bodies are mostly image bytes pass a summary.
+                "body": snapshot if snapshot is not None else snapshot_body(request.headers.get("content-type"), body),
             }
         )
 
@@ -606,6 +649,114 @@ def create_app(settings: Settings) -> FastAPI:
             raise ProviderError(503, "The Claude runtime is not available in this AIRelays process.",
                                 code="provider_unavailable")
         return runtime
+
+    # ----- images -----
+
+    def require_openai_runtime() -> None:
+        """The image routes exist on the ChatGPT subscription only."""
+        if not settings.enable_openai_provider:
+            raise HTTPException(
+                status_code=501,
+                detail="Image generation needs the OpenAI runtime enabled; Claude models do not generate images.",
+            )
+
+    def edit_image_from_reference(value: Any) -> EditImage:
+        """An `image` entry given as text: a base64 data URL, or the id of
+        a file uploaded to `/v1/files`."""
+        if not isinstance(value, str) or not value.strip():
+            raise InvalidRequestError("`image` entries must be base64 `data:` URLs or local file ids (`file_...`).",
+                                      param="image")
+        if value.strip().lower().startswith("data:"):
+            return edit_image_from_data_url(value)
+        file_id = value.strip()
+        try:
+            record, raw = store.get_file_bytes(file_id)
+        except KeyError as exc:
+            raise InvalidRequestError(
+                f"Unknown local file id `{file_id}`; `image` entries must be base64 `data:` URLs or ids of files "
+                "uploaded to `/v1/files`.", param="image",
+            ) from exc
+        return edit_image_from_bytes(raw, what=f"file `{record.get('filename') or file_id}`")
+
+    def logged_image_json(request_id: str, payload: dict[str, Any], headers: dict[str, str] | None) -> JSONResponse:
+        """`logged_json` for an Images response: the traffic log keeps the
+        shape and sizes, never megabytes of base64."""
+        entry = {
+            "request_id": request_id,
+            "phase": "outbound_response",
+            "status_code": 200,
+            "body": {"kind": "json", "json": summarize_image_payload(payload)},
+        }
+        entry.update(_response_meta(payload))
+        traffic.write(entry)
+        return JSONResponse(payload, headers=headers or None)
+
+    async def run_image_request(request: Request, request_id: str, prepared: ImageRequest) -> Response:
+        """The shared tail of both image routes: `n` upstream calls (each
+        with account failover and automatic retry) merged into one OpenAI
+        Images response, delivered as JSON or as OpenAI's image stream
+        events. The upstream answers whole, so every failure here is a real
+        HTTP status, even for `stream: true`."""
+
+        async def one_image() -> dict[str, Any]:
+            return await retry_call(
+                lambda: backend.create_image(prepared.operation, prepared.payload, request_id),
+                policy=retry_policy,
+                request_id=request_id,
+                traffic=traffic,
+                should_abort=request.is_disconnected,
+            )
+
+        if prepared.count == 1:
+            parts = [await one_image()]
+        else:
+            semaphore = asyncio.Semaphore(IMAGE_FANOUT_CONCURRENCY)
+
+            async def one_of_many() -> dict[str, Any]:
+                async with semaphore:
+                    return await one_image()
+
+            try:
+                async with asyncio.TaskGroup() as group:
+                    tasks = [group.create_task(one_of_many()) for _ in range(prepared.count)]
+            except BaseExceptionGroup as errors:
+                # One failed image fails the request, as on OpenAI; the
+                # siblings were cancelled by the group.
+                raise _first_exception(errors) from None
+            parts = [task.result() for task in tasks]
+        response = merge_image_responses(parts)
+        # The answer is known before any byte leaves, so a `quality` or
+        # `size` the service replaced is disclosed on this very response.
+        ignored = [*prepared.ignored, *unapplied_image_parameters(prepared.payload, response)]
+        log_adaptation(request_id, ignored, reason=IMAGE_ADAPTATION_REASON)
+        headers = _adaptation_headers(ignored)
+        traffic.write(
+            {
+                "request_id": request_id,
+                "phase": "outbound_usage",
+                "provider": "openai",
+                "model": prepared.model,
+                "images": len(response.get("data") or []),
+                "usage": response.get("usage"),
+            }
+        )
+        if not prepared.stream:
+            return logged_image_json(request_id, response, headers)
+        events = image_stream_events(response, prepared.operation)
+
+        async def event_stream() -> AsyncIterator[bytes]:
+            for event in events:
+                chunk = f"data: {json.dumps(event, ensure_ascii=True)}\n\n".encode("utf-8")
+                traffic.write(
+                    {
+                        "request_id": request_id,
+                        "phase": "outbound_stream_chunk",
+                        "body": {"kind": "json", "bytes": len(chunk), "json": summarize_image_payload(event)},
+                    }
+                )
+                yield chunk
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers or None)
 
     async def claude_chat(request_id: str, body: dict[str, Any], conversation_id: Any,
                           turn_items: list[Any]) -> tuple[Any, ConversationTurn | None]:
@@ -872,6 +1023,7 @@ def create_app(settings: Settings) -> FastAPI:
                                     "status": normalize_subscription_status_payload(
                                         entry["payload"], include_raw=raw,
                                         captured_at=entry.get("captured_at"),
+                                        image_usage=entry.get("image_usage"),
                                     )
                                 }
                                 if "payload" in entry
@@ -892,6 +1044,8 @@ def create_app(settings: Settings) -> FastAPI:
                     include_raw=raw,
                     captured_at=backend.subscription_captured_at(account)
                     if hasattr(backend, "subscription_captured_at") else None,
+                    image_usage=backend.image_usage_snapshot(account)
+                    if hasattr(backend, "image_usage_snapshot") else None,
                 )
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
@@ -1620,6 +1774,80 @@ def create_app(settings: Settings) -> FastAPI:
     @app.post("/no-tools/v1/completions")
     async def completions_route_no_tools(request: Request) -> Response:
         return await _completions_route(request)
+
+    @app.post("/v1/images/generations")
+    async def images_generations(request: Request) -> Response:
+        request_id = _request_id(request)
+        body_bytes = await request.body()
+        try:
+            parsed = json.loads(body_bytes) if body_bytes else {}
+        except json.JSONDecodeError:
+            parsed = None
+        await log_inbound(request_id, request, body_bytes, snapshot=None if parsed is None else {
+            "kind": "json", "bytes": len(body_bytes), "json": summarize_image_payload(parsed)})
+        try:
+            require_openai_runtime()
+            prepared = prepare_image_generation(load_json(body_bytes))
+            return await run_image_request(request, request_id, prepared)
+        except Exception as exc:  # noqa: BLE001
+            raise _http_error(exc) from exc
+
+    @app.post("/v1/images/edits")
+    async def images_edits(request: Request) -> Response:
+        """OpenAI's multipart form (`image` files, text fields), or a JSON
+        body whose `image` entries are data URLs or local file ids."""
+        request_id = _request_id(request)
+        content_type = (request.headers.get("content-type") or "").lower()
+        multipart = content_type.startswith("multipart/form-data")
+        body_bytes = await request.body()
+        if multipart:
+            snapshot: dict[str, Any] | None = {"kind": "multipart", "bytes": len(body_bytes),
+                                               "note": "Image uploads are not logged."}
+        else:
+            try:
+                parsed = json.loads(body_bytes) if body_bytes else {}
+            except json.JSONDecodeError:
+                parsed = None
+            snapshot = None if parsed is None else {
+                "kind": "json", "bytes": len(body_bytes), "json": summarize_image_payload(parsed)}
+        await log_inbound(request_id, request, body_bytes, snapshot=snapshot)
+        try:
+            require_openai_runtime()
+            images: list[EditImage] = []
+            has_mask = False
+            if multipart:
+                fields: dict[str, str] = {}
+                form = await request.form()
+                for name, value in form.multi_items():
+                    key = "image" if name == "image[]" else name
+                    if isinstance(value, StarletteUploadFile):
+                        if key == "image":
+                            raw = await value.read()
+                            images.append(edit_image_from_bytes(
+                                raw, what=f"image `{value.filename or len(images) + 1}`"))
+                        elif key == "mask":
+                            has_mask = True
+                        else:
+                            fields[key] = value.filename or "file"
+                    elif key == "image":
+                        images.append(edit_image_from_reference(str(value)))
+                    elif key == "mask":
+                        has_mask = has_mask or bool(str(value).strip())
+                    else:
+                        fields[key] = str(value)
+                body = coerce_image_form(fields)
+            else:
+                body = load_json(body_bytes)
+                references = body.pop("image", None)
+                has_mask = body.pop("mask", None) not in (None, "", [], {})
+                if isinstance(references, list):
+                    images = [edit_image_from_reference(reference) for reference in references]
+                elif references is not None:
+                    images = [edit_image_from_reference(references)]
+            prepared = prepare_image_edit(body, images, has_mask=has_mask)
+            return await run_image_request(request, request_id, prepared)
+        except Exception as exc:  # noqa: BLE001
+            raise _http_error(exc) from exc
 
     @app.api_route("/v1/conversations/{conversation_id}/items", methods=["GET", "POST"])
     @app.api_route("/v1/conversations/{conversation_id}/items/{item_id}", methods=["GET", "DELETE"])

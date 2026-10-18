@@ -1,13 +1,13 @@
 # Changelog
 
-## 0.18.0
+## 0.19.0
 
 ### Added
 
-- Desktop: an **About** page with the installed version and links to the
-  documentation, changelog, issue tracker, source code, license, and
-  disclaimer. It checks GitHub Releases for a newer version and shows its
-  release notes.
+- Desktop: an **About** page with the installed version, the author and
+  contact address, and links to the documentation, changelog, issue
+  tracker, source code, license, and disclaimer. It checks GitHub Releases
+  for a newer version and shows its release notes.
 - Desktop: one-click updates from the About page. AIRelays closes, installs
   the new release with the same installer as the one-line install (pinned
   to the release's published SHA-256), and reopens. Accounts and settings
@@ -23,12 +23,51 @@
 
 ### Fixed
 
-- Windows desktop app: the relay starts again, and OpenAI sign-in no longer
-  fails with `ModuleNotFoundError: No module named 'threading'`. The
-  embedded Python runtime is complete on Windows. Reinstall with the
+- Windows desktop app (0.17.1 and 0.18.0): the relay starts again, and
+  OpenAI sign-in no longer fails with
+  `ModuleNotFoundError: No module named 'threading'`. The embedded Python
+  runtime is complete on Windows. Reinstall with the
   PowerShell installer; accounts and settings are kept.
 - Desktop installers are checked before release: every platform's embedded
   runtime must import the whole relay and run `airelays --help`.
+
+## 0.18.0
+
+### Added
+
+- Image generation and edits on the ChatGPT subscription: `POST
+  /v1/images/generations` and `POST /v1/images/edits` serve `gpt-image-2`
+  (listed in `/v1/models`) with OpenAI's parameters. `prompt`, `background`
+  and `moderation` are checked locally and forwarded; `quality` and `size`
+  are forwarded but the service picks its own, and they are listed in
+  `x-airelays-ignored-parameters` whenever the rendered image differs
+  (the response reports the rendered `size` and `quality`); `n` produces
+  one upstream image per count; `stream: true` answers with
+  `image_generation.completed` / `image_edit.completed` events; parameters
+  the upstream does not apply (`output_format`, `output_compression`,
+  `partial_images`, `response_format`, `style`, `user`,
+  `safety_identifier`, `input_fidelity`) are dropped and listed in
+  `x-airelays-ignored-parameters`; `mask` is refused with `422`. Edits
+  accept OpenAI's multipart form or a JSON body with data URLs and local
+  `file_id`s. Image variations stay `501`.
+- The image-generation quota (a separate 24-hour upstream window) is
+  tracked per account: `rate_limits.image_generation` in
+  `/v1/subscription/status`, `image_usage` in `/v1/relay/status`, an
+  **Images · 24h window** bar and the relay's image count in the desktop,
+  and the new `airelays usage` command. Readings come from image responses
+  and from a free prompt-less probe (`[providers.openai] image_usage_probe`,
+  on by default). An exhausted image quota benches an account for images
+  only; text requests keep flowing.
+- `[providers.openai] image_timeout_seconds` (default 300) bounds each
+  upstream image call.
+- Docs: two images generated through the relay with their requests
+  (`docs/api.md`), one of them illustrating AIRelays in the README.
+
+### Changed
+
+- `/v1/models` lists `gpt-image-2`; every model's `airelays.capabilities`
+  gains `routes.images` and `image_generation`, and `tool_calls` and
+  `inputs` are reported per model.
 
 ## 0.17.1
 

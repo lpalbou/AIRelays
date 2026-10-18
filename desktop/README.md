@@ -89,7 +89,7 @@ newer stable release with an installer for your system; **Check for
 updates** asks again. When one exists, the page shows its release notes and
 an **Update to X.Y.Z** button.
 
-From 0.18.0 on, updating closes the app, stops the relay, runs the same one-line installer
+From 0.19.0 on, updating closes the app, stops the relay, runs the same one-line installer
 described in the [README](../README.md#install) pinned to that release and
 to the SHA-256 digest GitHub publishes for its installer, then reopens
 AIRelays. Accounts, the API key, and settings are kept. If the install

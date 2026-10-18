@@ -57,6 +57,17 @@ Yes, through the same OpenAI-compatible endpoint as GPT models.
   AIRelays never runs a tool (see [docs/api.md](api.md#tool-calls-on-claude-models))
 - follows the relay's protected or open local authentication mode
 - loopback-only
+- no image generation (GPT models only, see below)
+
+## Can AIRelays generate images?
+
+Yes, on GPT models: `POST /v1/images/generations` and `POST /v1/images/edits`
+serve `gpt-image-2` through the ChatGPT subscription with OpenAI's parameters
+(`n`, `background`, `stream`; `size` and `quality` are forwarded but the
+service picks its own and the relay discloses the difference). Images come
+back as PNG `b64_json`. The image quota is a separate 24-hour window, shown in the
+desktop and by `airelays usage`. Masks, audio and image variations are not
+available. See [docs/capabilities.md](capabilities.md#image-generation).
 
 ## How do I log in to the Claude runtime?
 

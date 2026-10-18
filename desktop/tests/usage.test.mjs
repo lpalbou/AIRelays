@@ -59,3 +59,32 @@ test("Fable limit does not label all Claude models exhausted", () => {
   assert.equal(block.children[0].children[2].textContent, "Fable at limit");
   assert.equal(block.children[2].children[0].children[0].textContent, "Fable · Weekly");
 });
+
+test("the image quota renders as its own Images meter", () => {
+  const ctx = view();
+  const windows = ctx.usageWindows({rate_limits: {
+    default: {primary_window: {used_percent: 8, window_label: "5h"}},
+    image_generation: {limit_id: "imagegen_premium", source: "probe",
+      primary_window: {used_percent: 12, window_label: "24h", reset_after_seconds: 80000}, secondary_window: null},
+  }});
+  // Arrays come from the vm realm: compare by value, not prototype.
+  assert.equal(JSON.stringify(windows.map(([label]) => label)), JSON.stringify(["5h window", "Images · 24h window"]));
+  const row = ctx.usageWindowRow(...windows[1]);
+  assert.equal(row.children[0].children[1].children[0].textContent, "12% used");
+  const facts = ctx.usageFacts({rate_limits: {image_generation: {source: "probe", observed_at: new Date().toISOString()}}});
+  assert.ok(facts.some(([label, value]) => label === "image quota reading" && value.startsWith("probe · ")));
+});
+
+test("the account details name the images made through this relay", () => {
+  const ctx = view();
+  const usage = {window_label: "24h", relay: {images: 5, image_tokens: 2890, window_seconds: 86400}};
+  const withTokens = ctx.windowTokensDetail({window_label: "weekly", models: [
+    {model: "gpt-5.5", input_tokens: 10, output_tokens: 2}], totals: {input_tokens: 10, output_tokens: 2}},
+    null, true, "a", "a", usage);
+  const panel = withTokens.children[1];
+  assert.ok(panel.children.some((child) => child.textContent === "Images: 5 generated via this relay in the last 24h (2.9k image tokens)."));
+  const noTokens = ctx.windowTokensDetail(null, null, true, "b", "b", usage);
+  assert.ok(noTokens.children[1].children.some((child) => String(child.textContent).startsWith("Images: 5 generated")));
+  const plain = ctx.windowTokensDetail(null, null, true, "c", "c", null);
+  assert.ok(!plain.children[1].children.some((child) => String(child.textContent).startsWith("Images:")));
+});

@@ -49,22 +49,22 @@ def test_about_shows_version_links_and_checks_for_updates_once(page, dashboard_u
     for label in ("Documentation", "Changelog", "Report an issue", "Source code", "License", "Disclaimer"):
         playwright.expect(page.get_by_role("button", name=label)).to_be_visible()
     playwright.expect(page.get_by_text("Update available", exact=True)).to_be_visible()
-    playwright.expect(page.get_by_role("button", name="Update to 0.18.0")).to_be_visible()
-    playwright.expect(page.get_by_label("What's new in 0.18.0")).to_contain_text("About page")
+    playwright.expect(page.get_by_role("button", name="Update to 0.19.0")).to_be_visible()
+    playwright.expect(page.get_by_label("What's new in 0.19.0")).to_contain_text("About page")
     # Returning to the tab reuses the result instead of asking GitHub again.
     page.get_by_role("button", name="Overview", exact=True).click()
     page.get_by_role("button", name="About", exact=True).click()
-    playwright.expect(page.get_by_role("button", name="Update to 0.18.0")).to_be_visible()
+    playwright.expect(page.get_by_role("button", name="Update to 0.19.0")).to_be_visible()
 
 
 def test_update_asks_for_confirmation_before_installing(page, dashboard_url):
     open_about(page, dashboard_url)
-    page.get_by_role("button", name="Update to 0.18.0").click()
+    page.get_by_role("button", name="Update to 0.19.0").click()
     dialog = page.get_by_role("dialog")
-    playwright.expect(dialog).to_contain_text("Update to AIRelays 0.18.0?")
+    playwright.expect(dialog).to_contain_text("Update to AIRelays 0.19.0?")
     dialog.get_by_role("button", name="Cancel").click()
     playwright.expect(dialog).to_be_hidden()
-    page.get_by_role("button", name="Update to 0.18.0").click()
+    page.get_by_role("button", name="Update to 0.19.0").click()
     page.get_by_role("button", name="Update and restart").click()
     playwright.expect(page.get_by_role("status")).to_contain_text("closing to install the update")
     playwright.expect(page.get_by_role("button", name="Check for updates")).to_be_disabled()
@@ -83,5 +83,5 @@ def test_a_reopen_after_a_failed_update_lands_on_about_with_the_reason(page, das
 def test_a_reopen_after_a_successful_update_confirms_the_new_version(page, dashboard_url):
     page.goto(f"{dashboard_url}/?mockUpdate=ok")
     playwright.expect(page.locator("#ab-reopened")).to_contain_text("Updated to AIRelays 0.0.0-mock.")
-    playwright.expect(page.get_by_role("button", name="Update to 0.18.0")).to_be_visible()
+    playwright.expect(page.get_by_role("button", name="Update to 0.19.0")).to_be_visible()
     playwright.expect(page.locator("#ab-reopened")).to_be_visible()

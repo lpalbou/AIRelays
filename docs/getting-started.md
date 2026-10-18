@@ -200,7 +200,7 @@ Current Claude limits:
 - local-only
 - loopback-only
 - follows the relay's protected or open local authentication mode
-- no audio, no server-side tools (web search), no forced tool calls
+- no audio, no image generation (GPT models only), no server-side tools (web search), no forced tool calls
 
 ## Status
 
@@ -209,6 +209,27 @@ Inspect relay and provider readiness:
 ```bash
 airelays status
 ```
+
+Usage windows of the running relay, including the image-generation quota:
+
+```bash
+airelays usage
+```
+
+## Image Generation
+
+GPT models also generate and edit images through OpenAI's Images routes:
+
+```bash
+curl http://127.0.0.1:8080/v1/images/generations \
+  -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
+  -H 'content-type: application/json' \
+  -d '{"prompt": "a watercolor fox", "quality": "low"}'
+```
+
+The image comes back as PNG `b64_json`; `/v1/images/edits` takes the image
+to change as a multipart file. See
+[API Notes](api.md#post-v1imagesgenerations-and-post-v1imagesedits).
 
 Run local setup checks plus live upstream probes:
 

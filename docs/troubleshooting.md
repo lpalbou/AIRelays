@@ -23,10 +23,10 @@ macOS and Linux.
   (`scripts/install-headless.sh`); it runs the same relay without the tray.
 - Windows SmartScreen blocks the setup `.exe`: choose **More info** →
   **Run anyway**, or use the PowerShell installer.
-- Windows, AIRelays 0.17.1 and earlier: the relay shows **Failed** and the
+- Windows, AIRelays 0.18.0 and earlier: the relay shows **Failed** and the
   Console tab (or an OpenAI sign-in) reports
   `ModuleNotFoundError: No module named 'threading'`. Those Windows builds
-  shipped an incomplete embedded Python. Install 0.18.0 or later by running
+  shipped an incomplete embedded Python. Install 0.19.0 or later by running
   the PowerShell installer again; your accounts and settings are kept.
 - Linux: the AppImage does not start from a terminal with a FUSE error:
   install `libfuse2` (`libfuse2t64` on Ubuntu 24.04), or run it with

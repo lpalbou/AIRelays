@@ -50,6 +50,7 @@ from airelay.backend import (
     stream_error_object,
 )
 from airelay.config import Settings
+from airelay.image_usage import ImageUsageTracker, ImageUsageWindow
 from airelay.traffic import TrafficLogger
 from airelay.usage_tally import WindowTokenTally
 from airelay.usage_windows import UsageWindow, longest_window, parse_rate_limit_windows
@@ -266,9 +267,19 @@ class _PooledAccount:
     models: frozenset[str] = field(default_factory=frozenset)
     models_payload: dict[str, Any] | None = None
     models_fetched_at: float = 0.0
+    # Image generation has its own upstream quota bucket (see
+    # airelay.image_usage), so it gets its own bench: a spent text window
+    # still serves images and a spent image window still serves text. Only
+    # dead credentials (an "auth" bench on limited_until) stop both.
+    image_limited_until: float = 0.0
+    image_limited_since: float = 0.0
+    image_last_error: str | None = None
 
     def is_limited(self, now: float) -> bool:
         return self.limited_until > now
+
+    def is_image_limited(self, now: float) -> bool:
+        return self.image_limited_until > now or (self.is_limited(now) and self.limited_kind == "auth")
 
 
 @dataclass
@@ -314,6 +325,9 @@ class OpenAiAccountPool:
         # Ground-truth token breakdown behind the usage bars: what the relay
         # itself served per account/model in the current window.
         self._tally = WindowTokenTally(settings.data_dir / "openai-window-tokens.json")
+        # The image quota as last seen per account (response headers or the
+        # prompt-less probe) plus the images this relay made in the window.
+        self._images = ImageUsageTracker(settings.data_dir / "openai-image-usage.json")
         # Set when the pool owns discovery (production); None when the caller
         # supplied fixed accounts (tests), which disables live reload.
         self._discoverable = accounts is None
@@ -464,6 +478,12 @@ class OpenAiAccountPool:
             window_tokens = self._tally.snapshot(account.slot.account_id)
             if window_tokens is not None:
                 status["window_tokens"] = window_tokens
+            image_usage = self._images.snapshot(account.slot.account_id)
+            if image_usage is not None:
+                status["image_usage"] = image_usage
+            if account.image_limited_until > now:
+                status["image_limited"] = True
+                status["image_limited_for_seconds"] = int(account.image_limited_until - now)
             statuses.append(status)
         return statuses
 
@@ -911,6 +931,179 @@ class OpenAiAccountPool:
                 # whenever the abandoned generator happens to be finalized.
                 await stream.aclose()
 
+    # ----- images -----
+
+    def _image_attempt_order(self) -> list[_PooledAccount]:
+        """Accounts for one image call: those whose image bucket is not
+        benched first (balanced: lowest known image used_percent, then
+        least recently selected; round_robin: least recently selected;
+        ordered: enrollment order), then the benched ones by earliest
+        recovery. Text-window benches do not count here: the image bucket
+        is separate upstream."""
+        if not self._accounts:
+            raise AuthenticationError(
+                "No ChatGPT login found. Run `airelays login` first.",
+                code="upstream_auth_missing",
+            )
+        now = time.perf_counter()
+        ready = [account for account in self._accounts if not account.is_image_limited(now)]
+        strategy = self._settings.openai_balance
+        if strategy == "round_robin":
+            ready.sort(key=lambda account: account.last_selected_at)
+        elif strategy != "ordered":
+            def used(account: _PooledAccount) -> int:
+                value = self._images.used_percent(account.slot.account_id)
+                return int(value) if value is not None else 0
+
+            ready.sort(key=lambda account: (used(account), account.last_selected_at))
+        benched = sorted(
+            (account for account in self._accounts if account.is_image_limited(now)),
+            key=lambda account: max(account.image_limited_until, account.limited_until),
+        )
+        return ready + benched
+
+    def _mark_image_limited(self, account: _PooledAccount, seconds: float, reason: str) -> None:
+        now = time.perf_counter()
+        account.image_limited_until = max(account.image_limited_until, now + seconds)
+        account.image_limited_since = now
+        account.image_last_error = reason
+
+    def _release_image_bench(self, account: _PooledAccount) -> None:
+        account.image_limited_until = 0.0
+        account.image_last_error = None
+
+    def _bench_images_from_window(
+        self, account: _PooledAccount, window: ImageUsageWindow, observed_at: float
+    ) -> None:
+        """Benches the image bucket when a fresh observation says it is
+        spent, and releases a bench when a newer observation shows
+        capacity. The upstream's reset time is not used as the bench
+        length: the window slides (its reset moved with every request
+        observed live), so capacity returns gradually; the default cooldown
+        re-checks instead."""
+        now = time.perf_counter()
+        if window.exhausted:
+            if account.image_limited_until < now + 1:
+                self._mark_image_limited(
+                    account,
+                    float(self._settings.openai_account_cooldown_seconds),
+                    "image generation limit reached (from usage headers)",
+                )
+        elif account.image_limited_until > now and observed_at > account.image_limited_since:
+            self._release_image_bench(account)
+
+    async def create_image(
+        self, operation: str, payload: dict[str, Any], request_id: str
+    ) -> dict[str, Any]:
+        """One image generation or edit through the pool: same failover
+        rules as text, on the image bench."""
+        self.refresh_if_changed()
+        attempts = self._image_attempt_order()
+        last_error: Exception | None = None
+        for index, account in enumerate(attempts):
+            self._log_selection(request_id, account, index)
+            account.last_selected_at = time.perf_counter()
+            attempt_started = time.perf_counter()
+            try:
+                result, window = await account.backend.create_image(operation, payload, request_id)
+            except (BackendError, AuthenticationError) as error:
+                window = getattr(error, "image_usage", None)
+                if isinstance(window, ImageUsageWindow):
+                    self._images.observe(account.slot.account_id, window, source="image_response")
+                bench = self._failover_bench(error)
+                if bench is None:
+                    # Request-scoped failure: every account rejects it alike.
+                    raise self._final_image_error(error) from error
+                cooldown, kind = bench
+                if kind == "auth":
+                    self._mark_limited(account, cooldown, self._error_reason(error), kind)
+                else:
+                    self._mark_image_limited(account, cooldown, self._error_reason(error))
+                if index == len(attempts) - 1:
+                    raise self._final_image_error(error) from error
+                self._log_failover(
+                    request_id,
+                    _FailoverDecision(
+                        from_account=account.slot.slug,
+                        to_account=attempts[index + 1].slot.slug,
+                        reason=self._error_reason(error),
+                    ),
+                    cooldown,
+                )
+                last_error = error
+                continue
+            data = result.get("data") if isinstance(result, dict) else None
+            self._images.record(
+                account.slot.account_id,
+                window,
+                images=len(data) if isinstance(data, list) else 0,
+                usage=result.get("usage") if isinstance(result, dict) else None,
+            )
+            if window is not None:
+                self._bench_images_from_window(account, window, attempt_started)
+            elif account.image_limited_until > time.perf_counter():
+                # A served image is capacity evidence even without headers.
+                self._release_image_bench(account)
+            return result
+        raise self._final_image_error(last_error or BackendError(502, "No account available."))
+
+    def _final_image_error(self, error: Exception) -> Exception:
+        """The text pool's all-accounts rewrite, for the image bench."""
+        if not (
+            isinstance(error, BackendError)
+            and len(self._accounts) > 1
+            and self._bench_decision(error) is not None
+        ):
+            return error
+        now = time.perf_counter()
+        if not all(account.is_image_limited(now) for account in self._accounts):
+            return error
+        horizons = [
+            max(account.image_limited_until, account.limited_until if account.limited_kind == "auth" else 0.0)
+            for account in self._accounts
+        ]
+        earliest = max(1, int(min(horizons) - now))
+        count = len(self._accounts)
+        inner = self._structured_error_object(error.detail)
+        last_message = (inner or {}).get("message") or (error.detail or "")[:300]
+        rewritten: dict[str, Any] = dict(inner or {})
+        rewritten["message"] = (
+            f"All {count} OpenAI accounts are unavailable for image generation "
+            f"(earliest retry in {earliest}s). Last error: {last_message}"
+        )
+        if not rewritten.get("code") and not rewritten.get("type"):
+            rewritten["type"] = "upstream_error"
+            rewritten["code"] = "all_accounts_limited"
+        if error.status_code == RETRIABLE_STATUS_EXACT:
+            rewritten["resets_in_seconds"] = earliest
+        return BackendError(error.status_code, json.dumps({"error": rewritten}, ensure_ascii=True))
+
+    def image_usage_snapshot(self, slug: str | None = None) -> dict[str, Any] | None:
+        """The image quota as last observed for one account (the primary
+        when no slug is given), or None before any observation."""
+        if not self._accounts:
+            return None
+        if slug is not None:
+            account = next((a for a in self._accounts if a.slot.slug == slug), None)
+        else:
+            account = self.primary()
+        return self._images.snapshot(account.slot.account_id) if account else None
+
+    async def _probe_image_usage(
+        self, account: _PooledAccount, request_id: str, probe_started: float
+    ) -> None:
+        """Refreshes the image quota reading alongside the usage probe.
+        Best effort: the meter is display data and a failed probe changes
+        nothing."""
+        try:
+            window = await account.backend.probe_image_usage(request_id)
+        except Exception:  # noqa: BLE001 - a status read must not fail on the image probe
+            return
+        if window is None:
+            return
+        self._images.observe(account.slot.account_id, window, source="probe")
+        self._bench_images_from_window(account, window, probe_started)
+
     @staticmethod
     def _error_reason(error: Exception) -> str:
         if isinstance(error, BackendError):
@@ -1033,6 +1226,10 @@ class OpenAiAccountPool:
         account.usage_fetched_at = time.perf_counter()
         account.usage_captured_at = datetime.now(timezone.utc).isoformat()
         self._bench_from_usage(account, usage, probe_started)
+        if self._settings.image_usage_probe and hasattr(account.backend, "probe_image_usage"):
+            # The usage endpoint never reports the image bucket; the image
+            # routes do, on a prompt-less request that spends nothing.
+            await self._probe_image_usage(account, request_id, probe_started)
         return json.loads(json.dumps(usage))
 
     def subscription_captured_at(self, slug: str | None = None) -> str | None:
@@ -1066,6 +1263,9 @@ class OpenAiAccountPool:
                     entry["captured_at"] = account.usage_captured_at
                 except (BackendError, AuthenticationError) as error:
                     entry["error"] = str(error)
+                image_usage = self._images.snapshot(account.slot.account_id)
+                if image_usage is not None:
+                    entry["image_usage"] = image_usage
                 results.append(entry)
             return results
 
@@ -1161,6 +1361,7 @@ class OpenAiAccountPool:
 
     async def close(self) -> None:
         self._tally.save()
+        self._images.save()
         for account in self._accounts:
             await account.backend.close()
         retired, self._retired_backends = self._retired_backends, []
