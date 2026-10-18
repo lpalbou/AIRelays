@@ -508,6 +508,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="OpenAI">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#usage-resets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage resets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -984,6 +1001,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="OpenAI">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#usage-resets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage resets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1075,6 +1109,26 @@ limit-reset credits and credits applicable right now are distinct counts.
 Quota percentages are not token counts or monetary balances. The desktop's
 token breakdown counts only responses observed through this relay in the
 account's reported window, not activity in other apps or before recording.</p>
+<h3 id="usage-resets">Usage resets<a class="headerlink" href="#usage-resets" title="Permanent link">&para;</a></h3>
+<p>OpenAI sometimes grants Codex users a <strong>usage reset</strong> (shown as "Redeem
+reset" in Codex): a credit that restarts the account's usage windows. AIRelays
+reads these from the same subscription and lets you redeem one without
+opening an OpenAI app:</p>
+<ul>
+<li><code>GET /v1/relay/accounts/resets</code> lists each account's credits with their
+  title, who granted them, grant and expiry times, and whether the upstream
+  would apply one right now (<code>redeemable_now</code>); see <a href="../api/">API</a></li>
+<li><code>POST /v1/relay/accounts/resets/redeem</code> spends one; the upstream's answer
+  (<code>reset</code>, <code>nothing_to_reset</code>, <code>no_credit</code>, <code>already_redeemed</code>) is reported
+  verbatim and the account's usage is re-read at once</li>
+<li>CLI: <code>airelays accounts resets</code> and <code>airelays accounts redeem &lt;email&gt;</code></li>
+<li>Desktop: an account holding a reset shows <strong>N usage reset available</strong> under
+  its bars with what it is and when it expires, and a <strong>Redeem now</strong> button
+  that asks for confirmation. The <strong>?</strong> panel keeps the counts.</li>
+</ul>
+<p>A credit held while usage is below its limit is <em>available</em> but not
+<em>applicable</em>: redeeming it answers <code>nothing_to_reset</code> and keeps the credit.
+The relay never redeems on its own.</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">'http://127.0.0.1:8080/v1/subscription/status'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span>
 </code></pre></div>

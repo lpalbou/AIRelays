@@ -501,6 +501,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#get-v1relayaccountsresets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/relay/accounts/resets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#post-v1relayaccountsresetsredeem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/relay/accounts/resets/redeem
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#get-v1relaystatus" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1191,6 +1213,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#get-v1relayaccountsresets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /v1/relay/accounts/resets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#post-v1relayaccountsresetsredeem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/relay/accounts/resets/redeem
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#get-v1relaystatus" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1606,6 +1650,96 @@ re-check. Use it when you know an account has recovered and don't want to
 wait for the scheduled reset. CLI equivalent: <code>airelays accounts refresh</code>.</p>
 <p>With <code>?provider=claude</code>, refreshes Claude account usage while respecting each
 account's cached readings and persisted backoff.</p>
+<h2 id="get-v1relayaccountsresets"><code>GET /v1/relay/accounts/resets</code><a class="headerlink" href="#get-v1relayaccountsresets" title="Permanent link">&para;</a></h2>
+<p>Lists each enrolled OpenAI account's usage-limit reset credits: the resets
+Codex offers under <strong>Redeem reset</strong> (for example the "Full reset" OpenAI
+grants to Codex users), read from the same subscription at
+<code>chatgpt.com/backend-api/wham/rate-limit-reset-credits</code>. Nothing is
+inferred: every fact comes from the upstream listing and the account's
+usage report. CLI equivalent: <code>airelays accounts resets</code>.</p>
+<ul>
+<li><code>?account=&lt;email-or-prefix&gt;</code> selects one account (slug also accepted)</li>
+<li><code>?force=true</code> bypasses the one-minute cache shared with usage probes</li>
+<li><code>?raw=true</code> includes the raw upstream listing per account</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"object"</span><span class="p">:</span><span class="w"> </span><span class="s2">"accounts.resets"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"available_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"accounts"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"slug"</span><span class="p">:</span><span class="w"> </span><span class="s2">"default"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"email"</span><span class="p">:</span><span class="w"> </span><span class="s2">"you@example.com"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"resets"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"object"</span><span class="p">:</span><span class="w"> </span><span class="s2">"rate_limit_reset_credits"</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"captured_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-10-18T09:12:03Z"</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"available_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"applicable_available_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"redeemable_now"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"total_earned_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"next_expiry_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-11-07T00:00:05Z"</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"credits"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">          </span><span class="p">{</span>
+<span class="w">            </span><span class="nt">"id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"RateLimitResetCredit_…"</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"reset_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"codex_rate_limits"</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"available"</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"supported_by_plan"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"title"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Full reset"</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"granted_by"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Codex Team"</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"granted_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-10-08T00:00:05Z"</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"expires_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-11-07T00:00:05Z"</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"expires_in_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mi">1712282</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"expired"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"redeem_started_at"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"redeemed_at"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<span class="w">          </span><span class="p">}</span>
+<span class="w">        </span><span class="p">]</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><code>available_count</code> is how many credits the account holds;
+<code>applicable_available_count</code> (from the usage report) is how many the
+upstream would apply right now. A credit held while usage is below its
+limit is available but not applicable: <code>redeemable_now</code> is <code>false</code>, and
+redeeming it answers <code>nothing_to_reset</code> without spending it. An account
+whose listing cannot be read carries an <code>error</code> string instead of <code>resets</code>.</p>
+<h2 id="post-v1relayaccountsresetsredeem"><code>POST /v1/relay/accounts/resets/redeem</code><a class="headerlink" href="#post-v1relayaccountsresetsredeem" title="Permanent link">&para;</a></h2>
+<p>Redeems one reset credit now, through AIRelays, without opening an OpenAI
+app: the call Codex makes behind <strong>Yes, use reset</strong>
+(<code>chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume</code>). The
+relay then re-reads that account's usage so a lifted limit returns it to
+rotation immediately. Irreversible on OpenAI's side; the desktop and the
+CLI (<code>airelays accounts redeem &lt;email&gt;</code>) ask for confirmation first.</p>
+<p>Body (JSON, all fields optional with one enrolled account):</p>
+<ul>
+<li><code>account</code>: email, unambiguous prefix, or slug; <strong>required</strong> when several
+  accounts are enrolled (the relay never picks one for you)</li>
+<li><code>credit_id</code>: redeem this specific credit; otherwise the upstream chooses</li>
+<li><code>redeem_request_id</code>: idempotency key forwarded to the upstream; a retry
+  with the same key cannot spend a second credit (generated when omitted)</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"object"</span><span class="p">:</span><span class="w"> </span><span class="s2">"accounts.reset_redeem"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"slug"</span><span class="p">:</span><span class="w"> </span><span class="s2">"default"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"email"</span><span class="p">:</span><span class="w"> </span><span class="s2">"you@example.com"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"outcome"</span><span class="p">:</span><span class="w"> </span><span class="s2">"reset"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"known_outcome"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"reset_applied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"windows_reset"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"credit_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"RateLimitResetCredit_…"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"redeem_request_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"6d1f…"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"object"</span><span class="p">:</span><span class="w"> </span><span class="s2">"subscription_status"</span><span class="p">,</span><span class="w"> </span><span class="nt">"…"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fresh usage after the redeem"</span><span class="w"> </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><code>outcome</code> is the upstream's code verbatim: <code>reset</code> (applied;
+<code>windows_reset</code> says how many windows restarted), <code>nothing_to_reset</code> (usage
+did not need a reset; credit kept), <code>no_credit</code>, or <code>already_redeemed</code>.
+<code>reset_applied</code> is true only for <code>reset</code>. <code>status</code> is <code>null</code> when the
+follow-up usage read fails. Errors: 400 when several accounts are enrolled
+and none is named, 404 unknown account, 409 ambiguous prefix, 422 malformed
+field; upstream rejections pass through with their status.</p>
 <h2 id="get-v1relaystatus"><code>GET /v1/relay/status</code><a class="headerlink" href="#get-v1relaystatus" title="Permanent link">&para;</a></h2>
 <p>Returns relay diagnostics, provider readiness, provider cache status, and
 <code>requests_total</code> — the count of real (non-monitoring) requests served by
@@ -1640,7 +1774,10 @@ runtime is enabled and logged in, and reports a <code>CLAUDE_CODE_OAUTH_TOKEN</c
 the relay's environment, which AIRelays ignores. Use
 <code>airelays doctor --skip-response</code> to skip the response smoke request.
 <code>airelays models</code> lists every model id the running relay accepts, grouped by
-provider (<code>--json</code> supported).</p>
+provider (<code>--json</code> supported). <code>airelays accounts resets</code> shows each OpenAI
+account's usage resets and <code>airelays accounts redeem &lt;email&gt;</code> spends one
+through the running relay (see the two <code>/v1/relay/accounts/resets</code> routes
+above; <code>--yes</code> skips the confirmation, <code>--credit &lt;id&gt;</code> picks a credit).</p>
 <h2 id="post-v1responses"><code>POST /v1/responses</code><a class="headerlink" href="#post-v1responses" title="Permanent link">&para;</a></h2>
 <p>OpenAI runtime:</p>
 <ul>
