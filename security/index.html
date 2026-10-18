@@ -447,6 +447,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#desktop-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desktop Updates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rate-limits" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1064,6 +1075,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#desktop-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desktop Updates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rate-limits" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1176,12 +1198,13 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <p>When the Claude runtime is enabled:</p>
 <ul>
 <li>the relay's protected or open local auth mode applies</li>
-<li>loopback binding is required</li>
 <li><code>trust_x_forwarded_for</code> is rejected</li>
 <li>each request is a fresh CLI run with session persistence and built-in
   tools off; client tool calls are returned, never run (see
   <a href="../api/#tool-calls-on-claude-models">docs/api.md</a>)</li>
-<li>the runtime is local-only</li>
+<li>the runtime runs the <code>claude</code> CLI on the relay's machine and is served on the
+  relay's listener; in network mode, devices on your network can use your
+  Claude accounts, so keep the API key required there</li>
 </ul>
 <p>AIRelays uses only Claude accounts it owns: profiles added through
 <code>airelays claude login</code>, each with its own CLI-owned credential store, and an
@@ -1201,6 +1224,14 @@ progress can finish. Claude Code still derives a few files from the home
 directory (for example device keys) regardless of <code>CLAUDE_CONFIG_DIR</code>. On
 macOS, run the relay in your login session, not over SSH or as a
 LaunchDaemon, so Claude Code can use the keychain.</p>
+<h2 id="desktop-updates">Desktop Updates<a class="headerlink" href="#desktop-updates" title="Permanent link">&para;</a></h2>
+<p>The desktop app's update check reads the public GitHub Releases list for
+<code>lpalbou/AIRelays</code>; it sends no account, token, or usage data. An in-place
+update installs only the release that check offered, and the installer
+refuses a download whose SHA-256 differs from the digest GitHub publishes
+for that release asset. Downloads are trusted through HTTPS to GitHub; the
+installers are not code-signed. See
+<a href="../desktop/README.md#about-and-updates">desktop/README.md</a>.</p>
 <h2 id="rate-limits">Rate Limits<a class="headerlink" href="#rate-limits" title="Permanent link">&para;</a></h2>
 <p>Default single-process protections:</p>
 <ul>

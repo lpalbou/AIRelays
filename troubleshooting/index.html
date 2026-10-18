@@ -565,6 +565,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-desktop-update-did-not-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A desktop update did not install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#traffic-logs-report-a-cleanup-error" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1218,6 +1229,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-desktop-update-did-not-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A desktop update did not install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#traffic-logs-report-a-cleanup-error" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1533,6 +1555,11 @@ macOS and Linux.</p>
   (<code>scripts/install-headless.sh</code>); it runs the same relay without the tray.
 - Windows SmartScreen blocks the setup <code>.exe</code>: choose <strong>More info</strong> →
   <strong>Run anyway</strong>, or use the PowerShell installer.
+- Windows, AIRelays 0.18.0 and earlier: the relay shows <strong>Failed</strong> and the
+  Console tab (or an OpenAI sign-in) reports
+  <code>ModuleNotFoundError: No module named 'threading'</code>. Those Windows builds
+  shipped an incomplete embedded Python. Install 0.19.0 or later by running
+  the PowerShell installer again; your accounts and settings are kept.
 - Linux: the AppImage does not start from a terminal with a FUSE error:
   install <code>libfuse2</code> (<code>libfuse2t64</code> on Ubuntu 24.04), or run it with
   <code>APPIMAGE_EXTRACT_AND_RUN=1</code>. The menu entry created by the installer
@@ -1541,6 +1568,19 @@ macOS and Linux.</p>
 - The headless installer warns that <code>~/.local/bin</code> is not on your <code>PATH</code>:
   add <code>export PATH="$HOME/.local/bin:$PATH"</code> to your shell profile and open
   a new terminal.</p>
+<h2 id="a-desktop-update-did-not-install">A desktop update did not install<a class="headerlink" href="#a-desktop-update-did-not-install" title="Permanent link">&para;</a></h2>
+<p>AIRelays reopens on the version you had and shows why the update failed.
+The full log is <code>~/.airelays/update/update.log</code>.</p>
+<ul>
+<li>"Checksum mismatch": the download did not match the digest GitHub
+  publishes. Nothing was installed. Retry later from <strong>About</strong>.</li>
+<li>"Check for updates again before installing": the dashboard was open
+  across a new release; choose <strong>Check for updates</strong>, then update.</li>
+<li>The updater does not start (for example where policy blocks PowerShell
+  scripts): run the one-line installer from the
+  <a href="../README.md#install">README</a>, or download the installer from the
+  release page.</li>
+</ul>
 <h2 id="traffic-logs-report-a-cleanup-error">Traffic logs report a cleanup error<a class="headerlink" href="#traffic-logs-report-a-cleanup-error" title="Permanent link">&para;</a></h2>
 <p>The tray Settings page or <code>GET /v1/relay/logging</code> can report <code>last_error</code>, or
 <code>airelays logs</code> can print a cleanup error. AIRelays pauses traffic-log writes

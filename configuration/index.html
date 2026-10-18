@@ -1381,7 +1381,8 @@ can select an older catalog.</p>
   <code>CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC</code> in the relay's environment stops
   it and marks readings <code>nonessential_traffic_disabled</code></li>
 <li>follows the relay's protected or open local auth mode</li>
-<li>requires loopback binding</li>
+<li>served on the relay's listener (local or network); refused together with
+  <code>trust_x_forwarded_for</code></li>
 </ul>
 
 
