@@ -56,7 +56,7 @@ Yes, through the same OpenAI-compatible endpoint as GPT models.
 - function tool calls returned to your application, which runs them;
   AIRelays never runs a tool (see [docs/api.md](api.md#tool-calls-on-claude-models))
 - follows the relay's protected or open local authentication mode
-- loopback-only
+- served on the relay's listener, local or network
 - no image generation (GPT models only, see below)
 
 ## Can AIRelays generate images?

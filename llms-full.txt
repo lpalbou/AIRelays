@@ -334,7 +334,7 @@ The verified upstream is the ChatGPT subscription backend, not the public platfo
 - `store=true`, `n>1`, and `best_of`/`echo`/`logprobs`/`suffix` are rejected loudly instead of silently adapted (text routes; on the image routes `n` is honoured with one upstream call per image).
 - Image routes: the upstream image service validates almost nothing (verified live), so AIRelays checks every OpenAI Images parameter first and refuses unknown values with `422`; parameters the service does not apply are dropped and disclosed in `x-airelays-ignored-parameters`; `mask` is refused. Each image call waits up to `image_timeout_seconds` (default 300).
 - Failed upstream OpenAI calls are retried automatically with exponential backoff (default 3 retries, 5s/20s/60s; `retry_attempts = 0` disables) while no response byte has reached the client; each retry re-runs account failover. Final failures return OpenAI-shaped `{"error": {...}}` JSON with the real HTTP status and the upstream's own error code. After a stream has started, failures surface as an in-band `data: {"error": ...}` event (chat/completions) or verbatim `response.failed` events (responses passthrough).
-- Claude runtime: discovered `claude:*` aliases and concrete `claude-*` ids, plus configured overrides; chat completions, completions and responses, loopback-only; images, PDFs and text files as input; local files and conversations; function tool calls are returned to the application, which runs them (AIRelays never runs a tool: built-in tools are off, client tools are descriptions behind a helper that executes nothing, calls are denied before execution, and the run stops at the call). Structured outputs are supported on chat completions: `response_format` `json_schema` maps to the claude CLI's `--json-schema` (native enforcement) and `json_object` answers are checked to be one JSON object; supported types per model are published in `/v1/models` under `airelays.structured_output`.
+- Claude runtime: discovered `claude:*` aliases and concrete `claude-*` ids, plus configured overrides; chat completions, completions and responses, served on the relay's listener (local or network); images, PDFs and text files as input; local files and conversations; function tool calls are returned to the application, which runs them (AIRelays never runs a tool: built-in tools are off, client tools are descriptions behind a helper that executes nothing, calls are denied before execution, and the run stops at the call). Structured outputs are supported on chat completions: `response_format` `json_schema` maps to the claude CLI's `--json-schema` (native enforcement) and `json_object` answers are checked to be one JSON object; supported types per model are published in `/v1/models` under `airelays.structured_output`.
 
 ## Subscription Usage
 
@@ -375,7 +375,7 @@ The image-generation quota is a separate 24-hour upstream bucket that the usage 
 - default listener `127.0.0.1:8080` (CLI) / `0.0.0.0:8317` (desktop, with a one-click loopback switch)
 - protected routes `/v1/*` and `/no-tools/v1/*`; public: `/` and `GET /healthz`
 - rate limit 120 requests/minute (burst 40), 8 concurrent requests per IP, temporary IP block after repeated bad tokens
-- the Claude runtime is loopback-only and follows the relay's auth mode
+- the Claude runtime follows the relay's listener (local or network) and its auth mode; it is refused only with `trust_x_forwarded_for`
 - desktop update check reads the public GitHub Releases list only; in-place updates install only the offered release and enforce its published SHA-256 digest
 
 ## Configuration
@@ -405,7 +405,6 @@ Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/
 - 413 `request_too_large` on a Claude request: images and documents are limited to 32 MiB per request
 - "Another AIRelays relay is already running": one relay per data directory; use the running one (the desktop app runs it), stop it, or give a second relay its own `--data-dir`
 - browser login URL only works on the relay's own machine; use `airelays login --device` on servers
-- Claude not ready in network mode: the runtime is loopback-only; switch to loopback binding
 - Claude 503 `provider_auth_error`: no AIRelays Claude account is connected; run `airelays claude login` or `airelays claude set-token` (the personal Claude Code sign-in and exported tokens are ignored)
 - Claude usage stale: check `stale_reason`; update Claude Code for `cli_unsupported`, unset `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` for `nonessential_traffic_disabled`
 - macOS "AIRelays is damaged" after a browser download: `xattr -dr com.apple.quarantine /Applications/AIRelays.app` (the one-line installer avoids this); Linux AppImage FUSE error: install libfuse2 or set `APPIMAGE_EXTRACT_AND_RUN=1`

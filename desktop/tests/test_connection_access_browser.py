@@ -31,7 +31,6 @@ def test_connection_card_contains_working_access_controls_and_warnings(page, das
 
     local.click()
     playwright.expect(local).to_have_attribute("aria-pressed", "true")
-    playwright.expect(card.locator("#ov-claude-note")).to_be_hidden()
     open_mode.click()
     playwright.expect(open_mode).to_have_attribute("aria-pressed", "true")
     playwright.expect(card.locator("#ov-key-row")).to_be_hidden()
@@ -43,8 +42,10 @@ def test_connection_card_contains_working_access_controls_and_warnings(page, das
     playwright.expect(network).to_have_attribute("aria-pressed", "true")
     playwright.expect(card.locator("#ov-open-lan-warning")).to_be_visible()
     playwright.expect(card.locator("#ov-open-warning")).to_be_hidden()
-    playwright.expect(card.locator("#ov-claude-note")).to_be_visible()
-    playwright.expect(page.locator("#ov-claude-off-badge")).to_be_visible()
+    # Claude follows the user's network choice: still on in network mode.
+    playwright.expect(page.locator("#ov-claude-section")).to_be_visible()
+    playwright.expect(page.locator("#ov-claude-off-badge")).to_be_hidden()
+    playwright.expect(page.locator("#ov-claude-account")).not_to_contain_text("Paused")
     assert page.evaluate("window.accessCalls") == [
         {"command": "set_network_exposure", "args": {"exposed": False}},
         {"command": "set_auth_mode", "args": {"requireToken": False}},
@@ -63,7 +64,7 @@ def test_connection_card_contains_working_access_controls_and_warnings(page, das
     playwright.expect(card.locator("#ov-open-lan-warning")).to_be_hidden()
     playwright.expect(card.locator("#ov-key-row")).to_be_visible()
     local.click()
-    playwright.expect(card.locator("#ov-claude-note")).to_be_hidden()
+    playwright.expect(page.locator("#ov-claude-off-badge")).to_be_hidden()
     page.screenshot(path=f"/tmp/airelays-connection-access-{width}.png")
 
 

@@ -197,8 +197,8 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 Current Claude limits:
 
-- local-only
-- loopback-only
+- runs through the `claude` CLI on the relay's machine
+- served on the relay's listener, local or network
 - follows the relay's protected or open local authentication mode
 - no audio, no image generation (GPT models only), no server-side tools (web search), no forced tool calls
 

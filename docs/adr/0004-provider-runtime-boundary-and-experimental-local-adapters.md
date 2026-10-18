@@ -14,6 +14,14 @@ explicit rejection of unsupported combinations. Only the labeling and the
 "reject open-relay mode" clause (superseded by the relay-wide auth-mode
 behavior documented in README and docs/security.md) have evolved.
 
+Amended 2026-10-18 (0.19.0): the "loopback-only" clause is withdrawn. The
+user's choice of listener applies to every provider: a relay bound to the
+network serves Claude models to the network too, under the same relay
+auth mode. The relay still runs the local `claude` CLI on its own machine,
+and the Claude runtime is still refused together with
+`trust_x_forwarded_for`. The desktop app no longer pauses Claude in network
+mode.
+
 ## Context
 
 AIRelays now exposes more than one upstream runtime behind one OpenAI-compatible local edge. The OpenAI runtime remains the primary subscription-backed path, while Claude support is introduced as a smaller local adapter with a materially different auth surface and capability boundary.

@@ -81,7 +81,7 @@ def render_home(
         )
         if claude_provider.get("enabled"):
             protected_surface_copy += (
-                "<li>Claude models are local-only, loopback-only, and stateless</li>"
+                "<li>Claude models run through this machine's Claude CLI and are stateless</li>"
                 "<li>Claude models support text chat and text completions only</li>"
             )
         diagnostics_copy = (

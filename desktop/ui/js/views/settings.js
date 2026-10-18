@@ -62,7 +62,7 @@ const FIELDS = [
   },
   {
     title: "Providers",
-    caption: "The Claude provider requires 'This machine only' network mode.",
+    caption: "Claude runs in both network modes. It is off while \"Trust X-Forwarded-For header\" is on.",
     items: [
       { key: "enableOpenaiProvider", label: "Enable OpenAI provider", kind: "bool" },
       { key: "modelsCacheTtlSeconds", label: "OpenAI models cache TTL (seconds)", kind: "number", min: 0, max: 86400 },

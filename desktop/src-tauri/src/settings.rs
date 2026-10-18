@@ -152,11 +152,11 @@ impl AppSettings {
         format!("http://{}:{}/v1", self.client_host(), self.port)
     }
 
-    /// The relay enforces guardrails for the Claude runtime (loopback-only
-    /// listener, no X-Forwarded-For trust); the rendered config must
-    /// respect them or serve refuses to start.
+    /// The relay refuses the Claude runtime together with X-Forwarded-For
+    /// trust; the rendered config must respect that or serve refuses to
+    /// start. Claude runs on whichever listener the user chose.
     pub fn claude_effectively_enabled(&self) -> bool {
-        self.enable_claude && self.is_loopback_host() && !self.trust_x_forwarded_for
+        self.enable_claude && !self.trust_x_forwarded_for
     }
 
     /// Rejects values that would render an invalid or dangerous config.

@@ -192,7 +192,7 @@ logs_dir = "/tmp/airelay-logs"
     assert "codex_home" not in loaded.render_config_toml()
 
 
-def test_claude_guardrails_allow_open_mode_but_require_loopback(tmp_path) -> None:
+def test_claude_runs_on_any_listener_the_user_chooses(tmp_path) -> None:
     settings = Settings(
         host="127.0.0.1",
         data_dir=tmp_path / "data",
@@ -204,10 +204,14 @@ def test_claude_guardrails_allow_open_mode_but_require_loopback(tmp_path) -> Non
 
     settings.validate_provider_guardrails()
 
-    settings.host = "0.0.0.0"
+    for host in ("0.0.0.0", "192.168.1.7", "::"):
+        settings.host = host
+        settings.validate_provider_guardrails()
+
+    settings.trust_x_forwarded_for = True
     try:
         settings.validate_provider_guardrails()
     except RuntimeError as exc:
-        assert "restricted to loopback" in str(exc)
+        assert "trust_x_forwarded_for" in str(exc)
     else:
-        raise AssertionError("Expected Claude guardrails to reject non-loopback host")
+        raise AssertionError("Expected Claude guardrails to reject trust_x_forwarded_for")

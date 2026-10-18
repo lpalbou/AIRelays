@@ -18,6 +18,12 @@
 
 ### Changed
 
+- Claude models follow the relay's listener like every other model: a
+  relay bound to your network (the desktop's "Devices on my network")
+  serves Claude to your network too, under the same API-key setting.
+  Previously the Claude runtime required a loopback listener and the
+  desktop app paused it in network mode. `trust_x_forwarded_for` still
+  turns the Claude runtime off.
 - The Windows installer stops only the AIRelays app it is replacing, not
   every running copy.
 

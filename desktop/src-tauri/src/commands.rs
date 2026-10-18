@@ -36,7 +36,7 @@ pub struct UiState {
     pub login_accepts_code: bool,
     pub login_running: bool,
     /// Whether the Claude provider actually runs under the current settings
-    /// (feature flag AND loopback AND no X-Forwarded-For trust). Single
+    /// (feature flag AND no X-Forwarded-For trust). Single
     /// source of truth for the UI — re-deriving the rule in JS caused traps.
     pub claude_effective: bool,
     /// True when a stored Claude token file exists. It overrides the CLI's

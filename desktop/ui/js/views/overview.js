@@ -14,9 +14,6 @@ const pendingLogout = new Set();
 // The sign-out the confirmation dialog is about: {provider, email}.
 let pendingLogoutTarget = null;
 let pendingClaudeLogout = null;
-// Claude method chosen while the provider was off (network mode); resumed
-// after the user confirms the mode switch.
-let pendingClaudeMethod = null;
 // The outside-click menu closer, removed on unmount.
 let documentClickHandler = null;
 let expandedAccountDetails = null;
@@ -145,10 +142,6 @@ function template() {
           <span>⚠</span>
           <span>Without a key, any program on this machine can use the relay and your subscription quota.</span>
         </div>
-        <div class="hint" id="ov-claude-note" hidden>
-          <span>ⓘ</span>
-          <span>The Claude provider only works in "This machine only" mode; it stays off while network access is on.</span>
-        </div>
         <p class="card-caption">Access changes apply immediately and restart a running relay.</p>
       </div>
     </section>
@@ -173,7 +166,8 @@ function template() {
     <section class="card provider-card provider-anthropic" id="ov-claude-section" aria-label="Anthropic accounts" hidden>
       <div class="provider-head">
         <h2 class="provider-title">Anthropic</h2>
-        <span class="badge badge-warn" id="ov-claude-off-badge" hidden>Off in network mode</span>
+        <span class="badge badge-warn" id="ov-claude-off-badge" hidden
+              title="Turn off &quot;Trust X-Forwarded-For header&quot; in Settings to use Claude.">Off: proxy headers trusted</span>
         <span class="spacer"></span>
         <button class="btn btn-small btn-ghost" id="ov-refresh-claude" title="Reload Claude usage">${icon("refresh", 13)} Refresh</button>
         <div class="split-btn">
@@ -258,21 +252,6 @@ function template() {
       </div>
     </dialog>
 
-    <dialog id="ov-claude-mode-dialog">
-      <h3>Claude needs "This machine only" mode</h3>
-      <p class="dialog-text">
-        For security, the Claude provider only runs while the
-        relay is not exposed to your network. Switching now restarts the
-        relay on this machine only — <strong>devices on your network lose
-        access</strong> until you switch back.
-      </p>
-      <div class="row" style="margin-top:14px">
-        <span class="spacer"></span>
-        <button class="btn" id="ov-claude-mode-cancel">Cancel</button>
-        <button class="btn btn-primary" id="ov-claude-mode-switch">Switch &amp; continue</button>
-      </div>
-    </dialog>
-
     <dialog id="ov-claude-token-dialog">
       <h3>Claude setup token</h3>
       <p class="dialog-text">
@@ -332,14 +311,7 @@ function bindActions(ctx) {
   el("ov-auth-protected").addEventListener("click", () => call(api.setAuthMode(true), "Change failed"));
   el("ov-auth-open").addEventListener("click", () => call(api.setAuthMode(false), "Change failed"));
   el("ov-net-loopback").addEventListener("click", () => call(api.setNetworkExposure(false), "Change failed"));
-  el("ov-net-lan").addEventListener("click", async () => {
-    const claudeWasOn = Boolean(lastState?.claude_effective);
-    const done = await call(api.setNetworkExposure(true), "Change failed");
-    // The reverse trap: switching to network mode silently pauses Claude.
-    if (done !== undefined && claudeWasOn) {
-      toast("Claude paused", "It stays off while network access is on.", "info");
-    }
-  });
+  el("ov-net-lan").addEventListener("click", () => call(api.setNetworkExposure(true), "Change failed"));
 
   el("ov-token-toggle").addEventListener("click", async () => {
     if (revealedToken) {
@@ -395,7 +367,7 @@ function bindActions(ctx) {
       startOpenAiSignIn();
     });
   });
-  el("ov-login-claude").addEventListener("click", () => beginClaudeMethod("browser"));
+  el("ov-login-claude").addEventListener("click", () => runClaudeMethod("browser"));
   el("ov-login-claude-menu").addEventListener("click", (event) => {
     event.stopPropagation();
     const menu = el("ov-claude-menu");
@@ -405,27 +377,8 @@ function bindActions(ctx) {
   root.querySelectorAll("#ov-claude-menu button").forEach((item) => {
     item.addEventListener("click", () => {
       el("ov-claude-menu").hidden = true;
-      beginClaudeMethod(item.dataset.method);
+      runClaudeMethod(item.dataset.method);
     });
-  });
-  el("ov-claude-mode-cancel").addEventListener("click", () => {
-    pendingClaudeMethod = null;
-    el("ov-claude-mode-dialog").close();
-  });
-  el("ov-claude-mode-switch").addEventListener("click", async () => {
-    const method = pendingClaudeMethod;
-    pendingClaudeMethod = null;
-    const button = el("ov-claude-mode-switch");
-    button.disabled = true;
-    // Blocks through the relay restart; when it returns, loopback mode is
-    // live and Claude is effective.
-    const done = await call(api.setNetworkExposure(false), "Mode switch failed");
-    button.disabled = false;
-    if (!root) return;
-    el("ov-claude-mode-dialog").close();
-    if (done === undefined) return;
-    toast("Switched to \u201CThis machine only\u201D", "Claude is available; network devices are disconnected.", "success");
-    if (method) runClaudeMethod(method);
   });
   el("ov-claude-token-cancel").addEventListener("click", () => el("ov-claude-token-dialog").close());
   el("ov-claude-token-clear").addEventListener("click", async () => {
@@ -554,18 +507,6 @@ function bindActions(ctx) {
       toast("Code submitted", "Finishing the sign-in…", "success");
     }
   });
-}
-
-// Entry point for both Claude methods: when the provider is off because
-// network access is on, explain and offer the switch instead of hiding or
-// silently no-op'ing (both previous iterations confused users).
-function beginClaudeMethod(method) {
-  if (lastState && !lastState.claude_effective) {
-    pendingClaudeMethod = method;
-    el("ov-claude-mode-dialog").showModal();
-    return;
-  }
-  runClaudeMethod(method);
 }
 
 function runClaudeMethod(method) {
@@ -932,7 +873,6 @@ function render(state) {
 
   el("ov-open-lan-warning").hidden = requireAuth || loopback;
   el("ov-open-warning").hidden = requireAuth || !loopback;
-  el("ov-claude-note").hidden = loopback || !state.settings.enableClaude;
 
   // Key row: masked value only meaningful in protected mode.
   el("ov-key-row").hidden = !requireAuth;
@@ -940,9 +880,7 @@ function render(state) {
 
   // Claude section: always visible while the feature flag is on (hiding it
   // read as "the feature is gone"), with an explicit badge when the
-  // provider is off because network access is on. Clicking sign-in while
-  // off opens the mode-switch dialog instead of a sign-in that would do
-  // nothing.
+  // provider is off because proxy headers are trusted.
   el("ov-claude-section").hidden = !state.settings.enableClaude;
   el("ov-claude-off-badge").hidden = state.claude_effective;
 
@@ -1523,8 +1461,8 @@ function renderAccounts(state) {
   }
 
   // Claude renders into its own section (own header + sign-in button); the
-  // paused state persists the row so a signed-in Claude never silently
-  // vanishes after a network-mode switch.
+  // paused state keeps the row so a signed-in Claude never silently
+  // vanishes while the provider is off.
   const claude = providers.claude;
   const claudePaused = Boolean(
     lastState?.settings?.enableClaude && !lastState?.claude_effective
@@ -1610,7 +1548,7 @@ function claudeBlock(claude, paused, claudeUsage, count) {
   if (paused) {
     badge.className = "badge badge-neutral";
     badge.textContent = "Paused";
-    badge.title = "Off while network access is on — switch to \u201CThis machine only\u201D to use it.";
+    badge.title = 'Off while "Trust X-Forwarded-For header" is on (Settings, Security Limits).';
   } else if (claude.cooldown_seconds > 0) {
     badge.className = "badge badge-warn";
     badge.textContent = "Cooling down";
@@ -1662,7 +1600,7 @@ function claudeBlock(claude, paused, claudeUsage, count) {
   if (paused) {
     const note = document.createElement("div");
     note.className = "account-note";
-    note.textContent = "Off while network access is on — switch to \u201CThis machine only\u201D to use it.";
+    note.textContent = 'Off while "Trust X-Forwarded-For header" is on (Settings, Security Limits).';
     block.appendChild(note);
     return block;
   }

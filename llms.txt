@@ -59,7 +59,7 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - model discovery follows the installed Codex client version and Claude CLI catalog; `GET /v1/models?refresh=true` bypasses provider caches, and Claude alias resolutions appear in `airelays.resolved_model`
 - OpenAI catalogs form a union; balancing, affinity, and failover stay inside the requested model's supporting account subset; `airelays.account_availability` exposes coverage counts and `catalog_visibility` preserves upstream-hidden status
 - other model ids route to the OpenAI runtime when it is enabled
-- Claude runtime follows the relay's protected or open local auth mode and requires loopback binding
+- Claude runtime follows the relay's listener (local or network) and its protected or open local auth mode
 - `GET /v1/subscription/status` reports OpenAI usage by default and Claude usage with `?provider=claude`, both in one normalized shape; `?all_accounts=true` always returns the per-account list, with a per-account `error` when a probe fails
 - Claude usage includes explicitly named scoped caps (including Fable), credit/spend metadata with declared currency scales, and fetch timestamps; scoped exhaustion does not imply all-model exhaustion, and quota percentages are not token counts
 - Claude usage comes from each profile's Claude Code via the SDK `get_usage` control request (no inference; verified with 2.1.292+), refreshed every five minutes; the relay never reads Claude credentials. Readings without live data keep the last good values marked stale with `stale_reason` (`usage_unavailable`, `nonessential_traffic_disabled`, `cli_unsupported`, `cli_failed`) and never unblock or rank an account

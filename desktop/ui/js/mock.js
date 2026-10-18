@@ -61,10 +61,7 @@ const state = () => ({
   login_provider: null,
   login_accepts_code: false,
   login_running: false,
-  claude_effective:
-    settings.enableClaude &&
-    ["127.0.0.1", "localhost", "::1"].includes(settings.host) &&
-    !settings.trustXForwardedFor,
+  claude_effective: settings.enableClaude && !settings.trustXForwardedFor,
   claude_token_present: false,
   settings: { ...settings },
   relay_status: managed

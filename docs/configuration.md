@@ -311,4 +311,5 @@ Claude runtime:
   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` in the relay's environment stops
   it and marks readings `nonessential_traffic_disabled`
 - follows the relay's protected or open local auth mode
-- requires loopback binding
+- served on the relay's listener (local or network); refused together with
+  `trust_x_forwarded_for`

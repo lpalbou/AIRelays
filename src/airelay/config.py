@@ -642,11 +642,6 @@ class Settings:
     def validate_provider_guardrails(self) -> None:
         if not self.enable_claude:
             return
-        if not self.is_loopback_host():
-            raise RuntimeError(
-                "The Claude runtime is restricted to loopback listeners. "
-                "Use `127.0.0.1`, `localhost`, or `::1`."
-            )
         if self.trust_x_forwarded_for:
             raise RuntimeError(
                 "The Claude runtime does not allow `trust_x_forwarded_for`."

@@ -26,8 +26,9 @@ platform installs and the `AIRELAYS_VERSION` / `AIRELAYS_NO_LAUNCH` options.
 
 In Overview, **Connect Your App** combines the endpoint and relay key with
 **Authentication** and **Who can connect**. Access changes take effect
-immediately and restart a running relay; the card explains open-mode risks
-and when network access pauses Claude.
+immediately and restart a running relay; the card explains open-mode risks.
+Claude follows the same choice: in network mode, devices on your network can
+use it too.
 
 The Anthropic card's **Sign in** / **Add account** menu offers **In a
 browser** (a new AIRelays-owned Claude Code profile) or **With a token** (a

@@ -227,7 +227,7 @@ Claude Code sign-in, a custom `CLAUDE_CONFIG_DIR`, or an exported
 `CLAUDE_CODE_OAUTH_TOKEN`, connect it once with `airelays claude login` (or
 `airelays claude set-token`). Profiles already enrolled keep working.
 
-When the Claude runtime is enabled, AIRelays keeps the same auth behavior as the rest of the relay. The default protected mode requires the AIRelays bearer token; `--no-auth` starts an open local relay. Claude remains restricted to loopback binding.
+When the Claude runtime is enabled, AIRelays keeps the same auth behavior as the rest of the relay. The default protected mode requires the AIRelays bearer token; `--no-auth` starts an open local relay. Claude is served on the same listener as every other model: on this machine only, or to your network when you bind the relay there.
 
 ## Basic Verification
 
@@ -501,7 +501,7 @@ Claude runtime:
 - default rate limit: `120` requests/minute with burst `40`
 - default concurrent request cap: `8` per IP
 - repeated bad tokens trigger a temporary IP block
-- the Claude runtime is loopback-only and follows the relay's protected or open local auth mode
+- the Claude runtime follows the relay's listener and its protected or open local auth mode
 
 ## Configuration
 
