@@ -896,9 +896,12 @@
 <h1 id="airelays-docs">AIRelays Docs<a class="headerlink" href="#airelays-docs" title="Permanent link">&para;</a></h1>
 <p>AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes.</p>
 <ul>
-<li>OpenAI runtime: ChatGPT subscription access with multi-account balancing</li>
+<li>OpenAI runtime: ChatGPT subscription access with multi-account balancing, plus image generation and edits (<code>gpt-image-2</code>)</li>
 <li>Claude runtime: chat, completions and Responses with images, files, conversations and tool calls, balanced across AIRelays-owned <code>claude</code> CLI subscription profiles, separate from your personal Claude Code sign-in</li>
 </ul>
+<p><img alt="A compact matte-black device with a thin green light line and the word AIRelays engraved on top, photographed on a slate pedestal" src="assets/images/airelays-product-shot.jpg" /></p>
+<p><em>Generated through AIRelays with <code>POST /v1/images/generations</code>; the request is
+in <a href="api/#image-examples">API Notes</a>.</em></p>
 <p>Install the headless relay and CLI (macOS, Linux):</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-headless.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
 </code></pre></div>

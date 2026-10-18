@@ -485,6 +485,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#image-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image generation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#accounts" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1075,6 +1086,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#image-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image generation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#accounts" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1368,19 +1390,89 @@ before any upstream call.</p>
 </thead>
 <tbody>
 <tr>
+<td>Image generation and edits (<code>/v1/images/generations</code>, <code>/v1/images/edits</code>)</td>
+<td>✅ <code>gpt-image-2</code> (<a href="#image-generation">details</a>)</td>
+<td>❌ <code>422</code></td>
+</tr>
+<tr>
 <td>Embeddings (<code>/v1/embeddings</code>)</td>
 <td>❌ <code>501</code></td>
 <td>❌ <code>501</code></td>
 </tr>
 <tr>
-<td>Image generation, audio, realtime</td>
+<td>Image variations, audio, realtime</td>
 <td>❌ <code>501</code></td>
 <td>❌ <code>501</code></td>
 </tr>
 </tbody>
 </table>
 <p>Neither subscription offers embeddings: the ChatGPT subscription refuses
-embedding models, and Anthropic has no embedding model.</p>
+embedding models, and Anthropic has no embedding model. Neither offers
+text-to-speech or transcription.</p>
+<h2 id="image-generation">Image generation<a class="headerlink" href="#image-generation" title="Permanent link">&para;</a></h2>
+<p>The ChatGPT subscription serves the GPT image model on two OpenAI Images
+routes; <code>/v1/models</code> lists it as <code>gpt-image-2</code> with these controls under
+<code>airelays.capabilities.image_generation</code>. Images come back as PNG
+<code>b64_json</code>, as OpenAI's GPT image models return them. The image quota is a
+separate 24-hour window (see
+<a href="../subscription-status/#image-generation-quota">Subscription Status</a>).</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>GPT models</th>
+<th>Claude models</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /v1/images/generations</code>: <code>prompt</code>, <code>model</code> (<code>gpt-image-*</code>), <code>background</code>, <code>moderation</code></td>
+<td>✅ checked locally, forwarded</td>
+<td>❌ <code>422</code></td>
+</tr>
+<tr>
+<td><code>quality</code> (<code>auto</code>, <code>low</code>, <code>medium</code>, <code>high</code>) and <code>size</code> (<code>auto</code> or <code>WIDTHxHEIGHT</code>)</td>
+<td>⚠️ checked and forwarded, but the service picks its own; a difference is listed in <code>x-airelays-ignored-parameters</code> and the response reports what was rendered</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><code>n</code> up to 10</td>
+<td>✅ one upstream image per count</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><code>stream: true</code></td>
+<td>✅ one <code>image_generation.completed</code> (edits: <code>image_edit.completed</code>) event per image, no partial images</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><code>POST /v1/images/edits</code>: <code>image</code> files (multipart, up to 16 PNG/JPEG/WebP), or data URLs and local <code>file_id</code>s (JSON)</td>
+<td>✅</td>
+<td>❌ <code>422</code></td>
+</tr>
+<tr>
+<td><code>output_format</code>, <code>output_compression</code>, <code>partial_images</code>, <code>response_format: "url"</code>, <code>style</code>, <code>user</code>, <code>safety_identifier</code>, <code>input_fidelity</code></td>
+<td>⚠️ the answer is always PNG <code>b64_json</code></td>
+<td>❌</td>
+</tr>
+<tr>
+<td><code>mask</code></td>
+<td>❌ <code>422</code></td>
+<td>❌</td>
+</tr>
+<tr>
+<td>Image model ids on the text routes</td>
+<td>❌ <code>404</code></td>
+<td>❌</td>
+</tr>
+</tbody>
+</table>
+<p>The upstream reports the resolution and quality it rendered in <code>size</code> and
+<code>quality</code>. Observed live: four flat-shape requests asking for portrait,
+square and landscape sizes at low, medium and high quality all came back
+<code>1254x1254</code> at <code>low</code>, while photographic prompts came back <code>1536x1024</code> at
+<code>medium</code>. Details for both routes are in
+<a href="../api/#post-v1imagesgenerations-and-post-v1imagesedits">API Notes</a>.</p>
 <h2 id="accounts">Accounts<a class="headerlink" href="#accounts" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

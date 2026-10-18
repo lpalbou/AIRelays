@@ -415,6 +415,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#image-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image Generation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#provider-routing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1108,6 +1119,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#image-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image Generation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#provider-routing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1298,12 +1320,25 @@ and balances requests across eligible accounts with capacity.</p>
 <li>local-only</li>
 <li>loopback-only</li>
 <li>follows the relay's protected or open local authentication mode</li>
-<li>no audio, no server-side tools (web search), no forced tool calls</li>
+<li>no audio, no image generation (GPT models only), no server-side tools (web search), no forced tool calls</li>
 </ul>
 <h2 id="status">Status<a class="headerlink" href="#status" title="Permanent link">&para;</a></h2>
 <p>Inspect relay and provider readiness:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>status
 </code></pre></div>
+<p>Usage windows of the running relay, including the image-generation quota:</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>usage
+</code></pre></div>
+<h2 id="image-generation">Image Generation<a class="headerlink" href="#image-generation" title="Permanent link">&para;</a></h2>
+<p>GPT models also generate and edit images through OpenAI's Images routes:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/v1/images/generations<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"prompt": "a watercolor fox", "quality": "low"}'</span>
+</code></pre></div>
+<p>The image comes back as PNG <code>b64_json</code>; <code>/v1/images/edits</code> takes the image
+to change as a multipart file. See
+<a href="../api/#post-v1imagesgenerations-and-post-v1imagesedits">API Notes</a>.</p>
 <p>Run local setup checks plus live upstream probes:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>doctor
 </code></pre></div>

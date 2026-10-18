@@ -604,6 +604,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#can-airelays-generate-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can AIRelays generate images?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-do-i-log-in-to-the-claude-runtime" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1185,6 +1196,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#can-airelays-generate-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can AIRelays generate images?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-do-i-log-in-to-the-claude-runtime" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1357,7 +1379,16 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
   AIRelays never runs a tool (see <a href="../api/#tool-calls-on-claude-models">docs/api.md</a>)</li>
 <li>follows the relay's protected or open local authentication mode</li>
 <li>loopback-only</li>
+<li>no image generation (GPT models only, see below)</li>
 </ul>
+<h2 id="can-airelays-generate-images">Can AIRelays generate images?<a class="headerlink" href="#can-airelays-generate-images" title="Permanent link">&para;</a></h2>
+<p>Yes, on GPT models: <code>POST /v1/images/generations</code> and <code>POST /v1/images/edits</code>
+serve <code>gpt-image-2</code> through the ChatGPT subscription with OpenAI's parameters
+(<code>n</code>, <code>background</code>, <code>stream</code>; <code>size</code> and <code>quality</code> are forwarded but the
+service picks its own and the relay discloses the difference). Images come
+back as PNG <code>b64_json</code>. The image quota is a separate 24-hour window, shown in the
+desktop and by <code>airelays usage</code>. Masks, audio and image variations are not
+available. See <a href="../capabilities/#image-generation">docs/capabilities.md</a>.</p>
 <h2 id="how-do-i-log-in-to-the-claude-runtime">How do I log in to the Claude runtime?<a class="headerlink" href="#how-do-i-log-in-to-the-claude-runtime" title="Permanent link">&para;</a></h2>
 <p>Use the local Claude CLI through AIRelays:</p>
 <ul>

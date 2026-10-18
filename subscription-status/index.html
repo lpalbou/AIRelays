@@ -511,6 +511,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#image-generation-quota" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image generation quota
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#claude" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -976,6 +987,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#image-generation-quota" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image generation quota
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#claude" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1066,6 +1088,31 @@ account's reported window, not activity in other apps or before recording.</p>
   the bare single-account shape)</li>
 <li><code>?raw=true</code> includes the raw upstream payload</li>
 </ul>
+<h2 id="image-generation-quota">Image generation quota<a class="headerlink" href="#image-generation-quota" title="Permanent link">&para;</a></h2>
+<p>Image generation on the ChatGPT subscription is metered in its own upstream
+bucket (<code>imagegen_premium</code>, a 24-hour window observed live), not in the text
+windows above, and the usage endpoint does not report it. The image routes
+do, in every response's headers, so AIRelays reads the quota there and
+reports it as <code>rate_limits.image_generation</code> in the same window shape, with:</p>
+<ul>
+<li><code>source</code>: <code>image_response</code> when the reading came with an image, <code>probe</code>
+  when it came from the relay's quota probe</li>
+<li><code>observed_at</code>: when that reading was taken</li>
+<li><code>relay</code>: the images this relay produced on the account in the last window
+  (<code>images</code>, <code>requests</code>, <code>image_tokens</code>), from its own records</li>
+</ul>
+<p>The probe is a prompt-less image request the upstream refuses with <code>400</code>
+without spending quota; the refusal carries the quota headers. It runs with
+each usage probe (cached for a minute; every five minutes in the background
+with several accounts) so the meter stays current between image requests.
+Set <code>[providers.openai] image_usage_probe = false</code> to turn it off; the meter
+then updates only when images are generated. Readings survive restarts
+(<code>~/.airelays/openai-image-usage.json</code>).</p>
+<p>The desktop shows the quota as an <strong>Images · 24h window</strong> bar under each
+OpenAI account, with the relay's image count and the reading's source in the
+<strong>?</strong> details; <code>airelays usage</code> prints the same windows in the terminal. An
+exhausted image bucket benches the account for images only; text requests
+keep flowing, and the other way round.</p>
 <h2 id="claude">Claude<a class="headerlink" href="#claude" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span><span class="s1">'http://127.0.0.1:8080/v1/subscription/status?provider=claude'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span>

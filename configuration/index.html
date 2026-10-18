@@ -1239,6 +1239,12 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <span class="c1"># backoff budget) are skipped so the honest 429 is not delayed.</span>
 <span class="n">retry_attempts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span>
 <span class="n">retry_backoff_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">20</span><span class="p">,</span><span class="w"> </span><span class="mi">60</span><span class="p">]</span>
+<span class="c1"># Image generation (/v1/images/*): the per-image upstream timeout, and</span>
+<span class="c1"># whether to read the image quota with a prompt-less probe (a free 400 that</span>
+<span class="c1"># carries the quota headers) alongside each usage probe. Off, the image</span>
+<span class="c1"># meter updates only when images are generated.</span>
+<span class="n">image_timeout_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">300.0</span>
+<span class="n">image_usage_probe</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 
 <span class="k">[providers.claude]</span>
 <span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
@@ -1278,6 +1284,8 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <li><code>AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS</code></li>
 <li><code>AIRELAYS_OPENAI_RETRY_ATTEMPTS</code> (automatic retries for failed upstream calls; <code>3</code> default, <code>0</code> disables)</li>
 <li><code>AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS</code> (comma-separated wait before each retry; <code>5,20,60</code> default)</li>
+<li><code>AIRELAYS_IMAGE_TIMEOUT_SECONDS</code> (per-image upstream timeout for <code>/v1/images/*</code>; <code>300</code> default)</li>
+<li><code>AIRELAYS_IMAGE_USAGE_PROBE</code> (read the image quota with a free prompt-less probe on each usage probe; <code>true</code> default)</li>
 <li><code>AIRELAYS_ENABLE_CLAUDE</code> (legacy <code>AIRELAYS_ENABLE_CLAUDE_EXPERIMENTAL</code> is still honored)</li>
 <li><code>AIRELAYS_CLAUDE_BIN</code></li>
 <li><code>AIRELAYS_CLAUDE_TIMEOUT_SECONDS</code></li>

@@ -545,6 +545,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#post-v1imagesgenerations-and-post-v1imagesedits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/images/generations and POST /v1/images/edits
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="POST /v1/images/generations and POST /v1/images/edits">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#image-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#post-v1completions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1207,6 +1235,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#post-v1imagesgenerations-and-post-v1imagesedits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /v1/images/generations and POST /v1/images/edits
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="POST /v1/images/generations and POST /v1/images/edits">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#image-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#post-v1completions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1439,6 +1495,20 @@ adaptation records when the request shape itself is repaired:</p>
   <code>best_of: 1</code>, <code>modalities: ["text"]</code>) are accepted on both runtimes;
   on <code>/v1/completions</code>, an integer <code>logprobs</code> (including <code>0</code>) is a
   request.</li>
+<li><strong>Image generation:</strong> <code>/v1/images/generations</code> and <code>/v1/images/edits</code>
+  forward only what the subscription's image service applies (verified
+  live): <code>prompt</code>, <code>model</code>, <code>background</code> and <code>moderation</code>; <code>quality</code> and
+  <code>size</code> are forwarded too, but the service picks its own. The service
+  does not validate the rest, so AIRelays checks every parameter against
+  OpenAI's published values first (<code>422</code> with the offending <code>param</code>),
+  produces <code>n</code> images with <code>n</code> upstream calls, answers <code>stream: true</code> with
+  one completed event per image, and lists the parameters it dropped
+  (<code>output_format</code>, <code>output_compression</code>, <code>partial_images</code>,
+  <code>response_format</code>, <code>style</code>, <code>user</code>, <code>safety_identifier</code>,
+  <code>input_fidelity</code>), plus <code>quality</code> and <code>size</code> whenever the rendered image
+  differs from the request, in <code>x-airelays-ignored-parameters</code> with a
+  <code>compatibility_adaptation</code> record. A <code>mask</code> is refused (<code>422</code>).
+  See <a href="#post-v1imagesgenerations-and-post-v1imagesedits"><code>POST /v1/images/...</code></a>.</li>
 <li><strong>OpenAI model admission:</strong> when AIRelays can fetch the live ChatGPT
   Codex model catalog for the authenticated OpenAI account(s), OpenAI
   requests are forwarded only for model ids that appear in that catalog
@@ -1510,6 +1580,11 @@ upstream policy; only reported windows are returned.</p>
   OpenAI account (an entry carries an <code>error</code> instead of a <code>status</code> when
   that account's usage probe fails)</li>
 <li><code>?raw=true</code> includes the raw upstream payload (OpenAI only)</li>
+<li><code>rate_limits.image_generation</code> reports the image-generation quota, a
+  separate 24-hour upstream bucket the usage endpoint does not include: the
+  same window fields, plus <code>source</code> (<code>image_response</code> or <code>probe</code>),
+  <code>observed_at</code>, and <code>relay</code> (the images this relay made in the window). See
+  <a href="../subscription-status/#image-generation-quota">Subscription Status</a></li>
 <li><code>?provider=claude&amp;all_accounts=true</code> returns
   <code>{"object": "subscription_status_list", "provider": "claude", "accounts": [...]}</code>,
   keyed by stable account <code>slug</code>. Each entry has <code>slug</code>, <code>email</code>, and one of
@@ -1544,12 +1619,20 @@ although its sign-in works, with seconds until AIRelays tries them again). <code
 strategy. A second ready profile of the same subscription carries
 <code>duplicate_of</code> and is counted once; an account whose identity differs from its
 enrollment is not eligible.</p>
+<p><code>providers.openai.accounts[]</code> (or <code>providers.openai</code> itself with a single
+account) carries <code>image_usage</code>: the image-generation quota as last read and
+the relay's own image count for the window; <code>image_limited</code> and
+<code>image_limited_for_seconds</code> appear while an account's image bucket is
+benched (text requests are unaffected).</p>
 <p><code>GET /v1/relay/status?activity_only=true</code> returns only
 <code>{"requests_total": N}</code>. It requires the same authentication as the full
 status, but it does not scan storage or probe providers, is not itself
 counted, and does not consume rate-limit quota or a concurrency slot, so
 clients such as the desktop tray can poll it frequently.</p>
 <h2 id="cli-diagnostics">CLI Diagnostics<a class="headerlink" href="#cli-diagnostics" title="Permanent link">&para;</a></h2>
+<p><code>airelays usage</code> prints every usage window the running relay reports, per
+account and provider, text windows and the image-generation quota alike
+(<code>--json</code> for the raw payloads).</p>
 <p><code>airelays status</code> reports local config, relay-token, and provider readiness
 state. <code>airelays doctor</code> runs the same local checks and also probes the OpenAI
 upstream <code>/models</code> route plus a tiny <code>/responses</code> smoke request when the OpenAI
@@ -1689,6 +1772,98 @@ provider (<code>--json</code> supported).</p>
   is connected to AIRelays. Run <code>airelays claude login</code> or
   <code>airelays claude set-token</code>."</li>
 </ul>
+<h2 id="post-v1imagesgenerations-and-post-v1imagesedits"><code>POST /v1/images/generations</code> and <code>POST /v1/images/edits</code><a class="headerlink" href="#post-v1imagesgenerations-and-post-v1imagesedits" title="Permanent link">&para;</a></h2>
+<p>OpenAI's Images API on the ChatGPT subscription runtime (GPT models only;
+<code>claude:*</code> models return <code>422 unsupported_for_provider</code>). The subscription
+serves the GPT image model; <code>/v1/models</code> lists it as <code>gpt-image-2</code> and the
+routes accept any <code>gpt-image-*</code> id (the upstream does not report which model
+answered). Other ids return <code>404 model_not_found</code>.</p>
+<ul>
+<li><code>prompt</code> (required, up to 32,000 characters), <code>model</code> (default
+  <code>gpt-image-2</code>), <code>background</code> (<code>transparent</code>, <code>opaque</code>, <code>auto</code>) and
+  <code>moderation</code> (<code>low</code>, <code>auto</code>) are forwarded; <code>background</code> is applied
+  (verified live, transparent images carry an alpha channel).</li>
+<li><code>quality</code> (<code>auto</code>, <code>low</code>, <code>medium</code>, <code>high</code>) and <code>size</code> (<code>auto</code>, or
+  <code>WIDTHxHEIGHT</code> with both sides multiples of 16, an aspect ratio between
+  1:3 and 3:1, a longest edge up to 3840 and 655,360 to 8,294,400 pixels)
+  are checked and forwarded, but the service decides on its own: observed
+  live, flat-shape prompts came back <code>1254x1254</code> at <code>low</code> whatever was
+  asked (portrait, square, landscape, low, medium or high), and
+  photographic prompts <code>1536x1024</code> at <code>medium</code>. The response's <code>size</code> and
+  <code>quality</code> report what was rendered, and whenever they differ from the
+  request the parameter is listed in <code>x-airelays-ignored-parameters</code>.
+  Values outside OpenAI's sets are refused with <code>422</code> naming the field in
+  <code>param</code> (verified live: an unknown <code>quality</code> renders at <code>low</code>, any
+  <code>model</code> is accepted, an impossible <code>size</code> is replaced).</li>
+<li><code>n</code> (1 to 10) runs one upstream call per image, up to three at a time, and
+  merges the images and <code>usage</code> into one response; one failed image fails
+  the request, as on OpenAI.</li>
+<li><code>stream: true</code> answers <code>text/event-stream</code> with one
+  <code>image_generation.completed</code> (edits: <code>image_edit.completed</code>) event per
+  image in OpenAI's event shape, once the images exist. There are no
+  partial images, so <code>partial_images</code> is listed as ignored. Failures surface
+  as real HTTP statuses, never as an empty stream.</li>
+<li>the answer is OpenAI's <code>ImagesResponse</code>: <code>created</code>, <code>data[].b64_json</code>,
+  <code>background</code>, <code>output_format</code> (<code>png</code>), <code>quality</code>, <code>size</code>, <code>usage</code>
+  (<code>input_tokens</code>, <code>output_tokens</code>, <code>total_tokens</code> with image/text details).
+  <code>size</code> is the rendered resolution, which may differ from the request. Each
+  image also carries the upstream's <code>generation_id</code>.</li>
+<li><code>output_format</code>, <code>output_compression</code>, <code>partial_images</code>,
+  <code>response_format: "url"</code>, <code>style</code>, <code>user</code> and <code>safety_identifier</code> are
+  accepted, checked, dropped and listed in <code>x-airelays-ignored-parameters</code>:
+  the upstream returns PNG <code>b64_json</code> whatever they say. Unknown parameters
+  are dropped and listed the same way; <code>null</code> values are not listed.</li>
+<li>edits take OpenAI's multipart form (<code>image</code> or <code>image[]</code> files, PNG, JPEG
+  or WebP, up to 16 and 20 MiB each, plus text fields) or a JSON body whose
+  <code>image</code> is a data URL, a local <code>file_id</code> from <code>/v1/files</code>, or an array of
+  them. <code>input_fidelity</code> is listed as ignored (the model always uses high
+  fidelity). <code>mask</code> is refused with <code>422</code>: the upstream edits whole images
+  and dropping the mask would change the output.</li>
+<li>an image call waits up to <code>[providers.openai] image_timeout_seconds</code>
+  (default 300). Quota rejections (<code>429 usage_limit_reached</code>) carry
+  <code>Retry-After</code>; with several accounts the request fails over to one whose
+  image quota is open (the image bucket is benched separately from the text
+  windows), and automatic retry applies as on the text routes.</li>
+<li>the traffic log keeps request and response shapes with image sizes, never
+  the image bytes; <code>upstream_usage</code> records carry the image quota reading.</li>
+</ul>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/v1/images/generations<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"prompt": "a watercolor fox", "size": "1024x1024", "quality": "low"}'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s1">'import base64,json,sys; open("fox.png","wb").write(base64.b64decode(json.load(sys.stdin)["data"][0]["b64_json"]))'</span>
+
+curl<span class="w"> </span>http://127.0.0.1:8080/v1/images/edits<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'authorization: Bearer YOUR_AIRELAYS_TOKEN'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-F<span class="w"> </span><span class="nv">image</span><span class="o">=</span>@fox.png<span class="w"> </span>-F<span class="w"> </span><span class="nv">prompt</span><span class="o">=</span><span class="s1">'make the fox blue'</span>
+</code></pre></div>
+<p>With the OpenAI SDK, <code>client.images.generate(model="gpt-image-2", prompt=...)</code>
+and <code>client.images.edit(model="gpt-image-2", image=open("fox.png", "rb"), prompt=...)</code>
+work as documented; <code>client.images.generate(..., stream=True)</code> yields
+<code>image_generation.completed</code> events.</p>
+<h3 id="image-examples">Image examples<a class="headerlink" href="#image-examples" title="Permanent link">&para;</a></h3>
+<p>Both images were generated through AIRelays with the requests shown. The
+service chose the rendered size and quality in each case, so each response
+listed <code>quality,size</code> in <code>x-airelays-ignored-parameters</code> and reported the
+rendered values in <code>size</code> and <code>quality</code>.</p>
+<p><img alt="A compact matte-black device with a thin green light line and the word AIRelays engraved on top, photographed on a slate pedestal" src="../assets/images/airelays-product-shot.jpg" /></p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-image-2"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"prompt"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Studio product photograph of a compact matte-black aluminum device with softly rounded edges resting on a slate pedestal, one thin illuminated green line across its front, the word AIRelays engraved in small clean sans-serif lettering on its top, seamless dark grey backdrop, soft key light and rim light, photorealistic."</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"size"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1024x1024"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"quality"</span><span class="p">:</span><span class="w"> </span><span class="s2">"high"</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Rendered at <code>1536x1024</code>, reported quality <code>low</code>, 343 image tokens, 16 seconds.</p>
+<p><img alt="Dozens of grey network cables in a server rack converging into one green cable that leads to a small black box" src="../assets/images/airelays-one-relay.jpg" /></p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-image-2"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"prompt"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Photorealistic photograph inside a dim server room: dozens of grey network cables converging into one single bright green cable that leads to a small sleek black box mounted on a rack, cinematic lighting with cool blue ambient and one warm highlight, shot on a full-frame camera, no text."</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"size"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1024x1536"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"quality"</span><span class="p">:</span><span class="w"> </span><span class="s2">"high"</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Rendered at <code>1536x1024</code>, reported quality <code>medium</code>, 601 image tokens, 20 seconds.</p>
 <h2 id="post-v1completions"><code>POST /v1/completions</code><a class="headerlink" href="#post-v1completions" title="Permanent link">&para;</a></h2>
 <p>OpenAI runtime:</p>
 <ul>
@@ -1867,7 +2042,8 @@ Claude request (a read-only <code>git</code> check of its empty working folder, 
 carries <code>x-should-retry: false</code>, so OpenAI SDKs do not retry it:</p>
 <ul>
 <li>embeddings</li>
-<li>image generation</li>
+<li>image variations (<code>/v1/images/variations</code>); generations and edits are
+  served, see above</li>
 <li>audio</li>
 <li>realtime sessions</li>
 </ul>
