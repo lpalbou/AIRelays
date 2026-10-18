@@ -153,6 +153,8 @@ pub fn run() {
             commands::get_models,
             commands::get_log_retention,
             commands::set_log_retention,
+            commands::get_balance,
+            commands::set_balance,
             commands::open_url,
             commands::check_for_update,
             commands::install_update,

@@ -32,8 +32,11 @@ plans report only a weekly window), so the relay ranks windows by
 duration rather than trusting their position in the payload. Usage is
 probed at launch and refreshed in the background; an account that reaches
 a limit on any window is benched until that window resets. Alternatives:
+`balance = "weighted"` to split requests in proportion to remaining capacity,
 `balance = "round_robin"` for strictly equal request counts,
-`balance = "ordered"` to drain the first account before the next. See
+`balance = "ping_pong"` to take turns in order,
+`balance = "ordered"` to drain the first account before the next; `airelays
+balance <strategy>` switches the running relay live. See
 [Configuration](configuration.md).
 
 ## Can I disable relay auth?

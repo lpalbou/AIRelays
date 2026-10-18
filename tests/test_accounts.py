@@ -228,6 +228,56 @@ async def test_session_sticks_to_one_account(tmp_path: Path) -> None:
     assert len(served) == 1
 
 
+@pytest.mark.asyncio
+async def test_ping_pong_visits_each_account_in_turn(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, openai_balance="ping_pong")
+    a, b = FakeBackend("a"), FakeBackend("b")
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    served = [(await pool.collect_response({}, "req", None))["served_by"] for _ in range(6)]
+    assert served == ["a", "b", "a", "b", "a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_weighted_splits_requests_by_remaining_capacity(tmp_path: Path) -> None:
+    """a has 50% of its weekly window left, b 100%: b serves two requests
+    for every one a serves, deterministically."""
+    import time
+    settings = _settings(tmp_path, openai_balance="weighted")
+    a, b = FakeBackend("a"), FakeBackend("b")
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    now = time.perf_counter()
+    pool._accounts[0].used_percent = 50.0
+    pool._accounts[0].usage_observed_at = now
+    pool._accounts[1].used_percent = 0.0
+    pool._accounts[1].usage_observed_at = now
+    served = [(await pool.collect_response({}, "req", None))["served_by"] for _ in range(12)]
+    assert (served.count("a"), served.count("b")) == (4, 8)
+    assert served[:3] == ["b", "a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_weighted_is_even_when_capacity_is_equal_or_unknown(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, openai_balance="weighted")
+    a, b = FakeBackend("a"), FakeBackend("b")
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    served = [(await pool.collect_response({}, "req", None))["served_by"] for _ in range(6)]
+    assert (served.count("a"), served.count("b")) == (3, 3)
+
+
+@pytest.mark.asyncio
+async def test_strategy_switch_applies_to_the_next_request(tmp_path: Path) -> None:
+    """What PUT /v1/relay/balance relies on: the pool reads the strategy
+    from settings at every selection."""
+    settings = _settings(tmp_path, openai_balance="ordered")
+    a, b = FakeBackend("a"), FakeBackend("b")
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    served = [(await pool.collect_response({}, "req", None))["served_by"] for _ in range(2)]
+    assert served == ["a", "a"]
+    settings.openai_balance = "ping_pong"
+    served = [(await pool.collect_response({}, "req", None))["served_by"] for _ in range(3)]
+    assert served == ["a", "b", "a"]
+
+
 # ---------- failover ----------
 
 

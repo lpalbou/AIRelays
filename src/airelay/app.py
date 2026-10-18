@@ -32,6 +32,7 @@ from airelay.backend import (
     stream_error_object,
 )
 from airelay.config import APP_NAME, Settings
+from airelay.config import BALANCE_STRATEGIES, _normalized_balance
 from airelay.chat_responses import (
     ChatStreamToResponses,
     chat_chunks,
@@ -353,6 +354,7 @@ def create_app(settings: Settings) -> FastAPI:
         "/v1/relay/accounts/resets",
         "/v1/relay/accounts/resets/redeem",
         "/v1/relay/logging",
+        "/v1/relay/balance",
         "/v1/completions",
         "/v1/responses",
         "/v1/chat/completions",
@@ -1225,6 +1227,40 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except OSError as error:
             raise HTTPException(status_code=503, detail=f"Cannot save log retention: {error}") from error
+
+    def _balance_payload() -> dict[str, Any]:
+        return {
+            "object": "relay.balance",
+            "openai": settings.openai_balance,
+            "claude": settings.claude_balance,
+            "strategies": list(BALANCE_STRATEGIES),
+            # The switch lives in this process; the config file and the
+            # AIRELAYS_*_BALANCE variables still decide the next start.
+            "runtime_only": True,
+        }
+
+    @app.get("/v1/relay/balance")
+    async def balance_settings() -> dict[str, Any]:
+        return _balance_payload()
+
+    @app.put("/v1/relay/balance")
+    async def configure_balance(changes: dict[str, Any]) -> dict[str, Any]:
+        """Switches the account-routing strategy of the RUNNING relay. The
+        pools read the strategy from settings on every selection, so the
+        change applies to the next request without a restart."""
+        if not isinstance(changes, dict) or not changes or set(changes) - {"openai", "claude"}:
+            raise HTTPException(
+                status_code=422,
+                detail='Body must set "openai" and/or "claude" to one of: ' + ", ".join(BALANCE_STRATEGIES) + ".",
+            )
+        try:
+            if "openai" in changes:
+                settings.openai_balance = _normalized_balance(changes["openai"], "openai")
+            if "claude" in changes:
+                settings.claude_balance = _normalized_balance(changes["claude"], "claude")
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return _balance_payload()
 
     @app.post("/v1/files")
     async def upload_file(request: Request, file: UploadFile = File(...),

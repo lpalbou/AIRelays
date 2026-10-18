@@ -66,7 +66,7 @@ const FIELDS = [
     items: [
       { key: "enableOpenaiProvider", label: "Enable OpenAI provider", kind: "bool" },
       { key: "modelsCacheTtlSeconds", label: "OpenAI models cache TTL (seconds)", kind: "number", min: 0, max: 86400 },
-      { key: "openaiBalance", label: "OpenAI account balancing", kind: "select", options: ["balanced", "round_robin", "ordered"] },
+      { key: "openaiBalance", label: "OpenAI account balancing", kind: "select", options: ["balanced", "weighted", "round_robin", "ping_pong", "ordered"] },
       { key: "openaiRetryAttempts", label: "OpenAI retry attempts (0 disables)", kind: "number", min: 0, max: 10 },
       { key: "openaiRetryBackoffCsv", label: "OpenAI retry backoff seconds (comma-separated; empty = 5, 20, 60)", kind: "text" },
       { key: "openaiExtraModelsCsv", label: "OpenAI extra models (comma-separated)", kind: "text" },
@@ -74,7 +74,7 @@ const FIELDS = [
       { key: "claudeBin", label: "Claude CLI binary", kind: "text" },
       { key: "claudeTimeoutSeconds", label: "Claude timeout (seconds)", kind: "number", min: 1, max: 7200 },
       { key: "claudeMaxConcurrentRequests", label: "Claude concurrent requests per account", kind: "number", min: 1, max: 64 },
-      { key: "claudeBalance", label: "Claude account balancing", kind: "select", options: ["balanced", "round_robin", "ordered"] },
+      { key: "claudeBalance", label: "Claude account balancing", kind: "select", options: ["balanced", "weighted", "round_robin", "ping_pong", "ordered"] },
       { key: "claudeAccountCooldownSeconds", label: "Claude account cooldown (seconds)", kind: "number", min: 1, max: 86400 },
       { key: "claudeStripApiKeyEnv", label: "Strip API key env for Claude", kind: "bool" },
       { key: "claudeModelsCsv", label: "Claude models (comma-separated)", kind: "text" },
@@ -240,9 +240,16 @@ function field(item) {
       optionEl.selected = draft[key] === option;
       select.appendChild(optionEl);
     }
-    select.addEventListener("change", () => {
+    select.addEventListener("change", async () => {
       draft[key] = select.value;
       dirty = true;
+      // Balancing switches live on the running relay; Save keeps it for the
+      // next launch. Other selects still apply on restart.
+      const provider = key === "openaiBalance" ? "openai" : key === "claudeBalance" ? "claude" : null;
+      if (provider) {
+        const applied = await call(api.setBalance({ [provider]: select.value }), "Balancing switch failed");
+        if (applied) toast("Balancing applied", `${provider}: ${applied[provider]} (live; Save keeps it)`, "success");
+      }
     });
     wrap.append(labelEl, select);
     return wrap;

@@ -1581,7 +1581,11 @@ function renderAccounts(state) {
       ? "Requests go to the first account with capacity."
       : balance === "round_robin"
         ? "Requests are spread evenly across accounts with capacity."
-        : "Requests are balanced by remaining capacity across accounts.";
+        : balance === "ping_pong"
+          ? "Requests take turns across accounts, in order."
+          : balance === "weighted"
+            ? "Requests are split in proportion to each account's remaining capacity."
+            : "Requests are balanced by remaining capacity across accounts.";
     container.appendChild(caption);
   }
 

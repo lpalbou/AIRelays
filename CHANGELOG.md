@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.21.0
+
+### Added
+
+- Two multi-account routing strategies for the OpenAI pool (`[providers.openai]
+  balance`, env `AIRELAYS_OPENAI_BALANCE`, desktop Settings): `weighted` serves
+  every account in proportion to its remaining capacity (100 minus the used
+  percent of its longest usage window; 50% left against 100% left gives 1:2,
+  equal capacity 1:1; smooth weighted round-robin, no randomness; a missing or
+  stale usage signal counts as full capacity), and `ping_pong` visits each
+  eligible account once in pool order and starts over. `balanced`,
+  `round_robin` and `ordered` are unchanged. The Claude pool accepts both names
+  and maps `ping_pong` to its turn-taking and `weighted` to its capacity ranking.
+- `airelays serve --balance <strategy>` selects the OpenAI routing strategy for one
+  server process, over the config file and `AIRELAYS_OPENAI_BALANCE`.
+- Live strategy switch: `GET`/`PUT /v1/relay/balance` and `airelays balance
+  [strategy] [--provider claude]` change the running relay's routing for the next
+  request, no restart (runtime only; the config file still decides the next start).
+- Desktop: the account-balancing selects in Settings apply to the running relay
+  immediately through the new `get_balance`/`set_balance` commands; Save still
+  records the choice for the next launch.
+
 ## 0.20.0
 
 ### Added

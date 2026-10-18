@@ -273,7 +273,7 @@ without restart. A second ready profile of the same subscription carries
 not eligible for routing.
 `[providers.claude].balance` defaults to `balanced`: prefer available execution
 slots, then lowest fresh weekly usage. Without fresh usage, accounts take turns.
-`round_robin` and `ordered` are alternatives. `max_concurrent_requests` applies
+`weighted`, `round_robin`, `ping_pong` and `ordered` are alternatives. `max_concurrent_requests` applies
 per account. Known exhausted short and model-specific windows are skipped;
 account failures fail over only before response bytes reach the client.
 `account_cooldown_seconds` defaults to 300 when no reset time is reported;
@@ -310,7 +310,7 @@ subset, even if every supporting account is cooling down. Per-model
 entries hidden in the upstream picker. Unlisted configured overrides remain
 eligible across the pool, unless a discovered subset establishes support.
 
-One person can enroll several of their own OpenAI subscriptions; `airelays login` is additive. By default the relay routes each request to the account with the most remaining quota in its longest usage window — the weekly budget; windows are identified by duration because which windows a plan reports is upstream policy — among those that serve the requested model (`balance = "balanced"`), so consumption equalizes as a percentage of each plan's capacity; `balance = "round_robin"` sends strictly equal request counts and `balance = "ordered"` drains the first account before the next. An account at its usage limit is benched until its window resets and rejoins rotation automatically; at launch the relay probes each account's capacity and model catalog so balancing is correct from the first request. Manage with `airelays accounts` (list, order, refresh, resets, redeem), sign out one with `airelays logout <email>`. `airelays accounts resets` shows each account's OpenAI usage-limit reset credits and `airelays accounts redeem <email>` spends one through the running relay after confirmation. Conversations stick to the account that served their first turn.
+One person can enroll several of their own OpenAI subscriptions; `airelays login` is additive. By default the relay routes each request to the account with the most remaining quota in its longest usage window — the weekly budget; windows are identified by duration because which windows a plan reports is upstream policy — among those that serve the requested model (`balance = "balanced"`), so consumption equalizes as a percentage of each plan's capacity; `balance = "weighted"` serves every account in proportion to its remaining capacity (50% left against 100% left gets 1 request in 3), `balance = "round_robin"` sends strictly equal request counts, `balance = "ping_pong"` takes turns in order and `balance = "ordered"` drains the first account before the next; `airelays balance <strategy>` or `PUT /v1/relay/balance` switches the running relay without a restart. An account at its usage limit is benched until its window resets and rejoins rotation automatically; at launch the relay probes each account's capacity and model catalog so balancing is correct from the first request. Manage with `airelays accounts` (list, order, refresh, resets, redeem), sign out one with `airelays logout <email>`. `airelays accounts resets` shows each account's OpenAI usage-limit reset credits and `airelays accounts redeem <email>` spends one through the running relay after confirmation. Conversations stick to the account that served their first turn.
 
 ## Routes
 

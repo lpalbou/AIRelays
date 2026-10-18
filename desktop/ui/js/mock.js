@@ -197,6 +197,13 @@ export async function mockInvoke(command, args = {}) {
     case "set_log_retention":
       logRetention.policy = structuredClone(args.policy);
       return structuredClone(logRetention);
+    case "get_balance":
+      return { object: "relay.balance", openai: settings.openaiBalance, claude: settings.claudeBalance,
+        strategies: ["balanced", "weighted", "round_robin", "ping_pong", "ordered"], runtime_only: true };
+    case "set_balance":
+      if (args.changes.openai) settings.openaiBalance = args.changes.openai;
+      if (args.changes.claude) settings.claudeBalance = args.changes.claude;
+      return mockInvoke("get_balance");
     case "save_settings":
       Object.assign(settings, args.settings);
       return null;

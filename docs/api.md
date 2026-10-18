@@ -2,6 +2,13 @@
 
 ## Traffic log retention API
 
+`GET /v1/relay/balance` returns the account-routing strategy of each provider pool
+(`openai`, `claude`) and the accepted names; `PUT /v1/relay/balance` with
+`{"openai": "ping_pong"}` and/or `{"claude": ...}` switches the running relay's
+strategy for the next request, no restart (runtime only: the config file and
+`AIRELAYS_*_BALANCE` still decide the next start; 422 on an unknown name).
+`airelays balance [strategy] [--provider claude]` is the CLI front for both.
+
 `GET /v1/relay/logging` returns current policy and disk usage without deleting
 logs. `PUT /v1/relay/logging` validates, persists and applies a partial policy
 update immediately; omitted fields retain their saved values. These routes use

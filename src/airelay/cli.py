@@ -28,6 +28,7 @@ from airelay.app import create_app
 from airelay.auth import AuthenticationError, AuthManager, AuthRecord, AuthStorage
 from airelay.backend import ChatGptCodexBackend
 from airelay.config import APP_NAME, Settings
+from airelay.config import BALANCE_STRATEGIES
 from airelay.providers import ClaudeCliRuntime, ProviderRegistry
 from airelay.claude_auth import (
     account_identity, discover_profiles, enroll_profile,
@@ -88,6 +89,8 @@ def _base_settings(args: argparse.Namespace) -> Settings:
         settings.host = args.host
     if getattr(args, "port", None) is not None:
         settings.port = args.port
+    if getattr(args, "balance", None):
+        settings.openai_balance = args.balance
     original_data_dir = settings.data_dir
     if getattr(args, "data_dir", None):
         settings.data_dir = Path(args.data_dir).expanduser()
@@ -1442,6 +1445,11 @@ def _print_accounts_summary(payload: dict[str, object]) -> None:
         elif balance == "round_robin":
             print("  Requests are spread evenly across your accounts; an account")
             print("  at its usage limit is skipped until it resets.")
+        elif balance == "ping_pong":
+            print("  Requests take turns: each account once, in order, then again.")
+        elif balance == "weighted":
+            print("  Requests are split in proportion to each account's remaining")
+            print("  capacity (50% left against 100% left serves 1 in 3).")
         else:
             print("  Requests are balanced by remaining capacity: the account with")
             print("  the most unused quota serves next, so consumption equalizes")
@@ -1479,6 +1487,47 @@ def _relay_get(settings: Settings, path: str, *, timeout: float = 20.0):
         raise SystemExit(
             f"No running relay at {settings.client_base_url()}. Start it with `airelays serve`."
         )
+
+
+def _relay_put(settings: Settings, path: str, payload: dict, *, timeout: float = 20.0):
+    """One PUT against the running relay with its bearer token."""
+    import httpx
+
+    url = f"{settings.client_base_url().rstrip('/')}{path}"
+    headers = {}
+    if settings.require_bearer_auth:
+        token = settings.resolve_bearer_token()
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+    try:
+        return httpx.put(url, headers=headers, json=payload, timeout=timeout)
+    except httpx.HTTPError:
+        raise SystemExit(
+            f"No running relay at {settings.client_base_url()}. Start it with `airelays serve`."
+        )
+
+
+def _run_balance(args: argparse.Namespace) -> None:
+    """Show or switch account balancing on the running relay, live."""
+    settings = _base_settings(args)
+    strategy = getattr(args, "strategy", None)
+    if strategy:
+        response = _relay_put(settings, "/relay/balance", {args.provider: strategy})
+    else:
+        response = _relay_get(settings, "/relay/balance")
+    if response.status_code >= 400:
+        raise SystemExit(f"Balance request failed ({response.status_code}): {_relay_error_detail(response)}")
+    payload = response.json()
+    if _json_requested(args):
+        _emit_json(payload)
+        return
+    _print_title("AIRelays Account Balancing")
+    _print_field("OpenAI accounts", payload.get("openai"), kind="good" if strategy and args.provider == "openai" else "plain")
+    _print_field("Claude accounts", payload.get("claude"), kind="good" if strategy and args.provider == "claude" else "plain")
+    if strategy:
+        print("  Applied to the running relay; the next request uses it. To keep it across")
+        print("  restarts, set `balance` in the config file or AIRELAYS_OPENAI_BALANCE /")
+        print("  AIRELAYS_CLAUDE_BALANCE.")
 
 
 def _relay_error_detail(response) -> str:
@@ -1994,6 +2043,15 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default=None)
     serve.add_argument("--port", type=int, default=None)
     serve.add_argument(
+        "--balance",
+        choices=list(BALANCE_STRATEGIES),
+        default=None,
+        help=(
+            "How requests are spread across OpenAI accounts for this server process "
+            "(overrides [providers.openai] balance and AIRELAYS_OPENAI_BALANCE)"
+        ),
+    )
+    serve.add_argument(
         "--no-auth",
         action="store_true",
         help=(
@@ -2012,6 +2070,16 @@ def build_parser() -> argparse.ArgumentParser:
     logs.add_argument("--max-total-mb", type=int, help="Total traffic-log budget in MiB (default 1024)")
     logs.add_argument("--max-file-mb", type=int, help="Rotate files at this many MiB (default 50)")
     logs.set_defaults(func=_run_logs)
+
+    balance = subparsers.add_parser(
+        "balance",
+        parents=[shared],
+        help="Show or switch account balancing on the running relay (live, no restart)",
+    )
+    balance.add_argument("strategy", nargs="?", choices=list(BALANCE_STRATEGIES), help="New strategy; omit to show the current one")
+    balance.add_argument("--provider", choices=["openai", "claude"], default="openai", help="Which account pool (default: openai)")
+    _add_json_argument(balance)
+    balance.set_defaults(func=_run_balance)
 
     init = subparsers.add_parser(
         "init",

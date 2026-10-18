@@ -939,3 +939,69 @@ def test_cli_accounts_resets_and_redeem_talk_to_the_running_relay(tmp_path, caps
     args = parser.parse_args(["accounts", "resets", "--json", *common])
     args.func(args)
     assert json.loads(capsys.readouterr().out)["available_count"] == 1
+
+
+def test_balance_command_shows_and_switches_the_running_relay(tmp_path, monkeypatch, capsys):
+    import httpx
+
+    _clear_airelay_env(monkeypatch)
+    monkeypatch.setenv("AIRELAYS_ENABLE_CLAUDE", "false")
+    data_dir = tmp_path / "state"
+    data_dir.mkdir(parents=True)
+    (data_dir / "relay-token").write_text("secret-token\n", encoding="utf-8")
+    seen: list[dict[str, object]] = []
+    state = {"openai": "balanced", "claude": "balanced"}
+
+    class Response:
+        def __init__(self, payload, status_code=200):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = json.dumps(payload)
+
+        def json(self):
+            return self._payload
+
+    def payload():
+        return {"object": "relay.balance", **state, "strategies": ["balanced", "weighted"], "runtime_only": True}
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        seen.append({"method": "GET", "url": url, "headers": headers})
+        return Response(payload())
+
+    def fake_put(url, headers=None, json=None, timeout=None):
+        seen.append({"method": "PUT", "url": url, "headers": headers, "json": json})
+        if json.get("openai") == "fastest":
+            return Response({"detail": "Invalid balance value"}, status_code=422)
+        state.update(json)
+        return Response(payload())
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(httpx, "put", fake_put)
+    parser = build_parser()
+    common = ["--config", str(tmp_path / "config.toml"), "--data-dir", str(data_dir)]
+
+    args = parser.parse_args(["balance", *common])
+    args.func(args)
+    human = capsys.readouterr().out
+    assert seen[0]["method"] == "GET" and seen[0]["url"].endswith("/v1/relay/balance")
+    assert seen[0]["headers"] == {"authorization": "Bearer secret-token"}
+    assert "balanced" in human and "Applied" not in human
+
+    args = parser.parse_args(["balance", "weighted", *common])
+    args.func(args)
+    human = capsys.readouterr().out
+    assert seen[1]["method"] == "PUT" and seen[1]["url"].endswith("/v1/relay/balance")
+    assert seen[1]["json"] == {"openai": "weighted"}
+    assert "weighted" in human and "Applied to the running relay" in human
+
+    args = parser.parse_args(["balance", "ordered", "--provider", "claude", "--json", *common])
+    args.func(args)
+    assert seen[2]["json"] == {"claude": "ordered"}
+    assert json.loads(capsys.readouterr().out)["claude"] == "ordered"
+
+    with pytest.raises(SystemExit) as failure:
+        args = parser.parse_args(["balance", "weighted", *common])
+        seen.clear()
+        monkeypatch.setattr(httpx, "put", lambda url, headers=None, json=None, timeout=None: Response({"detail": "Invalid balance value"}, status_code=422))
+        args.func(args)
+    assert "422" in str(failure.value)

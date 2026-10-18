@@ -78,17 +78,20 @@ def _cfg(payload: dict[str, Any], *path: str) -> Any:
     return current
 
 
+BALANCE_STRATEGIES = ("balanced", "weighted", "round_robin", "ping_pong", "ordered")
+
+
 def _normalized_balance(value: Any, provider: str = "openai") -> str:
     """Balancing strategy, normalized and validated. A typo must fail loudly
     at startup rather than silently selecting a different routing policy."""
     if value is None:
         return "balanced"
     text = str(value).strip().lower().replace("-", "_")
-    if text in {"balanced", "round_robin", "ordered"}:
+    if text in BALANCE_STRATEGIES:
         return text
     raise ValueError(
         f"Invalid [providers.{provider}] balance value {value!r}: "
-        "use \"balanced\", \"round_robin\", or \"ordered\"."
+        "use \"balanced\", \"weighted\", \"round_robin\", \"ping_pong\", or \"ordered\"."
     )
 
 
@@ -230,6 +233,9 @@ class Settings:
     # consumption equalizes as a percentage of each plan's capacity;
     # "round_robin" sends strictly equal request counts; "ordered" drains
     # the first account before the next.
+    # "weighted" serves every account in proportion to its remaining capacity
+    # (50% left vs 100% left -> 1:2); "ping_pong" visits each account once in
+    # pool order and starts over.
     openai_balance: str = "balanced"
     # Extra OpenAI model ids to advertise in /v1/models beyond the upstream
     # catalog (which lags what the backend actually serves).

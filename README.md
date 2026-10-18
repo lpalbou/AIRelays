@@ -207,7 +207,7 @@ The default `balanced` strategy prefers available execution slots and the
 lowest reported weekly usage among eligible accounts. Without fresh usage
 information, accounts take turns. Exhausted short or model-specific windows
 are skipped; account failures can fail over only before response bytes are sent.
-Set `[providers.claude].balance` to `round_robin` or `ordered` to change selection.
+Set `[providers.claude].balance` to `weighted`, `round_robin`, `ping_pong` or `ordered` to change selection.
 
 Usage bars come from Claude Code itself: every five minutes the relay asks
 each profile's CLI for its usage (`get_usage`, no prompt or quota), which also
@@ -323,8 +323,12 @@ balances on each account's longest one. The relay probes each account's
 usage at launch and refreshes it in the background; an account at a
 usage limit is benched until that window resets and rejoins rotation
 automatically. Alternatives:
-`balance = "round_robin"` sends strictly equal request counts, and
+`balance = "weighted"` serves every account in proportion to its remaining
+capacity (50% left against 100% left gets 1 request in 3),
+`balance = "round_robin"` sends strictly equal request counts,
+`balance = "ping_pong"` takes turns in order, and
 `balance = "ordered"` drains the first account before touching the next.
+Switch live with `airelays balance <strategy>` or `PUT /v1/relay/balance`.
 Failed-over requests are logged with the serving account, and
 `/v1/subscription/status?all_accounts=true` reports usage per account.
 

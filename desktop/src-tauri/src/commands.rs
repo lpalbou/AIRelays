@@ -922,6 +922,50 @@ pub async fn get_log_retention(app: AppHandle) -> Result<Value, String> {
     log_retention_request(app, None).await
 }
 
+/// Account balancing lives in the running relay (`/v1/relay/balance`): a
+/// change applies to the next request without a restart. The saved desktop
+/// setting still decides the strategy at the next launch.
+async fn balance_request(app: AppHandle, changes: Option<Value>) -> Result<Value, String> {
+    let (base_url, requires_auth) = {
+        let state = app.state::<AppState>();
+        let settings = robust_lock(&state.settings);
+        (settings.base_url(), settings.require_bearer_auth)
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let url = format!("{base_url}/relay/balance");
+    let mut request = match changes {
+        Some(value) => client.put(url).json(&value),
+        None => client.get(url),
+    };
+    if requires_auth {
+        if let Ok(token) = std::fs::read_to_string(AppSettings::bearer_token_file()) {
+            request = request.bearer_auth(token.trim());
+        }
+    }
+    let response = request.send().await
+        .map_err(|_| "Cannot reach the relay. Start it to switch account balancing.".to_string())?;
+    let status = response.status();
+    let body: Value = response.json().await
+        .map_err(|_| "Unexpected balance response.".to_string())?;
+    if !status.is_success() {
+        return Err(format!("Account balancing ({status}): {}", body.get("detail").unwrap_or(&body)));
+    }
+    Ok(body)
+}
+
+#[tauri::command]
+pub async fn get_balance(app: AppHandle) -> Result<Value, String> {
+    balance_request(app, None).await
+}
+
+#[tauri::command]
+pub async fn set_balance(app: AppHandle, changes: Value) -> Result<Value, String> {
+    balance_request(app, Some(changes)).await
+}
+
 #[tauri::command]
 pub async fn set_log_retention(app: AppHandle, policy: Value) -> Result<Value, String> {
     log_retention_request(app, Some(policy)).await

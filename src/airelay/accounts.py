@@ -259,6 +259,8 @@ class _PooledAccount:
     # across accounts.
     used_percent: float | None = None
     usage_observed_at: float = 0.0
+    # Smooth weighted-round-robin credit for the weighted strategy.
+    weighted_credit: float = 0.0
     # Cached usage payload (for status consumers) with fetch time; protects
     # the aggressively personal upstream endpoint from polling storms.
     usage_payload: dict[str, Any] | None = None
@@ -312,6 +314,7 @@ class OpenAiAccountPool:
         self._accounts: list[_PooledAccount] = []
         self._sticky: dict[str, str] = {}
         self._sticky_cap = 5000
+        self._cursor = 0  # ping_pong: position in the eligible list
         # Bench state of accounts that briefly left the pool (transient
         # keyring/storage read failures make a slot vanish and reappear);
         # without this, every flap would launder an active bench. Carries
@@ -625,6 +628,10 @@ class OpenAiAccountPool:
             # under membership churn, unlike a shared modulo counter over a
             # list whose contents change between calls.
             chosen = min(pick_from, key=lambda account: account.last_selected_at)
+        elif strategy == "ping_pong":
+            chosen = self._pick_ping_pong(pick_from)
+        elif strategy == "weighted":
+            chosen = self._pick_weighted(pick_from, now)
         else:  # balanced (default): equalize quota consumption
             chosen = self._pick_balanced(pick_from, now)
         chosen.last_selected_at = now
@@ -657,6 +664,34 @@ class OpenAiAccountPool:
                 key=lambda account: (int(account.used_percent or 0), account.last_selected_at),
             )
         return min(pick_from, key=lambda account: account.last_selected_at)
+
+    def _pick_ping_pong(self, pick_from: list[_PooledAccount]) -> _PooledAccount:
+        """A -> B -> A -> B: each eligible account once, in pool order, then
+        again from the start. Position only, no usage signal."""
+        chosen = pick_from[self._cursor % len(pick_from)]
+        self._cursor += 1
+        return chosen
+
+    def _pick_weighted(self, pick_from: list[_PooledAccount], now: float) -> _PooledAccount:
+        """Every eligible account serves, in proportion to its remaining
+        capacity: weight = 100 - used_percent of its longest usage window
+        (100 when the signal is missing or stale). 50% left against 100%
+        left gives 1:2, equal capacity 1:1. Smooth weighted round-robin:
+        each pick adds every weight to its account's credit, the highest
+        credit serves and pays the total, so the split holds over any run
+        of requests without randomness."""
+        total = 0.0
+        for account in pick_from:
+            fresh = (
+                account.used_percent is not None
+                and now - account.usage_observed_at < USAGE_ROUTING_MAX_AGE_SECONDS
+            )
+            weight = max(1.0, 100.0 - float(account.used_percent or 0.0)) if fresh else 100.0
+            account.weighted_credit += weight
+            total += weight
+        chosen = max(pick_from, key=lambda account: account.weighted_credit)
+        chosen.weighted_credit -= total
+        return chosen
 
     def _pin(self, session_id: str, slug: str) -> None:
         # Evict oldest affinities instead of wiping the whole map: a full

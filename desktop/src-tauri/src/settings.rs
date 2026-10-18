@@ -59,8 +59,9 @@ pub struct AppSettings {
     pub enable_openai_provider: bool,
     pub models_cache_ttl_seconds: f64,
     /// Multi-account routing: "balanced" equalizes quota consumption
-    /// (relay default); "round_robin" sends equal request counts;
-    /// "ordered" drains the first account first.
+    /// (relay default); "weighted" splits requests in proportion to remaining
+    /// capacity; "round_robin" sends equal request counts; "ping_pong" takes
+    /// turns in order; "ordered" drains the first account first.
     pub openai_balance: String,
     /// Extra OpenAI model ids to advertise beyond the upstream catalog
     /// (which lags what the backend actually serves), comma-separated.
@@ -170,11 +171,11 @@ impl AppSettings {
         if !host_ok {
             return Err(format!("Host '{}' is not a valid IP address.", self.host));
         }
-        if !matches!(self.openai_balance.as_str(), "balanced" | "round_robin" | "ordered") {
-            return Err("OpenAI account balancing must be balanced, round_robin, or ordered.".into());
+        if !matches!(self.openai_balance.as_str(), "balanced" | "weighted" | "round_robin" | "ping_pong" | "ordered") {
+            return Err("OpenAI account balancing must be balanced, weighted, round_robin, ping_pong, or ordered.".into());
         }
-        if !matches!(self.claude_balance.as_str(), "balanced" | "round_robin" | "ordered") {
-            return Err("Claude account balancing must be balanced, round_robin, or ordered.".into());
+        if !matches!(self.claude_balance.as_str(), "balanced" | "weighted" | "round_robin" | "ping_pong" | "ordered") {
+            return Err("Claude account balancing must be balanced, weighted, round_robin, ping_pong, or ordered.".into());
         }
         if self.claude_max_concurrent_requests == 0 || self.claude_account_cooldown_seconds == 0 {
             return Err("Claude concurrency and account cooldown must be at least 1.".into());

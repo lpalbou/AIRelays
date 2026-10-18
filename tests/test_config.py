@@ -69,6 +69,10 @@ def test_openai_balance_is_normalized_and_validated(tmp_path, monkeypatch) -> No
     assert Settings.from_sources(tmp_path / "missing.toml").openai_balance == "balanced"
     monkeypatch.setenv("AIRELAYS_OPENAI_BALANCE", "ordered")
     assert Settings.from_sources(tmp_path / "missing.toml").openai_balance == "ordered"
+    monkeypatch.setenv("AIRELAYS_OPENAI_BALANCE", "Ping-Pong")
+    assert Settings.from_sources(tmp_path / "missing.toml").openai_balance == "ping_pong"
+    monkeypatch.setenv("AIRELAYS_OPENAI_BALANCE", "weighted")
+    assert Settings.from_sources(tmp_path / "missing.toml").openai_balance == "weighted"
     # A typo must fail loudly, not silently select a routing policy.
     monkeypatch.setenv("AIRELAYS_OPENAI_BALANCE", "roundrobin")
     with pytest.raises(ValueError, match="balance"):
@@ -215,3 +219,14 @@ def test_claude_runs_on_any_listener_the_user_chooses(tmp_path) -> None:
         assert "trust_x_forwarded_for" in str(exc)
     else:
         raise AssertionError("Expected Claude guardrails to reject trust_x_forwarded_for")
+
+
+def test_serve_balance_flag_overrides_config(tmp_path: Path, monkeypatch) -> None:
+    import argparse
+
+    from airelay.cli import _base_settings, build_parser
+
+    monkeypatch.setenv("AIRELAYS_OPENAI_BALANCE", "ordered")
+    args = build_parser().parse_args(["serve", "--config", str(tmp_path / "missing.toml"), "--balance", "ping_pong"])
+    assert _base_settings(args).openai_balance == "ping_pong"
+    assert _base_settings(argparse.Namespace(config=str(tmp_path / "missing.toml"))).openai_balance == "ordered"

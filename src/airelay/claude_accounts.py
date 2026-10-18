@@ -287,8 +287,9 @@ class ClaudeAccountPool:
         strategy = self._settings.claude_balance
         if strategy == "ordered":
             return accounts[0]
-        if strategy == "round_robin":
+        if strategy in ("round_robin", "ping_pong"):  # ping_pong: same turn-taking here
             return min(accounts, key=lambda a: a.last_selected)
+        # "weighted" and "balanced": capacity ranking below.
         # Prefer an available execution slot before quota ranking. Otherwise
         # a cached low percentage can queue every concurrent request on A.
         def rank(account: _Account) -> tuple:

@@ -142,7 +142,9 @@ max_file_mb = 50
 [providers.openai]
 enabled = true
 models_cache_ttl_seconds = 300.0
-# Multi-account routing: "balanced" (default) routes to the account with
+# Multi-account routing: "weighted" splits requests in proportion to each
+# account's remaining capacity (50% left vs 100% left -> 1:2); "ping_pong"
+# takes turns in order; "balanced" (default) routes to the account with
 # the most remaining weekly quota so consumption equalizes as a
 # percentage of each plan's capacity; "round_robin" sends equal request
 # counts; "ordered" drains the first account first.
@@ -175,7 +177,7 @@ bin = "claude"
 command = []                          # full argv, wins over `bin` (see below)
 timeout_seconds = 600.0
 max_concurrent_requests = 2
-balance = "balanced"                  # balanced, round_robin, or ordered
+balance = "balanced"                  # balanced, weighted, round_robin, ping_pong, or ordered
 account_cooldown_seconds = 300         # retry delay when no reset time is reported
 strip_api_key_env = true
 models = ["claude:sonnet", "claude:opus", "claude:haiku", "claude:fable"]
@@ -203,7 +205,10 @@ oauth_token_file = "~/.airelays/claude-token"   # written by `airelays claude se
 - `AIRELAYS_LOG_STREAM_LINES`
 - `AIRELAYS_ENABLE_OPENAI`
 - `AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS`
-- `AIRELAYS_OPENAI_BALANCE` (`balanced` default, `round_robin`, or `ordered`)
+- `AIRELAYS_OPENAI_BALANCE` (`balanced` default, `weighted`, `round_robin`, `ping_pong`, or `ordered`)
+  `airelays serve --balance <strategy>` overrides both the file and the variable for that server process;
+  `airelays balance <strategy>` switches the running relay live (`PUT /v1/relay/balance`), without a restart;
+  the desktop Settings selects do the same.
 - `AIRELAYS_OPENAI_EXTRA_MODELS` (comma-separated ids advertised beyond the upstream catalog)
 - `AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS`
 - `AIRELAYS_OPENAI_RETRY_ATTEMPTS` (automatic retries for failed upstream calls; `3` default, `0` disables)
@@ -281,8 +286,9 @@ Claude runtime:
 - each account has its own `CLAUDE_CONFIG_DIR`, usage cache, model catalog,
   and `max_concurrent_requests` limit
 - `balance` defaults to `balanced`: available execution slots first, then
-  lowest fresh weekly usage; `round_robin` rotates and `ordered` selects
-  the first eligible profile in stable account-id order
+  lowest fresh weekly usage; `weighted` ranks the same way, `round_robin`
+  and `ping_pong` rotate, and `ordered` selects the first eligible profile
+  in stable account-id order
 - `AIRELAYS_CLAUDE_BALANCE` and `AIRELAYS_CLAUDE_ACCOUNT_COOLDOWN_SECONDS`
   override the corresponding Claude configuration values
 - headless login: `claude setup-token` on a machine with a browser, then
