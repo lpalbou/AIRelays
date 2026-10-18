@@ -1360,8 +1360,11 @@ plans report only a weekly window), so the relay ranks windows by
 duration rather than trusting their position in the payload. Usage is
 probed at launch and refreshed in the background; an account that reaches
 a limit on any window is benched until that window resets. Alternatives:
+<code>balance = "weighted"</code> to split requests in proportion to remaining capacity,
 <code>balance = "round_robin"</code> for strictly equal request counts,
-<code>balance = "ordered"</code> to drain the first account before the next. See
+<code>balance = "ping_pong"</code> to take turns in order,
+<code>balance = "ordered"</code> to drain the first account before the next; <code>airelays
+balance &lt;strategy&gt;</code> switches the running relay live. See
 <a href="../configuration/">Configuration</a>.</p>
 <h2 id="can-i-disable-relay-auth">Can I disable relay auth?<a class="headerlink" href="#can-i-disable-relay-auth" title="Permanent link">&para;</a></h2>
 <p>Yes. Open local relay mode applies to all enabled providers, including the Claude runtime.</p>

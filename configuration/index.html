@@ -1219,7 +1219,9 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <span class="k">[providers.openai]</span>
 <span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="n">models_cache_ttl_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">300.0</span>
-<span class="c1"># Multi-account routing: "balanced" (default) routes to the account with</span>
+<span class="c1"># Multi-account routing: "weighted" splits requests in proportion to each</span>
+<span class="c1"># account's remaining capacity (50% left vs 100% left -&gt; 1:2); "ping_pong"</span>
+<span class="c1"># takes turns in order; "balanced" (default) routes to the account with</span>
 <span class="c1"># the most remaining weekly quota so consumption equalizes as a</span>
 <span class="c1"># percentage of each plan's capacity; "round_robin" sends equal request</span>
 <span class="c1"># counts; "ordered" drains the first account first.</span>
@@ -1252,7 +1254,7 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <span class="n">command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span><span class="w">                          </span><span class="c1"># full argv, wins over `bin` (see below)</span>
 <span class="n">timeout_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">600.0</span>
 <span class="n">max_concurrent_requests</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
-<span class="n">balance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"balanced"</span><span class="w">                  </span><span class="c1"># balanced, round_robin, or ordered</span>
+<span class="n">balance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"balanced"</span><span class="w">                  </span><span class="c1"># balanced, weighted, round_robin, ping_pong, or ordered</span>
 <span class="n">account_cooldown_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">300</span><span class="w">         </span><span class="c1"># retry delay when no reset time is reported</span>
 <span class="n">strip_api_key_env</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="n">models</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"claude:sonnet"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:opus"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:haiku"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:fable"</span><span class="p">]</span>
@@ -1279,7 +1281,10 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <li><code>AIRELAYS_LOG_STREAM_LINES</code></li>
 <li><code>AIRELAYS_ENABLE_OPENAI</code></li>
 <li><code>AIRELAYS_OPENAI_MODELS_CACHE_TTL_SECONDS</code></li>
-<li><code>AIRELAYS_OPENAI_BALANCE</code> (<code>balanced</code> default, <code>round_robin</code>, or <code>ordered</code>)</li>
+<li><code>AIRELAYS_OPENAI_BALANCE</code> (<code>balanced</code> default, <code>weighted</code>, <code>round_robin</code>, <code>ping_pong</code>, or <code>ordered</code>)
+  <code>airelays serve --balance &lt;strategy&gt;</code> overrides both the file and the variable for that server process;
+  <code>airelays balance &lt;strategy&gt;</code> switches the running relay live (<code>PUT /v1/relay/balance</code>), without a restart;
+  the desktop Settings selects do the same.</li>
 <li><code>AIRELAYS_OPENAI_EXTRA_MODELS</code> (comma-separated ids advertised beyond the upstream catalog)</li>
 <li><code>AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS</code></li>
 <li><code>AIRELAYS_OPENAI_RETRY_ATTEMPTS</code> (automatic retries for failed upstream calls; <code>3</code> default, <code>0</code> disables)</li>
@@ -1351,8 +1356,9 @@ can select an older catalog.</p>
 <li>each account has its own <code>CLAUDE_CONFIG_DIR</code>, usage cache, model catalog,
   and <code>max_concurrent_requests</code> limit</li>
 <li><code>balance</code> defaults to <code>balanced</code>: available execution slots first, then
-  lowest fresh weekly usage; <code>round_robin</code> rotates and <code>ordered</code> selects
-  the first eligible profile in stable account-id order</li>
+  lowest fresh weekly usage; <code>weighted</code> ranks the same way, <code>round_robin</code>
+  and <code>ping_pong</code> rotate, and <code>ordered</code> selects the first eligible profile
+  in stable account-id order</li>
 <li><code>AIRELAYS_CLAUDE_BALANCE</code> and <code>AIRELAYS_CLAUDE_ACCOUNT_COOLDOWN_SECONDS</code>
   override the corresponding Claude configuration values</li>
 <li>headless login: <code>claude setup-token</code> on a machine with a browser, then

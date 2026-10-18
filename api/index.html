@@ -1416,6 +1416,12 @@
 
 <h1 id="api-notes">API Notes<a class="headerlink" href="#api-notes" title="Permanent link">&para;</a></h1>
 <h2 id="traffic-log-retention-api">Traffic log retention API<a class="headerlink" href="#traffic-log-retention-api" title="Permanent link">&para;</a></h2>
+<p><code>GET /v1/relay/balance</code> returns the account-routing strategy of each provider pool
+(<code>openai</code>, <code>claude</code>) and the accepted names; <code>PUT /v1/relay/balance</code> with
+<code>{"openai": "ping_pong"}</code> and/or <code>{"claude": ...}</code> switches the running relay's
+strategy for the next request, no restart (runtime only: the config file and
+<code>AIRELAYS_*_BALANCE</code> still decide the next start; 422 on an unknown name).
+<code>airelays balance [strategy] [--provider claude]</code> is the CLI front for both.</p>
 <p><code>GET /v1/relay/logging</code> returns current policy and disk usage without deleting
 logs. <code>PUT /v1/relay/logging</code> validates, persists and applies a partial policy
 update immediately; omitted fields retain their saved values. These routes use
