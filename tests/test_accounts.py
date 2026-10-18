@@ -1564,3 +1564,152 @@ async def test_single_account_pool_matches_legacy_behavior(tmp_path: Path) -> No
     assert result["served_by"] == "a"
     # No account_selected noise for single-account installs.
     assert "account_selected" not in traffic.phases()
+
+
+# ---------- usage-limit reset credits ----------
+
+
+def _reset_listing(count: int = 1) -> dict[str, Any]:
+    return {
+        "credits": [
+            {
+                "id": f"RateLimitResetCredit_{index}",
+                "reset_type": "codex_rate_limits",
+                "status": "available",
+                "granted_at": "2026-10-08T00:00:05Z",
+                "expires_at": "2026-11-07T00:00:05Z",
+                "title": "Full reset",
+            }
+            for index in range(count)
+        ],
+        "available_count": count,
+        "total_earned_count": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_reset_credits_lists_every_account_with_usage_counts(tmp_path: Path) -> None:
+    """The listing pairs each account's upstream credits with the usage
+    report's counts (the only source of 'applicable now'); both are TTL
+    cached like usage, and a failing account reports its error alone."""
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+    b = FakeBackend("b", fail_with=BackendError(401, "expired"))
+    counts = {"list": 0, "usage": 0}
+
+    async def listing(request_id):
+        counts["list"] += 1
+        return _reset_listing(1)
+
+    async def usage(request_id):
+        counts["usage"] += 1
+        return {
+            "rate_limit": {"primary_window": {"used_percent": 80, "limit_window_seconds": 604800}},
+            "rate_limit_reset_credits": {"available_count": 1, "applicable_available_count": 0},
+        }
+
+    async def broken(request_id):
+        raise BackendError(401, '{"error": {"code": "refresh_token_invalidated"}}')
+
+    a.list_rate_limit_reset_credits = listing  # type: ignore[attr-defined]
+    a.get_subscription_status = usage  # type: ignore[assignment]
+    b.list_rate_limit_reset_credits = broken  # type: ignore[attr-defined]
+    pool = _pool(settings, [a, b], RecordingTraffic())
+
+    entries = await pool.reset_credits("req1")
+    again = await pool.reset_credits("req2")
+    assert [entry["email"] for entry in entries] == ["a@example.com", "b@example.com"]
+    assert entries[0]["details"]["available_count"] == 1
+    assert entries[0]["usage_summary"] == {"available_count": 1, "applicable_available_count": 0}
+    assert entries[0]["captured_at"]
+    assert "details" not in entries[1]
+    assert "refresh_token_invalidated" in entries[1]["error"]
+    assert counts == {"list": 1, "usage": 1}, "second read within the TTL must be served from cache"
+    assert again[0]["details"] == entries[0]["details"]
+
+    # By email prefix, forced: both caches bypassed.
+    only = await pool.reset_credits("req3", "a@", force=True)
+    assert [entry["email"] for entry in only] == ["a@example.com"]
+    assert counts == {"list": 2, "usage": 2}
+
+    with pytest.raises(BackendError) as unknown:
+        await pool.reset_credits("req4", "nobody")
+    assert unknown.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_redeem_requires_a_named_account_when_several_are_enrolled(tmp_path: Path) -> None:
+    """A redeem is irreversible: the pool never picks among accounts."""
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+    b = FakeBackend("b")
+    pool = _pool(settings, [a, b], RecordingTraffic())
+    with pytest.raises(BackendError) as error:
+        await pool.redeem_reset_credit("req", None)
+    assert error.value.status_code == 400
+    assert "a@example.com" in str(error.value) and "b@example.com" in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_redeem_spends_credit_then_releases_bench_from_fresh_usage(tmp_path: Path) -> None:
+    """After the upstream confirms a reset the account's usage is re-probed
+    (cache bypassed): a benched account whose fresh report shows capacity
+    returns to rotation, the listing cache is dropped, and the traffic log
+    records the outcome with the idempotency key."""
+    settings = _settings(tmp_path)
+    a = FakeBackend("a")
+    consumed: list[tuple[str, str | None]] = []
+    reports = [
+        {
+            "rate_limit": {
+                "allowed": False, "limit_reached": True,
+                "primary_window": {"used_percent": 100, "limit_window_seconds": 604800, "reset_after_seconds": 500000},
+            },
+            "rate_limit_reset_credits": {"available_count": 1, "applicable_available_count": 1},
+        },
+        {
+            "rate_limit": {
+                "allowed": True, "limit_reached": False,
+                "primary_window": {"used_percent": 0, "limit_window_seconds": 604800, "reset_after_seconds": 604800},
+            },
+            "rate_limit_reset_credits": {"available_count": 0, "applicable_available_count": 0},
+        },
+    ]
+
+    async def usage(request_id):
+        return reports.pop(0) if len(reports) > 1 else reports[0]
+
+    async def listing(request_id):
+        return _reset_listing(1)
+
+    async def consume(request_id, redeem_request_id, credit_id=None):
+        consumed.append((redeem_request_id, credit_id))
+        return {"code": "reset", "credit": {"id": "RateLimitResetCredit_0"}, "windows_reset": 1}
+
+    a.get_subscription_status = usage  # type: ignore[assignment]
+    a.list_rate_limit_reset_credits = listing  # type: ignore[attr-defined]
+    a.consume_rate_limit_reset_credit = consume  # type: ignore[attr-defined]
+    traffic = RecordingTraffic()
+    pool = _pool(settings, [a], traffic)
+
+    await pool.reset_credits("probe")
+    account = pool._accounts[0]
+    assert account.is_limited(__import__("time").perf_counter()), "the 100% report benches the account"
+    assert account.resets_payload is not None
+
+    result = await pool.redeem_reset_credit("redeem", None, credit_id="RateLimitResetCredit_0")
+
+    assert consumed == [(result["redeem_request_id"], "RateLimitResetCredit_0")]
+    assert len(result["redeem_request_id"]) >= 32, "a generated idempotency key, never empty"
+    assert result["email"] == "a@example.com"
+    assert result["response"]["code"] == "reset"
+    assert result["usage"]["rate_limit"]["primary_window"]["used_percent"] == 0
+    assert not account.is_limited(__import__("time").perf_counter()), "fresh capacity lifts the bench"
+    assert account.resets_payload is None, "the stale listing is dropped"
+    logged = [entry for entry in traffic.entries if entry.get("phase") == "reset_credit_redeem"]
+    assert logged and logged[0]["outcome"] == "reset" and logged[0]["account"] == account.slot.slug
+    assert logged[0]["redeem_request_id"] == result["redeem_request_id"]
+
+    # A caller-supplied key is forwarded unchanged (retry-safe redeems).
+    await pool.redeem_reset_credit("again", "a@example.com", redeem_request_id="client-key")
+    assert consumed[-1] == ("client-key", None)

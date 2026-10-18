@@ -3425,3 +3425,219 @@ def test_claude_concrete_id_discovered_before_first_request(tmp_path, monkeypatc
         })
     assert response.status_code == 200
     assert response.json()["choices"][0]["message"]["content"] == "OK"
+
+
+# ---------- usage-limit reset credits ----------
+
+
+_RESET_CREDIT = {
+    "id": "RateLimitResetCredit_d646",
+    "reset_type": "codex_rate_limits",
+    "is_supported_by_plan": True,
+    "status": "available",
+    "granted_at": "2026-10-08T00:00:05.628304Z",
+    "expires_at": "2026-11-07T00:00:05.628304Z",
+    "redeem_started_at": None,
+    "redeemed_at": None,
+    "profile_image_url": "https://example.test/codex-icon.png",
+    "profile_user_id": "Codex Team",
+    "title": "Full reset",
+    "description": "Thanks for using Codex! You've been granted one free rate limit reset.",
+}
+# Live listing shape observed 2026-10-18 on a prolite plan.
+_RESET_LISTING = {
+    "credits": [_RESET_CREDIT],
+    "available_count": 1,
+    "total_earned_count": 0,
+    "immediate_reset_purchase_eligible": False,
+    "history_enabled": True,
+}
+
+
+@pytest.mark.asyncio
+async def test_backend_reset_credit_calls_use_codex_contract(tmp_path) -> None:
+    """The listing and the redeem hit the same personal `wham` surface as
+    the usage report, with the Codex request body: an idempotency key the
+    upstream requires and an optional credit id (omitted, not null)."""
+    seen: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(
+            {
+                "method": request.method,
+                "url": str(request.url),
+                "body": json.loads(request.content) if request.content else None,
+                "account_id": request.headers.get("chatgpt-account-id"),
+            }
+        )
+        if request.url.path.endswith("/consume"):
+            return httpx.Response(
+                200, json={"code": "reset", "credit": {"id": "RateLimitResetCredit_d646"}, "windows_reset": 2}
+            )
+        return httpx.Response(200, json=_RESET_LISTING)
+
+    backend = ChatGptCodexBackend(
+        settings=make_settings(tmp_path, upstream_base_url="https://chatgpt.com/backend-api/codex"),
+        auth_manager=FakeAuthManager(),  # type: ignore[arg-type]
+        traffic=TrafficLogger(tmp_path / "logs"),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        listing = await backend.list_rate_limit_reset_credits("req_1")
+        redeemed = await backend.consume_rate_limit_reset_credit("req_2", "redeem-key-1")
+        by_id = await backend.consume_rate_limit_reset_credit("req_3", "redeem-key-2", "RateLimitResetCredit_d646")
+    finally:
+        await backend.close()
+
+    assert listing["available_count"] == 1
+    assert redeemed["code"] == "reset" and by_id["code"] == "reset"
+    assert seen[0]["method"] == "GET"
+    assert seen[0]["url"] == "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
+    assert seen[0]["account_id"] == "account-123"
+    assert seen[1]["method"] == "POST"
+    assert seen[1]["url"] == "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
+    assert seen[1]["body"] == {"redeem_request_id": "redeem-key-1"}
+    assert seen[2]["body"] == {"redeem_request_id": "redeem-key-2", "credit_id": "RateLimitResetCredit_d646"}
+
+
+def test_reset_credits_route_lists_per_account_with_upstream_facts(tmp_path) -> None:
+    """One entry per account: the held credits with their expiry, and the
+    usage report's applicable count (held but not applicable → not
+    redeemable now). An unreadable account carries its error, not a 503."""
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    calls: dict[str, object] = {}
+
+    async def fake_reset_credits(request_id, account=None, *, force=False):
+        calls["account"] = account
+        calls["force"] = force
+        return [
+            {
+                "slug": "default",
+                "email": "one@example.com",
+                "details": _RESET_LISTING,
+                "captured_at": "2026-10-18T10:00:00+00:00",
+                "usage_summary": {"available_count": 1, "applicable_available_count": 0},
+            },
+            {"slug": "dead", "email": "dead@example.com", "error": "Token refresh failed: 401"},
+        ]
+
+    with TestClient(app) as client:
+        client.app.state.backend.reset_credits = fake_reset_credits
+        response = client.get("/v1/relay/accounts/resets?account=one&force=true&raw=true")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert calls == {"account": "one", "force": True}
+    assert payload["object"] == "accounts.resets"
+    assert payload["available_count"] == 1
+    first, dead = payload["accounts"]
+    assert dead == {"slug": "dead", "email": "dead@example.com", "error": "Token refresh failed: 401"}
+    resets = first["resets"]
+    assert resets["available_count"] == 1
+    assert resets["applicable_available_count"] == 0
+    assert resets["redeemable_now"] is False
+    assert resets["next_expiry_at"] == "2026-11-07T00:00:05.628304Z"
+    assert resets["captured_at"] == "2026-10-18T10:00:00+00:00"
+    assert resets["raw"]["history_enabled"] is True
+    credit = resets["credits"][0]
+    assert credit["id"] == "RateLimitResetCredit_d646"
+    assert credit["title"] == "Full reset"
+    assert credit["granted_by"] == "Codex Team"
+    assert credit["expires_at"] == "2026-11-07T00:00:05.628304Z"
+    assert credit["supported_by_plan"] is True
+    assert "profile_image_url" not in credit
+
+
+def test_redeem_route_reports_upstream_outcome_and_fresh_usage(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    calls: list[dict[str, object]] = []
+
+    async def fake_redeem(request_id, account, *, credit_id=None, redeem_request_id=None):
+        calls.append({"account": account, "credit_id": credit_id, "key": redeem_request_id})
+        return {
+            "slug": "default",
+            "email": "one@example.com",
+            "response": {"code": "reset", "credit": {"id": "RateLimitResetCredit_d646"}, "windows_reset": 2},
+            "redeem_request_id": redeem_request_id or "generated-key",
+            "usage": {
+                "plan_type": "prolite",
+                "rate_limit": {"primary_window": {"used_percent": 0, "limit_window_seconds": 604800}},
+                "rate_limit_reset_credits": {"available_count": 0, "applicable_available_count": 0},
+            },
+            "usage_captured_at": "2026-10-18T10:00:01+00:00",
+        }
+
+    with TestClient(app) as client:
+        client.app.state.backend.redeem_reset_credit = fake_redeem
+        response = client.post(
+            "/v1/relay/accounts/resets/redeem",
+            json={"account": "one@example.com", "credit_id": " RateLimitResetCredit_d646 ", "redeem_request_id": "k-1"},
+        )
+        bare = client.post("/v1/relay/accounts/resets/redeem")
+        bad = client.post("/v1/relay/accounts/resets/redeem", json={"account": 7})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert calls[0] == {"account": "one@example.com", "credit_id": "RateLimitResetCredit_d646", "key": "k-1"}
+    assert payload["object"] == "accounts.reset_redeem"
+    assert payload["outcome"] == "reset"
+    assert payload["reset_applied"] is True
+    assert payload["windows_reset"] == 2
+    assert payload["credit_id"] == "RateLimitResetCredit_d646"
+    assert payload["redeem_request_id"] == "k-1"
+    assert payload["status"]["rate_limits"]["default"]["primary_window"]["used_percent"] == 0
+    assert payload["status"]["rate_limit_reset_credits"] == {"available_count": 0, "applicable_available_count": 0}
+    # No body is fine (single-account relays): the pool picks the lone account.
+    assert bare.status_code == 200
+    assert calls[1] == {"account": None, "credit_id": None, "key": None}
+    assert bad.status_code == 422
+    assert bad.json()["error"]["param"] == "account"
+
+
+def test_redeem_route_keeps_nothing_to_reset_honest(tmp_path) -> None:
+    """A credit held while usage is below its limit is not spent; the
+    upstream code passes through and reset_applied stays false."""
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+
+    async def fake_redeem(request_id, account, *, credit_id=None, redeem_request_id=None):
+        return {
+            "slug": "default", "email": "one@example.com",
+            "response": {"code": "nothing_to_reset", "windows_reset": 0},
+            "redeem_request_id": "k", "usage": None, "usage_captured_at": None,
+        }
+
+    with TestClient(app) as client:
+        client.app.state.backend.redeem_reset_credit = fake_redeem
+        response = client.post("/v1/relay/accounts/resets/redeem", json={"account": "one"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["outcome"] == "nothing_to_reset"
+    assert payload["known_outcome"] is True
+    assert payload["reset_applied"] is False
+    assert payload["status"] is None
+
+
+def test_reset_credit_routes_surface_pool_errors(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+
+    async def ambiguous(request_id, account, *, credit_id=None, redeem_request_id=None):
+        raise BackendError(400, "Several accounts are enrolled; name one with `account`. Known accounts: a, b.")
+
+    async def unknown(request_id, account=None, *, force=False):
+        raise BackendError(404, "Unknown account `zzz`. Known accounts: a@example.com.")
+
+    with TestClient(app) as client:
+        client.app.state.backend.redeem_reset_credit = ambiguous
+        client.app.state.backend.reset_credits = unknown
+        redeem = client.post("/v1/relay/accounts/resets/redeem")
+        listing = client.get("/v1/relay/accounts/resets?account=zzz")
+
+    assert redeem.status_code == 400
+    assert "name one with `account`" in redeem.text
+    assert listing.status_code == 404
+    assert "Unknown account `zzz`" in listing.text

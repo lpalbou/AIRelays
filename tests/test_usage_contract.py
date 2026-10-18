@@ -415,3 +415,87 @@ def test_truthy_stream_flag_keeps_stream_options(tmp_path) -> None:
                             stream=_stream())
     assert "stream_options" not in response.headers.get("x-airelays-ignored-parameters", "")
     assert _data_lines(response.text)[-2]["usage"] == EXPECTED
+
+
+# ---------- usage-limit reset credits ----------
+
+
+def test_reset_credits_normalizer_keeps_upstream_facts_and_derives_nothing() -> None:
+    from datetime import datetime, timezone
+
+    from airelay.transforms import normalize_reset_credits_payload, normalize_reset_redeem_payload
+
+    now = datetime(2026, 10, 18, 0, 0, 5, tzinfo=timezone.utc)
+    details = {
+        "credits": [
+            {
+                "id": "RateLimitResetCredit_1", "reset_type": "codex_rate_limits", "status": "available",
+                "is_supported_by_plan": True, "granted_at": "2026-10-08T00:00:05.628304Z",
+                "expires_at": "2026-11-07T00:00:05.628304Z", "title": "Full reset",
+                "description": "granted", "profile_user_id": "Codex Team",
+            },
+            {
+                "id": "RateLimitResetCredit_2", "reset_type": "codex_rate_limits", "status": "redeemed",
+                "granted_at": "2026-09-01T00:00:00Z", "expires_at": None, "redeemed_at": "2026-09-02T00:00:00Z",
+            },
+            {"id": "RateLimitResetCredit_3", "status": "available", "granted_at": "x", "expires_at": "not-a-date"},
+            "garbage",
+        ],
+        "available_count": 2,
+        "total_earned_count": 4,
+        "immediate_reset_purchase_eligible": False,
+    }
+    normalized = normalize_reset_credits_payload(
+        details, usage_summary={"available_count": 2, "applicable_available_count": 1}, now=now,
+    )
+    assert normalized["object"] == "rate_limit_reset_credits"
+    assert normalized["available_count"] == 2
+    assert normalized["applicable_available_count"] == 1
+    assert normalized["redeemable_now"] is True
+    assert normalized["total_earned_count"] == 4
+    assert normalized["next_expiry_at"] == "2026-11-07T00:00:05.628304Z"
+    assert [credit["id"] for credit in normalized["credits"]] == [
+        "RateLimitResetCredit_1", "RateLimitResetCredit_2", "RateLimitResetCredit_3",
+    ]
+    first, redeemed, odd = normalized["credits"]
+    assert first["expires_in_seconds"] == 20 * 86400
+    assert first["expired"] is False
+    assert first["granted_by"] == "Codex Team"
+    assert redeemed["expires_at"] is None and redeemed["expires_in_seconds"] is None and redeemed["expired"] is None
+    assert redeemed["redeemed_at"] == "2026-09-02T00:00:00Z"
+    assert odd["expires_in_seconds"] is None, "an unparseable expiry is not guessed"
+
+    # Without the usage summary the applicability is unknown, not false;
+    # without a count the available credits are counted.
+    bare = normalize_reset_credits_payload({"credits": details["credits"]}, now=now)
+    assert bare["applicable_available_count"] is None
+    assert bare["redeemable_now"] is None
+    assert bare["available_count"] == 2
+
+    # A usable count with no credit left is still not redeemable.
+    empty = normalize_reset_credits_payload(
+        {"credits": [], "available_count": 0}, usage_summary={"applicable_available_count": 1}, now=now,
+    )
+    assert empty["redeemable_now"] is False and empty["next_expiry_at"] is None
+
+    outcome = normalize_reset_redeem_payload(
+        {"code": "already_redeemed", "credit": {"id": "RateLimitResetCredit_1"}}, credit_id=None, redeem_request_id="k",
+    )
+    assert outcome == {
+        "outcome": "already_redeemed", "known_outcome": True, "reset_applied": False,
+        "windows_reset": None, "credit_id": "RateLimitResetCredit_1", "redeem_request_id": "k",
+    }
+    unknown = normalize_reset_redeem_payload({"code": "something_new", "windows_reset": 3}, credit_id="c", redeem_request_id="k")
+    assert unknown["known_outcome"] is False and unknown["outcome"] == "something_new" and unknown["credit_id"] == "c"
+
+
+def test_subscription_status_reports_reset_credit_counts_as_integers() -> None:
+    from airelay.transforms import normalize_subscription_status_payload
+
+    status = normalize_subscription_status_payload(
+        {"rate_limit_reset_credits": {"available_count": 1, "applicable_available_count": "0", "extra": 2}}
+    )
+    assert status["rate_limit_reset_credits"] == {
+        "available_count": 1, "applicable_available_count": None, "extra": 2,
+    }
+    assert normalize_subscription_status_payload({})["rate_limit_reset_credits"] is None

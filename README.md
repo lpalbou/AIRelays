@@ -303,6 +303,8 @@ airelays login            # second account — added alongside the first
 airelays accounts         # list accounts and the commands to manage them
 airelays logout perso@gmail.com          # sign one account out
 airelays accounts order work@company.com perso@gmail.com   # change priority
+airelays accounts resets                 # usage resets OpenAI granted, per account
+airelays accounts redeem perso@gmail.com # redeem one now (asks first)
 ```
 
 `airelays accounts` is the hub: it lists your accounts in balancing order and
@@ -354,7 +356,7 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 - Claude model discovery queries the installed CLI and exposes both aliases and concrete model ids. The Models tab and `airelays models` show each reported alias resolution, such as `claude:fable` resolving to `claude-fable-5-1`.
 - The Models tab refreshes automatically every five minutes while reachable. Its Refresh button, or `GET /v1/models?refresh=true`, requests fresh provider catalogs. See [model discovery](docs/api.md#get-v1models) for cache and availability limits.
 - With multiple OpenAI accounts, `/v1/models` is the union of their catalogs. Balancing, conversation affinity, and failover stay within each model's supporting account subset. The Models tab shows account coverage and labels entries the upstream hides from its own picker.
-- Subscription bars report upstream allowances, including Claude's separately scoped Fable weekly cap when present. Hover over or activate the **?** beside an account name for credit details and snapshot times; percentages are not token counts. See [Subscription Status](docs/subscription-status.md).
+- Subscription bars report upstream allowances, including Claude's separately scoped Fable weekly cap when present. Hover over or activate the **?** beside an account name for credit details and snapshot times; percentages are not token counts. An OpenAI account holding a usage reset ("Redeem reset" in Codex) shows it under its bars with its expiry and a **Redeem now** button, so you never need an OpenAI app to use it. See [Subscription Status](docs/subscription-status.md).
 - AIRelays rejects requests when the selected runtime is disabled or the route is outside that runtime's published subset
 
 ## What AIRelays Exposes
@@ -365,6 +367,7 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 - `GET /v1/account/rate_limits`
 - `GET /v1/relay/status`
 - `POST /v1/relay/accounts/refresh`
+- `GET /v1/relay/accounts/resets` and `POST /v1/relay/accounts/resets/redeem` (OpenAI usage resets: see them, redeem one)
 - `POST /v1/responses`
 - `POST /v1/chat/completions`
 - `POST /v1/completions`

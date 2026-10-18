@@ -29,6 +29,28 @@ Quota percentages are not token counts or monetary balances. The desktop's
 token breakdown counts only responses observed through this relay in the
 account's reported window, not activity in other apps or before recording.
 
+### Usage resets
+
+OpenAI sometimes grants Codex users a **usage reset** (shown as "Redeem
+reset" in Codex): a credit that restarts the account's usage windows. AIRelays
+reads these from the same subscription and lets you redeem one without
+opening an OpenAI app:
+
+- `GET /v1/relay/accounts/resets` lists each account's credits with their
+  title, who granted them, grant and expiry times, and whether the upstream
+  would apply one right now (`redeemable_now`); see [API](api.md)
+- `POST /v1/relay/accounts/resets/redeem` spends one; the upstream's answer
+  (`reset`, `nothing_to_reset`, `no_credit`, `already_redeemed`) is reported
+  verbatim and the account's usage is re-read at once
+- CLI: `airelays accounts resets` and `airelays accounts redeem <email>`
+- Desktop: an account holding a reset shows **N usage reset available** under
+  its bars with what it is and when it expires, and a **Redeem now** button
+  that asks for confirmation. The **?** panel keeps the counts.
+
+A credit held while usage is below its limit is *available* but not
+*applicable*: redeeming it answers `nothing_to_reset` and keeps the credit.
+The relay never redeems on its own.
+
 ```bash
 curl 'http://127.0.0.1:8080/v1/subscription/status' \
   -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'

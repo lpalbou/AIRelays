@@ -1229,13 +1229,164 @@ def normalize_subscription_status_payload(
         if isinstance(payload.get("spend_control"), dict)
         else None,
         "rate_limit_reached_type": _optional_str(payload.get("rate_limit_reached_type")),
-        "rate_limit_reset_credits": payload.get("rate_limit_reset_credits")
-        if isinstance(payload.get("rate_limit_reset_credits"), dict)
-        else None,
+        "rate_limit_reset_credits": _normalize_reset_credits_summary(
+            payload.get("rate_limit_reset_credits")
+        ),
     }
     if include_raw:
         normalized["raw"] = copy.deepcopy(payload)
     return normalized
+
+
+def _normalize_reset_credits_summary(value: Any) -> dict[str, Any] | None:
+    """The usage report's reset-credit counts. Kept as the upstream states
+    them (``available_count`` held, ``applicable_available_count`` usable
+    right now); the full per-credit listing lives on the resets endpoint."""
+    if not isinstance(value, dict):
+        return None
+    summary = {
+        key: _optional_int(value.get(key))
+        for key in ("available_count", "applicable_available_count")
+    }
+    # Preserve any further count the upstream adds; integers only.
+    for key, item in value.items():
+        if key not in summary and _optional_int(item) is not None:
+            summary[key] = item
+    return summary
+
+
+RESET_CREDIT_OUTCOMES = ("reset", "nothing_to_reset", "no_credit", "already_redeemed")
+
+
+def _parse_upstream_timestamp(value: Any) -> datetime | None:
+    """RFC 3339 as the reset-credits endpoint writes it
+    (``2026-11-07T00:00:05.628304Z``); anything unparseable is None, never a
+    guess."""
+    if not isinstance(value, str) or not value:
+        return None
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _normalize_reset_credit(value: Any, now: datetime) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or not isinstance(value.get("id"), str):
+        return None
+    expires = _parse_upstream_timestamp(value.get("expires_at"))
+    expires_in = None
+    if expires is not None:
+        expires_in = max(0, int((expires - now).total_seconds()))
+    return {
+        "id": value["id"],
+        "reset_type": _optional_str(value.get("reset_type")),
+        "status": _optional_str(value.get("status")),
+        "supported_by_plan": value.get("is_supported_by_plan")
+        if isinstance(value.get("is_supported_by_plan"), bool)
+        else None,
+        "title": _optional_str(value.get("title")),
+        "description": _optional_str(value.get("description")),
+        "granted_by": _optional_str(value.get("profile_user_id")),
+        "granted_at": _optional_str(value.get("granted_at")),
+        "expires_at": _optional_str(value.get("expires_at")),
+        "expires_in_seconds": expires_in,
+        "expired": expires_in == 0 if expires is not None else None,
+        "redeem_started_at": _optional_str(value.get("redeem_started_at")),
+        "redeemed_at": _optional_str(value.get("redeemed_at")),
+    }
+
+
+def normalize_reset_credits_payload(
+    details: dict[str, Any],
+    *,
+    usage_summary: dict[str, Any] | None = None,
+    include_raw: bool = False,
+    captured_at: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """One account's usage-limit reset credits in a stable shape.
+
+    ``details`` is the upstream reset-credits listing (every credit with its
+    status, grant and expiry); ``usage_summary`` is the
+    ``rate_limit_reset_credits`` block of the same account's usage report,
+    whose ``applicable_available_count`` says how many credits the upstream
+    would apply right now (a credit held while usage is below its limit
+    counts as available but not applicable: redeeming it answers
+    ``nothing_to_reset``). Nothing is inferred: a missing count stays None.
+    """
+    now = now or datetime.now(timezone.utc)
+    credits_raw = details.get("credits")
+    credits = [
+        credit
+        for credit in (
+            _normalize_reset_credit(item, now)
+            for item in (credits_raw if isinstance(credits_raw, list) else [])
+        )
+        if credit is not None
+    ]
+    available = [credit for credit in credits if credit["status"] == "available"]
+    available_count = _optional_int(details.get("available_count"))
+    if available_count is None:
+        available_count = len(available)
+    applicable = None
+    if isinstance(usage_summary, dict):
+        applicable = _optional_int(usage_summary.get("applicable_available_count"))
+    expiries = sorted(
+        credit["expires_at"]
+        for credit in available
+        if credit["expires_at"] and credit["expired"] is False
+    )
+    normalized: dict[str, Any] = {
+        "object": "rate_limit_reset_credits",
+        "captured_at": captured_at or now.isoformat().replace("+00:00", "Z"),
+        "source": {
+            "kind": "chatgpt_subscription",
+            "upstream_path": "/backend-api/wham/rate-limit-reset-credits",
+        },
+        "available_count": available_count,
+        "applicable_available_count": applicable,
+        # True when the upstream reports a credit it would apply right now;
+        # False when a credit exists but usage does not need a reset yet;
+        # None when the usage report did not say.
+        "redeemable_now": (
+            None
+            if applicable is None
+            else (applicable > 0 and available_count > 0)
+        ),
+        "total_earned_count": _optional_int(details.get("total_earned_count")),
+        "immediate_reset_purchase_eligible": details.get("immediate_reset_purchase_eligible")
+        if isinstance(details.get("immediate_reset_purchase_eligible"), bool)
+        else None,
+        "next_expiry_at": expiries[0] if expiries else None,
+        "credits": credits,
+    }
+    if include_raw:
+        normalized["raw"] = copy.deepcopy(details)
+    return normalized
+
+
+def normalize_reset_redeem_payload(
+    response: dict[str, Any], *, credit_id: str | None, redeem_request_id: str
+) -> dict[str, Any]:
+    """The upstream's answer to a redeem, with its outcome code kept verbatim
+    (``reset``, ``nothing_to_reset``, ``no_credit``, ``already_redeemed``)
+    and an unknown code passed through rather than mapped to a guess."""
+    code = _optional_str(response.get("code"))
+    windows_reset = _optional_int(response.get("windows_reset"))
+    credit = response.get("credit")
+    consumed = _optional_str(credit.get("id")) if isinstance(credit, dict) else None
+    return {
+        "outcome": code,
+        "known_outcome": code in RESET_CREDIT_OUTCOMES,
+        "reset_applied": code == "reset",
+        "windows_reset": windows_reset,
+        "credit_id": consumed or credit_id,
+        "redeem_request_id": redeem_request_id,
+    }
 
 
 def _normalize_additional_rate_limits(value: Any) -> list[dict[str, Any]]:

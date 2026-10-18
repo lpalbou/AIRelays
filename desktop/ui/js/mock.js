@@ -45,6 +45,7 @@ const settings = {
 
 let managed = true;
 let mockAutostart = false;
+let mockResetRedeemed = false;
 let claudeAccounts = [
   {slug: "claude-perso", email: "perso@claude.ai", subscription_type: "pro", ready_for_requests: true, managed_profile: true},
   {slug: "claude-work", email: "work@claude.ai", subscription_type: "max", ready_for_requests: true, managed_profile: true},
@@ -418,6 +419,57 @@ export async function mockInvoke(command, args = {}) {
       return null;
     case "refresh_accounts":
       return { accounts: [] };
+    case "get_reset_credits":
+      // Mirrors /v1/relay/accounts/resets: one held reset that the upstream
+      // would apply now, one account with nothing, one unreadable.
+      return {
+        object: "accounts.resets",
+        available_count: mockResetRedeemed ? 0 : 1,
+        accounts: [
+          {
+            slug: "default",
+            email: "perso@gmail.com",
+            resets: {
+              object: "rate_limit_reset_credits",
+              available_count: mockResetRedeemed ? 0 : 1,
+              applicable_available_count: mockResetRedeemed ? 0 : 1,
+              redeemable_now: !mockResetRedeemed,
+              total_earned_count: 0,
+              next_expiry_at: mockResetRedeemed ? null : new Date(Date.now() + 20 * 86400 * 1000).toISOString(),
+              credits: mockResetRedeemed ? [] : [{
+                id: "RateLimitResetCredit_mock1",
+                reset_type: "codex_rate_limits",
+                status: "available",
+                supported_by_plan: true,
+                title: "Full reset",
+                description: "Thanks for using Codex! You've been granted one free rate limit reset.",
+                granted_by: "Codex Team",
+                granted_at: new Date(Date.now() - 10 * 86400 * 1000).toISOString(),
+                expires_at: new Date(Date.now() + 20 * 86400 * 1000).toISOString(),
+                expires_in_seconds: 20 * 86400,
+                expired: false,
+              }],
+            },
+          },
+          {
+            slug: "backup",
+            email: "backup@gmail.com",
+            resets: {
+              object: "rate_limit_reset_credits",
+              available_count: 0, applicable_available_count: 0, redeemable_now: false,
+              total_earned_count: 0, next_expiry_at: null, credits: [],
+            },
+          },
+          { slug: "expired", email: "expired@gmail.com", error: "Token refresh failed: 401" },
+        ],
+      };
+    case "redeem_reset_credit":
+      mockResetRedeemed = true;
+      return {
+        object: "accounts.reset_redeem", slug: "default", email: args.account,
+        outcome: "reset", known_outcome: true, reset_applied: true, windows_reset: 1,
+        credit_id: args.creditId ?? "RateLimitResetCredit_mock1", status: null,
+      };
     case "get_autostart":
       return mockAutostart;
     case "set_autostart":

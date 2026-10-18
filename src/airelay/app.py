@@ -71,6 +71,8 @@ from airelay.store import AppStore
 from airelay.traffic import TrafficLogger, snapshot_body
 from airelay.transforms import (
     CHAT_PARAMETERS,
+    normalize_reset_credits_payload,
+    normalize_reset_redeem_payload,
     COMPLETIONS_PARAMETERS,
     expand_local_files,
     inline_chat_files,
@@ -348,6 +350,8 @@ def create_app(settings: Settings) -> FastAPI:
         "/v1/account/rate_limits",
         "/v1/relay/status",
         "/v1/relay/accounts/refresh",
+        "/v1/relay/accounts/resets",
+        "/v1/relay/accounts/resets/redeem",
         "/v1/relay/logging",
         "/v1/completions",
         "/v1/responses",
@@ -1069,6 +1073,97 @@ def create_app(settings: Settings) -> FastAPI:
         return logged_json(
             request_id, {"object": "accounts.refresh", "accounts": accounts}, loggable=False
         )
+
+    def require_openai_accounts() -> None:
+        if not settings.enable_openai_provider:
+            raise HTTPException(
+                status_code=501,
+                detail="The OpenAI subscription runtime is disabled for this AIRelays process.",
+            )
+
+    @app.get("/v1/relay/accounts/resets")
+    async def account_reset_credits(
+        request: Request,
+        account: str | None = None,
+        raw: bool = False,
+        force: bool = False,
+    ) -> JSONResponse:
+        """Usage-limit reset credits per OpenAI account: what Codex shows
+        under "Redeem reset", read from the same subscription so the user
+        need not open an OpenAI app to know a reset is waiting."""
+        request_id = _request_id(request)
+        await log_inbound(request_id, request, b"")
+        require_openai_accounts()
+        try:
+            entries = await backend.reset_credits(request_id, account, force=force)
+        except Exception as exc:  # noqa: BLE001
+            raise _http_error(exc) from exc
+        accounts = []
+        for entry in entries:
+            item: dict[str, Any] = {"slug": entry["slug"], "email": entry.get("email")}
+            if "details" in entry:
+                item["resets"] = normalize_reset_credits_payload(
+                    entry["details"],
+                    usage_summary=entry.get("usage_summary"),
+                    include_raw=raw,
+                    captured_at=entry.get("captured_at"),
+                )
+            else:
+                item["error"] = entry.get("error")
+            accounts.append(item)
+        payload = {
+            "object": "accounts.resets",
+            "available_count": sum(
+                item["resets"]["available_count"] or 0 for item in accounts if "resets" in item
+            ),
+            "accounts": accounts,
+        }
+        return logged_json(request_id, payload, loggable=False)
+
+    @app.post("/v1/relay/accounts/resets/redeem")
+    async def redeem_account_reset(request: Request) -> JSONResponse:
+        """Redeems one reset credit on the upstream for one account (the
+        call Codex makes behind "Yes, use reset"), then re-reads that
+        account's usage so a lifted limit returns it to rotation at once.
+        The upstream's outcome code is reported verbatim; `reset_applied` is
+        true only for `reset`."""
+        request_id = _request_id(request)
+        body = await request.body()
+        await log_inbound(request_id, request, body)
+        require_openai_accounts()
+        payload = load_json(body) if body.strip() else {}
+        if not isinstance(payload, dict):
+            raise _ApiError(422, "The request body must be a JSON object.", code="invalid_body")
+        account = payload.get("account")
+        credit_id = payload.get("credit_id")
+        redeem_request_id = payload.get("redeem_request_id")
+        for name, value in (("account", account), ("credit_id", credit_id), ("redeem_request_id", redeem_request_id)):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise _ApiError(422, f"`{name}` must be a non-empty string.", code="invalid_value", param=name)
+        try:
+            result = await backend.redeem_reset_credit(
+                request_id,
+                account.strip() if isinstance(account, str) else None,
+                credit_id=credit_id.strip() if isinstance(credit_id, str) else None,
+                redeem_request_id=redeem_request_id.strip() if isinstance(redeem_request_id, str) else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise _http_error(exc) from exc
+        outcome = normalize_reset_redeem_payload(
+            result["response"], credit_id=credit_id, redeem_request_id=result["redeem_request_id"]
+        )
+        response = {
+            "object": "accounts.reset_redeem",
+            "slug": result["slug"],
+            "email": result.get("email"),
+            **outcome,
+            "status": normalize_subscription_status_payload(
+                result["usage"], captured_at=result.get("usage_captured_at")
+            )
+            if isinstance(result.get("usage"), dict)
+            else None,
+        }
+        return logged_json(request_id, response, loggable=False)
 
     @app.get("/v1/relay/status")
     async def relay_status(request: Request, activity_only: bool = False) -> JSONResponse:

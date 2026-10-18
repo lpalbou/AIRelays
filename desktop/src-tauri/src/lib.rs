@@ -140,6 +140,8 @@ pub fn run() {
             commands::set_login_method,
             commands::logout_account,
             commands::refresh_accounts,
+            commands::get_reset_credits,
+            commands::redeem_reset_credit,
             commands::open_path,
             commands::get_autostart,
             commands::set_autostart,

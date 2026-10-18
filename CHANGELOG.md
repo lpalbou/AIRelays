@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.20.0
+
+### Added
+
+- OpenAI usage resets ("Redeem reset" in Codex) are visible and redeemable
+  from AIRelays. `GET /v1/relay/accounts/resets` lists each account's reset
+  credits with their title, who granted them, grant and expiry times, and
+  whether the upstream would apply one now (`redeemable_now`, from the usage
+  report's `applicable_available_count`). `POST /v1/relay/accounts/resets/redeem`
+  spends one (the account must be named when several are enrolled; optional
+  `credit_id`; idempotent `redeem_request_id`), reports the upstream outcome
+  verbatim (`reset`, `nothing_to_reset`, `no_credit`, `already_redeemed`) and
+  re-reads the account's usage so a lifted limit returns it to rotation at
+  once. CLI: `airelays accounts resets`, `airelays accounts redeem <email>`
+  (asks first; `--yes`, `--credit`, `--json`). Desktop: an account holding a
+  reset shows **N usage reset available** under its bars with its expiry and
+  a **Redeem now** button behind a confirmation dialog.
+- `rate_limit_reset_credits` in the normalized subscription status keeps only
+  integer counts (`available_count`, `applicable_available_count`).
+
 ## 0.19.0
 
 ### Added

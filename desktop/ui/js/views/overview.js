@@ -27,6 +27,12 @@ let claudeUsage = null;
 let usageStamp = 0;
 let usageLoadedAt = 0;
 let usageLoading = false;
+// Usage-limit reset credits per OpenAI account (email or slug → entry from
+// /v1/relay/accounts/resets); loaded with usage, rendered under the bars.
+let resetsByEmail = new Map();
+let resetsStamp = 0;
+let pendingRedeemTarget = null;
+const redeemInFlight = new Set();
 
 export const overviewView = {
   async mount(container, ctx) {
@@ -226,6 +232,16 @@ function template() {
       </div>
     </dialog>
 
+    <dialog id="ov-redeem-dialog">
+      <h3 id="ov-redeem-title">Redeem a usage reset?</h3>
+      <p class="dialog-text" id="ov-redeem-text"></p>
+      <div class="row" style="margin-top:14px">
+        <span class="spacer"></span>
+        <button class="btn" id="ov-redeem-cancel">Cancel</button>
+        <button class="btn btn-primary" id="ov-redeem-confirm">Redeem now</button>
+      </div>
+    </dialog>
+
     <dialog id="ov-rotate-dialog">
       <h3>Create a new API key?</h3>
       <p class="dialog-text">
@@ -413,6 +429,13 @@ function bindActions(ctx) {
   document.addEventListener("click", documentClickHandler);
 
   // Sign-out confirm dialog wiring (shared by both providers).
+  el("ov-redeem-cancel").addEventListener("click", () => el("ov-redeem-dialog").close());
+  el("ov-redeem-confirm").addEventListener("click", () => {
+    const target = pendingRedeemTarget;
+    pendingRedeemTarget = null;
+    el("ov-redeem-dialog").close();
+    if (target) redeemReset(target);
+  });
   el("ov-logout-cancel").addEventListener("click", () => el("ov-logout-dialog").close());
   el("ov-logout-confirm").addEventListener("click", async () => {
     const target = pendingLogoutTarget;
@@ -617,14 +640,22 @@ async function loadUsage() {
   usageLoading = true;
   const currentRoot = root;
   let usage;
-  try {
-    usage = await api.getUsage();
-  } catch {
-    usage = null; // account rows still render, just without bars
-  }
+  let resets;
+  // Reset credits are best-effort: their absence must never hide the bars.
+  [usage, resets] = await Promise.all([
+    api.getUsage().catch(() => null), // account rows still render, just without bars
+    api.getResetCredits().catch(() => null),
+  ]);
   if (root !== currentRoot) return;
   usageLoading = false;
   usageLoadedAt = Date.now();
+  resetsByEmail = new Map();
+  if (Array.isArray(resets?.accounts)) {
+    for (const entry of resets.accounts) {
+      resetsByEmail.set(entry.email ?? entry.slug, entry);
+    }
+  }
+  resetsStamp++;
   usageByEmail = new Map();
   claudeUsage = usage?.claude ?? null;
   if (Array.isArray(usage?.accounts)) {
@@ -1112,7 +1143,10 @@ function accountBlock(account, index, total, balance) {
     for (const [label, window] of usageWindows(usageEntry.status)) {
       block.appendChild(usageWindowRow(label, window));
     }
-  } else if (usageError) {
+  }
+  const resetRow = usageResetRow(email, resetsByEmail.get(email)?.resets, pendingLogout.has(email));
+  if (resetRow) block.appendChild(resetRow);
+  if (!usageEntry?.status && usageError) {
     // The reason is the actionable part — a bare "Usage unavailable" made
     // an expired sign-in look like a cosmetic meter glitch.
     const err = document.createElement("div");
@@ -1124,6 +1158,96 @@ function accountBlock(account, index, total, balance) {
     block.appendChild(err);
   }
   return block;
+}
+
+// Facts a reset credit carries, as the upstream states them: its title,
+// who granted it, and when it lapses. Nothing is inferred from a missing
+// expiry.
+function describeResetCredit(credit) {
+  const parts = [credit.title ?? credit.reset_type ?? "reset"];
+  if (credit.granted_by) parts.push(`from ${credit.granted_by}`);
+  if (credit.expires_at) {
+    const at = new Date(credit.expires_at);
+    const day = Number.isNaN(at.getTime())
+      ? credit.expires_at.slice(0, 10)
+      : at.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const left = Number.isFinite(credit.expires_in_seconds) ? formatDuration(credit.expires_in_seconds) : null;
+    parts.push(credit.expired ? `expired ${day}` : `expires ${day}${left ? ` (in ${left})` : ""}`);
+  } else {
+    parts.push("no expiry reported");
+  }
+  return parts.join(" · ");
+}
+
+// "N usage resets available" under an account's bars, with the Redeem
+// action. Hidden when the account holds none: the ? panel still lists the
+// count, so a plain account keeps a short block. `applicable_available_count`
+// is the upstream's own word on whether a reset would apply right now;
+// redeeming a held credit while usage is below its limit answers
+// nothing_to_reset and is not spent, so the hint says so instead of
+// disabling the action.
+function usageResetRow(email, resets, pending) {
+  const count = resets?.available_count ?? 0;
+  if (!(count > 0)) return null;
+  const row = document.createElement("div");
+  row.className = "account-reset";
+  const badge = document.createElement("span");
+  badge.className = resets.redeemable_now === false ? "badge badge-neutral" : "badge badge-good";
+  badge.textContent = `${count} usage reset${count > 1 ? "s" : ""} available`;
+  const detail = document.createElement("span");
+  detail.className = "account-reset-detail";
+  const credits = (resets.credits ?? []).filter((credit) => credit.status === "available");
+  const first = credits[0];
+  const hint = resets.redeemable_now === false
+    ? "usable once a limit is reached"
+    : resets.redeemable_now === true ? "usable now" : null;
+  detail.textContent = [first ? describeResetCredit(first) : null, hint].filter(Boolean).join(" · ");
+  detail.title = first?.description ?? "";
+  const button = document.createElement("button");
+  button.className = "btn btn-small account-reset-redeem";
+  button.type = "button";
+  const busy = redeemInFlight.has(email);
+  button.disabled = busy || pending;
+  button.innerHTML = busy ? `<span class="spin">${icon("refresh", 13)}</span> Redeeming…` : "Redeem now";
+  button.title = resets.redeemable_now === false
+    ? "OpenAI reports nothing to reset right now; redeeming would keep the credit."
+    : "Spend one reset credit on this account now.";
+  button.addEventListener("click", () => openRedeemDialog(email, resets));
+  row.append(badge, detail, button);
+  return row;
+}
+
+function openRedeemDialog(email, resets) {
+  pendingRedeemTarget = { email, creditId: null };
+  root.querySelector("#ov-redeem-title").textContent = `Redeem a usage reset on ${email}?`;
+  const credits = (resets?.credits ?? []).filter((credit) => credit.status === "available");
+  const what = credits[0] ? `${describeResetCredit(credits[0])}. ` : "";
+  root.querySelector("#ov-redeem-text").textContent = resets?.redeemable_now === false
+    ? `${what}OpenAI reports that this account's usage does not need a reset right now. Redeeming asks anyway; a "nothing to reset" answer keeps the credit.`
+    : `${what}This spends the credit on OpenAI's side and cannot be undone. The account's usage windows restart and it returns to rotation at once.`;
+  root.querySelector("#ov-redeem-dialog").showModal();
+}
+
+async function redeemReset(target) {
+  const { email, creditId } = target;
+  if (redeemInFlight.has(email)) return;
+  redeemInFlight.add(email);
+  renderCache.accounts = "";
+  if (lastState) render(lastState);
+  const outcome = await call(api.redeemResetCredit(email, creditId), "Redeem failed");
+  redeemInFlight.delete(email);
+  renderCache.accounts = "";
+  if (outcome !== undefined) {
+    const messages = {
+      reset: ["Usage reset", `${email} starts fresh windows.`, "success"],
+      nothing_to_reset: ["Nothing to reset", "OpenAI says this account's usage does not need a reset right now; the credit was kept.", "info"],
+      no_credit: ["No reset available", "OpenAI reports no reset credit on this account.", "error"],
+      already_redeemed: ["Already redeemed", "That reset was used before; refreshing the list.", "info"],
+    };
+    const [title, body, kind] = messages[outcome.outcome] ?? ["Redeem answered", String(outcome.outcome ?? "unknown"), "info"];
+    toast(title, body, kind);
+  }
+  await loadUsage();
 }
 
 function formatTokens(n) {
@@ -1408,7 +1532,8 @@ function imageUsageLine(imageUsage) {
 function renderAccounts(state) {
   const providers = state.relay_status?.providers;
   const cacheKey =
-    JSON.stringify(providers ?? null) + "|" + usageStamp + "|" + [...pendingLogout].join(",") +
+    JSON.stringify(providers ?? null) + "|" + usageStamp + "|" + resetsStamp + "|" +
+    [...redeemInFlight].join(",") + "|" + [...pendingLogout].join(",") +
     "|" + (lastState?.claude_effective ?? "") + "|" + (lastState?.claude_token_present ?? "") +
     "|" + pendingClaudeLogout + "|" + Math.floor(Date.now() / 60_000);
   if (cacheKey === renderCache.accounts) {

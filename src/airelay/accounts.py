@@ -34,6 +34,7 @@ import hashlib
 import json
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -263,6 +264,11 @@ class _PooledAccount:
     usage_payload: dict[str, Any] | None = None
     usage_fetched_at: float = 0.0
     usage_captured_at: str | None = None
+    # Cached usage-limit reset credits listing (same personal surface as the
+    # usage report, same TTL discipline).
+    resets_payload: dict[str, Any] | None = None
+    resets_fetched_at: float = 0.0
+    resets_captured_at: str | None = None
     # Cached lowercase model slugs this account exposes, with fetch time.
     models: frozenset[str] = field(default_factory=frozenset)
     models_payload: dict[str, Any] | None = None
@@ -1268,6 +1274,131 @@ class OpenAiAccountPool:
                     entry["image_usage"] = image_usage
                 results.append(entry)
             return results
+
+    def resolve_account(self, needle: str) -> _PooledAccount:
+        """An enrolled account by email, unambiguous email prefix, or slug.
+        Unknown and ambiguous needles raise distinct, actionable errors."""
+        self.refresh_if_changed()
+        slot, error = resolve_slot(self.slots(), needle)
+        if slot is None:
+            status = 409 if "matches" in (error or "") else 404
+            raise BackendError(status, error or f"Unknown account `{needle}`.")
+        for account in self._accounts:
+            # Identity, not slug: test fixtures (and a legacy root plus a
+            # same-named folder) can hold two slots under one slug.
+            if account.slot is slot:
+                return account
+        raise BackendError(404, f"Unknown account `{needle}`.")
+
+    async def _probe_reset_credits(
+        self, account: _PooledAccount, request_id: str, *, force: bool = False
+    ) -> dict[str, Any]:
+        now = time.perf_counter()
+        if (
+            not force
+            and account.resets_payload is not None
+            and now - account.resets_fetched_at < USAGE_CACHE_SECONDS
+        ):
+            return json.loads(json.dumps(account.resets_payload))
+        payload = await account.backend.list_rate_limit_reset_credits(request_id)
+        account.resets_payload = payload
+        account.resets_fetched_at = time.perf_counter()
+        account.resets_captured_at = datetime.now(timezone.utc).isoformat()
+        return json.loads(json.dumps(payload))
+
+    async def reset_credits(
+        self, request_id: str, account: str | None = None, *, force: bool = False
+    ) -> list[dict[str, Any]]:
+        """Per-account usage-limit reset credits: the upstream's full
+        listing plus the usage report's counts (which alone say whether a
+        credit would apply right now). One account when ``account`` names
+        it, otherwise every enrolled account; errors are reported per
+        account, not fatal."""
+        self.refresh_if_changed()
+        targets = [self.resolve_account(account)] if account else list(self._accounts)
+        async with self._usage_probe_lock:
+            results: list[dict[str, Any]] = []
+            for candidate in targets:
+                entry: dict[str, Any] = {
+                    "slug": candidate.slot.slug,
+                    "email": candidate.slot.email,
+                }
+                try:
+                    entry["details"] = await self._probe_reset_credits(
+                        candidate, request_id, force=force
+                    )
+                    entry["captured_at"] = candidate.resets_captured_at
+                    try:
+                        usage = await self._probe_usage(candidate, request_id, force=force)
+                    except (BackendError, AuthenticationError):
+                        usage = None
+                    summary = usage.get("rate_limit_reset_credits") if isinstance(usage, dict) else None
+                    entry["usage_summary"] = summary if isinstance(summary, dict) else None
+                except (BackendError, AuthenticationError) as error:
+                    entry["error"] = str(error)
+                results.append(entry)
+            return results
+
+    async def redeem_reset_credit(
+        self,
+        request_id: str,
+        account: str | None,
+        *,
+        credit_id: str | None = None,
+        redeem_request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Spends one of an account's reset credits on the upstream, then
+        re-probes that account's usage so a lifted limit releases its bench
+        immediately (every bench release stays evidence-gated through
+        _bench_from_usage). With several accounts enrolled the caller must
+        name one: a redeem is irreversible, so the pool never picks."""
+        self.refresh_if_changed()
+        if account:
+            target = self.resolve_account(account)
+        elif len(self._accounts) == 1:
+            target = self._accounts[0]
+        elif not self._accounts:
+            raise AuthenticationError(
+                "No ChatGPT login found. Run `airelays login` first.",
+                code="upstream_auth_missing",
+            )
+        else:
+            known = ", ".join(a.slot.email or a.slot.slug for a in self._accounts)
+            raise BackendError(
+                400, f"Several accounts are enrolled; name one with `account`. Known accounts: {known}."
+            )
+        key = redeem_request_id or str(uuid.uuid4())
+        response = await target.backend.consume_rate_limit_reset_credit(
+            request_id, key, credit_id
+        )
+        self._traffic.write(
+            {
+                "request_id": request_id,
+                "phase": "reset_credit_redeem",
+                "account": target.slot.slug,
+                "credit_id": credit_id,
+                "redeem_request_id": key,
+                "outcome": response.get("code"),
+                "windows_reset": response.get("windows_reset"),
+            }
+        )
+        # The listing and the usage report both changed upstream; drop the
+        # caches so the next read (including the one below) is fresh.
+        target.resets_payload = None
+        usage: dict[str, Any] | None = None
+        try:
+            async with self._usage_probe_lock:
+                usage = await self._probe_usage(target, request_id, force=True)
+        except (BackendError, AuthenticationError):
+            usage = None
+        return {
+            "slug": target.slot.slug,
+            "email": target.slot.email,
+            "response": response,
+            "redeem_request_id": key,
+            "usage": usage,
+            "usage_captured_at": target.usage_captured_at,
+        }
 
     async def usage_refresh_loop(self) -> None:
         """Background capacity refresher for the balanced strategy: without

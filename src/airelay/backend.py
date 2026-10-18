@@ -328,6 +328,51 @@ class ChatGptCodexBackend:
                 continue
             return response
 
+    async def list_rate_limit_reset_credits(self, request_id: str) -> dict[str, Any]:
+        """The account's usage-limit reset credits ("Redeem reset" in Codex):
+        every credit with its status, grant and expiry times, plus counts.
+        Same personal usage surface as the usage report, so the pool caches
+        it with the same care."""
+        response = await self._request_json(
+            request_id=request_id,
+            method="GET",
+            path="/wham/rate-limit-reset-credits",
+            body=None,
+            session_id=None,
+            base_url=self._usage_base_url(),
+        )
+        if not isinstance(response, dict):
+            raise BackendError(
+                502, "Upstream reset-credits endpoint returned a non-object payload."
+            )
+        return response
+
+    async def consume_rate_limit_reset_credit(
+        self, request_id: str, redeem_request_id: str, credit_id: str | None = None
+    ) -> dict[str, Any]:
+        """Redeems one reset credit, the call Codex makes behind "Yes, use
+        reset". ``redeem_request_id`` is the idempotency key the upstream
+        requires (a retry with the same key cannot spend a second credit);
+        ``credit_id`` picks a specific credit, otherwise the upstream chooses.
+        The response ``code`` is one of reset, nothing_to_reset, no_credit,
+        already_redeemed."""
+        body: dict[str, Any] = {"redeem_request_id": redeem_request_id}
+        if credit_id:
+            body["credit_id"] = credit_id
+        response = await self._request_json(
+            request_id=request_id,
+            method="POST",
+            path="/wham/rate-limit-reset-credits/consume",
+            body=body,
+            session_id=None,
+            base_url=self._usage_base_url(),
+        )
+        if not isinstance(response, dict):
+            raise BackendError(
+                502, "Upstream reset-credit redeem returned a non-object payload."
+            )
+        return response
+
     async def collect_response(
         self, payload: dict[str, Any], request_id: str, session_id: str | None
     ) -> dict[str, Any]:

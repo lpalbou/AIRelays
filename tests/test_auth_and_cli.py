@@ -854,3 +854,88 @@ def test_one_relay_per_data_directory(tmp_path, capsys) -> None:
     assert excinfo.value.code == RELAY_ALREADY_RUNNING == 75
     assert f"already running with the data directory {settings.data_dir} (pid {os.getpid()})" in capsys.readouterr().err
     _hold_relay_lock(settings, wait=0).release()
+
+
+def test_cli_accounts_resets_and_redeem_talk_to_the_running_relay(tmp_path, capsys, monkeypatch) -> None:
+    """`accounts resets` reads /v1/relay/accounts/resets and `accounts redeem`
+    posts to .../redeem through the running relay (which holds the sign-ins
+    and re-benches the account); --yes skips the prompt and the outcome is
+    shown verbatim."""
+    import httpx
+
+    _clear_airelay_env(monkeypatch)
+    monkeypatch.setenv("AIRELAYS_ENABLE_CLAUDE", "false")
+    data_dir = tmp_path / "state"
+    data_dir.mkdir(parents=True)
+    (data_dir / "relay-token").write_text("secret-token\n", encoding="utf-8")
+    seen: list[dict[str, object]] = []
+
+    class Response:
+        def __init__(self, payload):
+            self.status_code = 200
+            self._payload = payload
+            self.text = json.dumps(payload)
+
+        def json(self):
+            return self._payload
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        seen.append({"method": "GET", "url": url, "headers": headers, "params": params})
+        return Response({
+            "object": "accounts.resets",
+            "available_count": 1,
+            "accounts": [
+                {"slug": "default", "email": "one@example.com", "resets": {
+                    "available_count": 1, "applicable_available_count": 0, "redeemable_now": False,
+                    "credits": [{"id": "RateLimitResetCredit_1", "status": "available", "title": "Full reset",
+                                 "granted_by": "Codex Team", "granted_at": "2026-10-08T00:00:05Z",
+                                 "expires_at": "2026-11-07T00:00:05Z", "expires_in_seconds": 20 * 86400 + 3 * 3600}],
+                }},
+                {"slug": "two", "email": "two@example.com", "resets": {"available_count": 0, "credits": []}},
+                {"slug": "dead", "email": "dead@example.com", "error": "Token refresh failed: 401"},
+            ],
+        })
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen.append({"method": "POST", "url": url, "headers": headers, "json": json})
+        return Response({
+            "object": "accounts.reset_redeem", "slug": "default", "email": "one@example.com",
+            "outcome": "reset", "reset_applied": True, "windows_reset": 1, "credit_id": "RateLimitResetCredit_1",
+            "status": {"rate_limits": {"default": {"primary_window": {"used_percent": 0, "window_label": "weekly"}}}},
+        })
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(httpx, "post", fake_post)
+    parser = build_parser()
+    common = ["--config", str(tmp_path / "config.toml"), "--data-dir", str(data_dir)]
+
+    args = parser.parse_args(["accounts", "resets", *common])
+    args.func(args)
+    human = capsys.readouterr().out
+    assert seen[0]["method"] == "GET" and seen[0]["url"].endswith("/v1/relay/accounts/resets")
+    assert seen[0]["headers"] == {"authorization": "Bearer secret-token"}
+    assert "one@example.com" in human
+    assert "1 available, held; nothing to reset right now" in human
+    assert "Full reset by Codex Team, granted 2026-10-08; expires 2026-11-07 (in 20d 3h)" in human
+    assert "none available" in human
+    assert "unavailable: Token refresh failed: 401" in human
+    assert "airelays accounts redeem <email>" in human
+
+    args = parser.parse_args(["accounts", "redeem", "one@", "--credit", "RateLimitResetCredit_1", "--yes", *common])
+    args.func(args)
+    human = capsys.readouterr().out
+    assert seen[1]["method"] == "POST" and seen[1]["url"].endswith("/v1/relay/accounts/resets/redeem")
+    assert seen[1]["json"] == {"account": "one@", "credit_id": "RateLimitResetCredit_1"}
+    assert "Usage reset applied" in human
+    assert "weekly used" in human and "0%" in human
+
+    # Without --yes the prompt gates the irreversible call.
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    args = parser.parse_args(["accounts", "redeem", "one@", *common])
+    args.func(args)
+    assert "Nothing redeemed." in capsys.readouterr().out
+    assert len(seen) == 2
+
+    args = parser.parse_args(["accounts", "resets", "--json", *common])
+    args.func(args)
+    assert json.loads(capsys.readouterr().out)["available_count"] == 1

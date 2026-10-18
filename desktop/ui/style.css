@@ -827,6 +827,31 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
   line-height: 1.5;
 }
 
+/* A held usage reset under an account's bars: badge, what it is and when it
+   lapses, and the redeem action pinned to the right. Wraps on narrow rows. */
+.account-reset {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.account-reset-detail {
+  flex: 1 1 160px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-reset-redeem {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .provider-row {
   display: flex;
   align-items: center;

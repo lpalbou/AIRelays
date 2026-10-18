@@ -796,6 +796,95 @@ pub async fn refresh_accounts(app: AppHandle) -> Result<Value, String> {
     response.json().await.map_err(|_| "Unexpected refresh response.".to_string())
 }
 
+/// Usage-limit reset credits per OpenAI account, read through the relay
+/// (which holds the sign-ins): what Codex shows under "Redeem reset".
+#[tauri::command]
+pub async fn get_reset_credits(app: AppHandle) -> Result<Value, String> {
+    let (base_url, requires_auth) = {
+        let state = app.state::<AppState>();
+        let settings = robust_lock(&state.settings);
+        (settings.base_url(), settings.require_bearer_auth)
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut request = client.get(format!("{base_url}/relay/accounts/resets"));
+    if requires_auth {
+        if let Ok(token) = std::fs::read_to_string(AppSettings::bearer_token_file()) {
+            request = request.bearer_auth(token.trim());
+        }
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|_| "The relay is not running.".to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail: Value = response.json().await.unwrap_or(Value::Null);
+        let message = detail
+            .get("detail")
+            .and_then(Value::as_str)
+            .map(String::from)
+            .unwrap_or_else(|| format!("Relay answered {status}."));
+        return Err(message);
+    }
+    response.json().await.map_err(|_| "Unexpected reset credits payload.".to_string())
+}
+
+/// Redeems one reset credit on the named account through the relay. The
+/// relay reports the upstream's outcome verbatim (`reset`,
+/// `nothing_to_reset`, `no_credit`, `already_redeemed`); only the user's
+/// explicit confirmation in the dashboard reaches this command.
+#[tauri::command]
+pub async fn redeem_reset_credit(
+    app: AppHandle,
+    account: String,
+    credit_id: Option<String>,
+) -> Result<Value, String> {
+    let (base_url, requires_auth) = {
+        let state = app.state::<AppState>();
+        let settings = robust_lock(&state.settings);
+        (settings.base_url(), settings.require_bearer_auth)
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut body = serde_json::json!({ "account": account });
+    if let Some(credit_id) = credit_id.filter(|id| !id.trim().is_empty()) {
+        body["credit_id"] = Value::String(credit_id);
+    }
+    let mut request = client
+        .post(format!("{base_url}/relay/accounts/resets/redeem"))
+        .json(&body);
+    if requires_auth {
+        if let Ok(token) = std::fs::read_to_string(AppSettings::bearer_token_file()) {
+            request = request.bearer_auth(token.trim());
+        }
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|_| "The relay is not running.".to_string())?;
+    let status = response.status();
+    let payload: Value = response
+        .json()
+        .await
+        .map_err(|_| "Unexpected redeem response.".to_string())?;
+    if !status.is_success() {
+        let message = payload
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+            .or_else(|| payload.get("detail").and_then(Value::as_str))
+            .map(String::from)
+            .unwrap_or_else(|| format!("Redeem failed ({status})."));
+        return Err(message);
+    }
+    Ok(payload)
+}
+
 /// Retention is owned by the relay, independent of generated desktop settings.
 async fn log_retention_request(app: AppHandle, policy: Option<Value>) -> Result<Value, String> {
     let (base_url, requires_auth) = {

@@ -252,6 +252,105 @@ wait for the scheduled reset. CLI equivalent: `airelays accounts refresh`.
 With `?provider=claude`, refreshes Claude account usage while respecting each
 account's cached readings and persisted backoff.
 
+## `GET /v1/relay/accounts/resets`
+
+Lists each enrolled OpenAI account's usage-limit reset credits: the resets
+Codex offers under **Redeem reset** (for example the "Full reset" OpenAI
+grants to Codex users), read from the same subscription at
+`chatgpt.com/backend-api/wham/rate-limit-reset-credits`. Nothing is
+inferred: every fact comes from the upstream listing and the account's
+usage report. CLI equivalent: `airelays accounts resets`.
+
+- `?account=<email-or-prefix>` selects one account (slug also accepted)
+- `?force=true` bypasses the one-minute cache shared with usage probes
+- `?raw=true` includes the raw upstream listing per account
+
+```json
+{
+  "object": "accounts.resets",
+  "available_count": 1,
+  "accounts": [
+    {
+      "slug": "default",
+      "email": "you@example.com",
+      "resets": {
+        "object": "rate_limit_reset_credits",
+        "captured_at": "2026-10-18T09:12:03Z",
+        "available_count": 1,
+        "applicable_available_count": 0,
+        "redeemable_now": false,
+        "total_earned_count": 0,
+        "next_expiry_at": "2026-11-07T00:00:05Z",
+        "credits": [
+          {
+            "id": "RateLimitResetCredit_…",
+            "reset_type": "codex_rate_limits",
+            "status": "available",
+            "supported_by_plan": true,
+            "title": "Full reset",
+            "description": "…",
+            "granted_by": "Codex Team",
+            "granted_at": "2026-10-08T00:00:05Z",
+            "expires_at": "2026-11-07T00:00:05Z",
+            "expires_in_seconds": 1712282,
+            "expired": false,
+            "redeem_started_at": null,
+            "redeemed_at": null
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+`available_count` is how many credits the account holds;
+`applicable_available_count` (from the usage report) is how many the
+upstream would apply right now. A credit held while usage is below its
+limit is available but not applicable: `redeemable_now` is `false`, and
+redeeming it answers `nothing_to_reset` without spending it. An account
+whose listing cannot be read carries an `error` string instead of `resets`.
+
+## `POST /v1/relay/accounts/resets/redeem`
+
+Redeems one reset credit now, through AIRelays, without opening an OpenAI
+app: the call Codex makes behind **Yes, use reset**
+(`chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume`). The
+relay then re-reads that account's usage so a lifted limit returns it to
+rotation immediately. Irreversible on OpenAI's side; the desktop and the
+CLI (`airelays accounts redeem <email>`) ask for confirmation first.
+
+Body (JSON, all fields optional with one enrolled account):
+
+- `account`: email, unambiguous prefix, or slug; **required** when several
+  accounts are enrolled (the relay never picks one for you)
+- `credit_id`: redeem this specific credit; otherwise the upstream chooses
+- `redeem_request_id`: idempotency key forwarded to the upstream; a retry
+  with the same key cannot spend a second credit (generated when omitted)
+
+```json
+{
+  "object": "accounts.reset_redeem",
+  "slug": "default",
+  "email": "you@example.com",
+  "outcome": "reset",
+  "known_outcome": true,
+  "reset_applied": true,
+  "windows_reset": 2,
+  "credit_id": "RateLimitResetCredit_…",
+  "redeem_request_id": "6d1f…",
+  "status": { "object": "subscription_status", "…": "fresh usage after the redeem" }
+}
+```
+
+`outcome` is the upstream's code verbatim: `reset` (applied;
+`windows_reset` says how many windows restarted), `nothing_to_reset` (usage
+did not need a reset; credit kept), `no_credit`, or `already_redeemed`.
+`reset_applied` is true only for `reset`. `status` is `null` when the
+follow-up usage read fails. Errors: 400 when several accounts are enrolled
+and none is named, 404 unknown account, 409 ambiguous prefix, 422 malformed
+field; upstream rejections pass through with their status.
+
 ## `GET /v1/relay/status`
 
 Returns relay diagnostics, provider readiness, provider cache status, and
@@ -293,7 +392,10 @@ runtime is enabled and logged in, and reports a `CLAUDE_CODE_OAUTH_TOKEN` set in
 the relay's environment, which AIRelays ignores. Use
 `airelays doctor --skip-response` to skip the response smoke request.
 `airelays models` lists every model id the running relay accepts, grouped by
-provider (`--json` supported).
+provider (`--json` supported). `airelays accounts resets` shows each OpenAI
+account's usage resets and `airelays accounts redeem <email>` spends one
+through the running relay (see the two `/v1/relay/accounts/resets` routes
+above; `--yes` skips the confirmation, `--credit <id>` picks a credit).
 
 ## `POST /v1/responses`
 

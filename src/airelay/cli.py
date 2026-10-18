@@ -1195,6 +1195,14 @@ def _run_accounts(args: argparse.Namespace) -> None:
         _hard_refresh_running_relay(settings)
         return
 
+    if action == "resets":
+        _show_reset_credits(settings, args)
+        return
+
+    if action == "redeem":
+        _redeem_reset_credit(settings, args)
+        return
+
     if action == "order":
         resolved = []
         for needle in args.accounts:
@@ -1260,6 +1268,148 @@ def _hard_refresh_running_relay(settings: Settings) -> None:
             _print_field(label, f"still at limit (resets in ~{secs}s)", kind="warn")
         else:
             _print_field(label, "available", kind="good")
+    print()
+
+
+def _relay_headers(settings: Settings) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    if settings.require_bearer_auth:
+        token = settings.resolve_bearer_token()
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _no_running_relay(settings: Settings, what: str) -> SystemExit:
+    return SystemExit(
+        f"No running relay at {settings.client_base_url()} to {what}. "
+        "Start AIRelays (or `airelays serve`) first."
+    )
+
+
+def _format_expiry(credit: dict[str, object]) -> str:
+    seconds = credit.get("expires_in_seconds")
+    at = credit.get("expires_at")
+    if not isinstance(at, str):
+        return "no expiry reported"
+    day = at[:10]
+    if isinstance(seconds, int):
+        if seconds <= 0:
+            return f"expired {day}"
+        days = seconds // 86400
+        hours = (seconds % 86400) // 3600
+        left = f"{days}d {hours}h" if days else f"{hours}h"
+        return f"expires {day} (in {left})"
+    return f"expires {day}"
+
+
+def _show_reset_credits(settings: Settings, args: argparse.Namespace) -> None:
+    """Usage-limit reset credits per account, read through the running relay
+    (which already holds the sign-ins and caches the personal endpoint)."""
+    import httpx
+
+    url = f"{settings.client_base_url().rstrip('/')}/relay/accounts/resets"
+    params: dict[str, str] = {}
+    if getattr(args, "account", None):
+        params["account"] = args.account
+    try:
+        response = httpx.get(url, headers=_relay_headers(settings), params=params, timeout=30.0)
+    except httpx.HTTPError:
+        raise _no_running_relay(settings, "read reset credits from")
+    if response.status_code >= 400:
+        raise SystemExit(f"Reading reset credits failed ({response.status_code}): {response.text[:300]}")
+    payload = response.json()
+    if _json_requested(args):
+        _emit_json(payload)
+        return
+    accounts = list(payload.get("accounts", []))
+    _print_title("AIRelays Usage Resets")
+    if not accounts:
+        print("  No OpenAI accounts are signed in yet.")
+        _print_steps([_login_hint()])
+        return
+    for entry in accounts:
+        entry = dict(entry)
+        label = entry.get("email") or entry.get("slug")
+        _print_section(str(label))
+        if "resets" not in entry:
+            _print_field("Resets", f"unavailable: {entry.get('error')}", kind="warn")
+            continue
+        resets = dict(entry["resets"])
+        count = resets.get("available_count") or 0
+        applicable = resets.get("applicable_available_count")
+        if count == 0:
+            _print_field("Resets", "none available")
+            continue
+        now = (
+            "usable now"
+            if applicable
+            else "held; nothing to reset right now" if applicable == 0 else "usability unknown"
+        )
+        _print_field("Resets", f"{count} available, {now}", kind="good" if applicable else "warn")
+        for credit in resets.get("credits", []):
+            credit = dict(credit)
+            if credit.get("status") != "available":
+                continue
+            title = credit.get("title") or credit.get("reset_type") or "reset"
+            granted = credit.get("granted_at")
+            granted_text = f", granted {granted[:10]}" if isinstance(granted, str) else ""
+            by = credit.get("granted_by")
+            by_text = f" by {by}" if by else ""
+            _print_field(str(credit.get("id")), f"{title}{by_text}{granted_text}; {_format_expiry(credit)}")
+    print()
+    print("  Redeem one with: airelays accounts redeem <email>")
+
+
+def _redeem_reset_credit(settings: Settings, args: argparse.Namespace) -> None:
+    """Spends one reset credit through the running relay. Irreversible, so
+    it asks first unless --yes is given; the upstream's outcome is shown
+    verbatim (a credit held while usage is under its limit answers
+    `nothing_to_reset` and is not spent)."""
+    import httpx
+
+    body: dict[str, str] = {}
+    if getattr(args, "account", None):
+        body["account"] = args.account
+    if getattr(args, "credit", None):
+        body["credit_id"] = args.credit
+    if not getattr(args, "yes", False):
+        target = args.account or "the signed-in account"
+        answer = input(f"Redeem one usage reset on {target} now? This cannot be undone. [y/N] ")
+        if answer.strip().lower() not in ("y", "yes"):
+            print("Nothing redeemed.")
+            return
+    url = f"{settings.client_base_url().rstrip('/')}/relay/accounts/resets/redeem"
+    try:
+        response = httpx.post(url, headers=_relay_headers(settings), json=body, timeout=60.0)
+    except httpx.HTTPError:
+        raise _no_running_relay(settings, "redeem through")
+    if response.status_code >= 400:
+        raise SystemExit(f"Redeem failed ({response.status_code}): {response.text[:300]}")
+    payload = response.json()
+    if _json_requested(args):
+        _emit_json(payload)
+        return
+    outcome = payload.get("outcome")
+    label = payload.get("email") or payload.get("slug")
+    _print_title("AIRelays Usage Reset")
+    messages = {
+        "reset": ("Usage reset applied", "good"),
+        "nothing_to_reset": ("Not spent: usage does not need a reset right now", "warn"),
+        "no_credit": ("No reset credit available on this account", "warn"),
+        "already_redeemed": ("That reset was already redeemed", "warn"),
+    }
+    text, kind = messages.get(str(outcome), (f"Upstream answered `{outcome}`", "warn"))
+    _print_field(str(label), text, kind=kind)
+    windows = payload.get("windows_reset")
+    if outcome == "reset" and isinstance(windows, int):
+        _print_field("Windows reset", windows)
+    status = payload.get("status") or {}
+    default = (status.get("rate_limits") or {}).get("default") or {}
+    for slot in ("primary_window", "secondary_window"):
+        window = default.get(slot)
+        if isinstance(window, dict) and window.get("used_percent") is not None:
+            _print_field(f"{window.get('window_label') or slot} used", f"{window['used_percent']:g}%")
     print()
 
 
@@ -1976,6 +2126,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Clear usage-limit benches on the running relay and re-check capacity",
     )
     accounts_refresh.set_defaults(func=_run_accounts, accounts_action="refresh")
+    accounts_resets = accounts_subparsers.add_parser(
+        "resets",
+        parents=[shared],
+        help="Show usage-limit reset credits per account (what Codex calls 'Redeem reset')",
+    )
+    accounts_resets.add_argument("account", nargs="?", help="Account email (or unambiguous prefix); default: all")
+    _add_json_argument(accounts_resets)
+    accounts_resets.set_defaults(func=_run_accounts, accounts_action="resets")
+    accounts_redeem = accounts_subparsers.add_parser(
+        "redeem",
+        parents=[shared],
+        help="Redeem one usage-limit reset credit now, through the running relay",
+    )
+    accounts_redeem.add_argument("account", nargs="?", help="Account email (or unambiguous prefix); required with several accounts")
+    accounts_redeem.add_argument("--credit", metavar="ID", help="Redeem this specific credit id (default: upstream picks)")
+    accounts_redeem.add_argument("--yes", "-y", action="store_true", help="Do not ask for confirmation")
+    _add_json_argument(accounts_redeem)
+    accounts_redeem.set_defaults(func=_run_accounts, accounts_action="redeem")
 
     claude_cmd = subparsers.add_parser(
         "claude",

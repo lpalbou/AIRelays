@@ -88,3 +88,38 @@ test("the account details name the images made through this relay", () => {
   const plain = ctx.windowTokensDetail(null, null, true, "c", "c", null);
   assert.ok(!plain.children[1].children.some((child) => String(child.textContent).startsWith("Images:")));
 });
+
+test("a held usage reset shows what it is, when it lapses and whether it applies now", () => {
+  const ctx = view();
+  const credit = {
+    id: "RateLimitResetCredit_1", status: "available", title: "Full reset", granted_by: "Codex Team",
+    expires_at: "2026-11-07T00:00:05Z", expires_in_seconds: 20 * 86400 + 3 * 3600, expired: false,
+  };
+  const text = ctx.describeResetCredit(credit);
+  assert.match(text, /^Full reset · from Codex Team · expires .*\(in 20d 3h\)$/);
+  assert.equal(ctx.describeResetCredit({ status: "available", reset_type: "codex_rate_limits" }),
+    "codex_rate_limits · no expiry reported");
+
+  // Held but not applicable: neutral badge, honest hint, action still offered.
+  const held = ctx.usageResetRow("one@example.com", {
+    available_count: 1, applicable_available_count: 0, redeemable_now: false, credits: [credit],
+  }, false);
+  const [badge, detail, button] = held.children;
+  assert.equal(badge.className, "badge badge-neutral");
+  assert.equal(badge.textContent, "1 usage reset available");
+  assert.match(detail.textContent, /usable once a limit is reached$/);
+  assert.equal(button.disabled, false);
+
+  const usable = ctx.usageResetRow("one@example.com", {
+    available_count: 2, applicable_available_count: 2, redeemable_now: true, credits: [credit, credit],
+  }, false);
+  assert.equal(usable.children[0].className, "badge badge-good");
+  assert.equal(usable.children[0].textContent, "2 usage resets available");
+  assert.match(usable.children[1].textContent, /usable now$/);
+
+  // Nothing held → no row (the ? panel still carries the count).
+  assert.equal(ctx.usageResetRow("one@example.com", { available_count: 0, credits: [] }, false), null);
+  assert.equal(ctx.usageResetRow("one@example.com", undefined, false), null);
+  // A sign-out in progress disables the action.
+  assert.equal(ctx.usageResetRow("one@example.com", { available_count: 1, credits: [credit] }, true).children[2].disabled, true);
+});

@@ -27,6 +27,8 @@ export const api = {
   setLoginMethod: (method) => invoke("set_login_method", { method }),
   logoutAccount: (email) => invoke("logout_account", { email }),
   refreshAccounts: () => invoke("refresh_accounts"),
+  getResetCredits: () => invoke("get_reset_credits"),
+  redeemResetCredit: (account, creditId = null) => invoke("redeem_reset_credit", { account, creditId }),
   openPath: (path) => invoke("open_path", { path }),
   getAutostart: () => invoke("get_autostart"),
   setAutostart: (enabled) => invoke("set_autostart", { enabled }),
