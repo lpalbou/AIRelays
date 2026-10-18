@@ -42,6 +42,7 @@ def open_about(page, url):
 def test_about_shows_version_links_and_checks_for_updates_once(page, dashboard_url):
     open_about(page, dashboard_url)
     playwright.expect(page.locator("#ab-version")).to_have_text("0.0.0-mock")
+    playwright.expect(page.get_by_text("Created by Laurent-Philippe Albou, PhD · MIT License")).to_be_visible()
     for label in ("Documentation", "Changelog", "Report an issue", "Source code", "License", "Disclaimer"):
         playwright.expect(page.get_by_role("button", name=label)).to_be_visible()
     playwright.expect(page.get_by_text("Update available", exact=True)).to_be_visible()
