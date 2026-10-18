@@ -200,7 +200,11 @@ export const aboutView = {
             A local OpenAI-compatible endpoint backed by your own OpenAI and
             Claude subscription logins, with a tray app to run and watch it.
           </p>
-          <p class="about-credit">Created by <strong>Laurent-Philippe Albou, PhD</strong> · MIT License</p>
+          <p class="about-credit">
+            Created by <strong>Laurent-Philippe Albou, PhD</strong> ·
+            <button class="about-email" id="ab-contact" title="Write an email">contact@abstractframework.ai</button> ·
+            MIT License
+          </p>
           <div class="about-meta" id="ab-relay-version" hidden></div>
         </div>
       </section>
@@ -255,6 +259,7 @@ export const aboutView = {
       links.append(button);
     }
     el("ab-check").addEventListener("click", checkNow);
+    el("ab-contact").addEventListener("click", () => openUrl("mailto:contact@abstractframework.ai"));
     el("ab-install-cancel").addEventListener("click", () => el("ab-install-dialog").close());
     container.appendChild(root);
     renderUpdate();

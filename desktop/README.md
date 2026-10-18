@@ -81,7 +81,8 @@ CI builds all three platforms from `.github/workflows/desktop.yml` on
 ## About and updates
 
 The **About** page shows the installed version, the author
-(Laurent-Philippe Albou, PhD) and license (MIT), and links to the
+(Laurent-Philippe Albou, PhD, contact@abstractframework.ai) and license
+(MIT), and links to the
 documentation, changelog, issue tracker, source code, license, and
 disclaimer. Opening it checks GitHub Releases once per app session for a
 newer stable release with an installer for your system; **Check for

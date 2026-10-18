@@ -1056,8 +1056,13 @@ fn open_path_blocking(path: &str) -> Result<(), String> {
 /// else (and anything that is not plain https) is refused, so page content
 /// cannot turn this into a way to launch local programs or files.
 const ALLOWED_URL_PREFIXES: [&str; 2] = ["https://github.com/lpalbou/AIRelays", "https://www.lpalbou.info/AIRelays"];
+/// The author's contact address, opened in the default mail app.
+const CONTACT_MAILTO: &str = "mailto:contact@abstractframework.ai";
 
 fn is_allowed_url(url: &str) -> bool {
+    if url == CONTACT_MAILTO {
+        return true;
+    }
     ALLOWED_URL_PREFIXES.iter().any(|prefix| {
         url.strip_prefix(prefix)
             .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
@@ -1113,6 +1118,7 @@ mod url_tests {
         assert!(is_allowed_url("https://github.com/lpalbou/AIRelays"));
         assert!(is_allowed_url("https://github.com/lpalbou/AIRelays/releases/tag/v0.18.0"));
         assert!(is_allowed_url("https://www.lpalbou.info/AIRelays/"));
+        assert!(is_allowed_url("mailto:contact@abstractframework.ai"));
         for bad in [
             "http://github.com/lpalbou/AIRelays",
             "https://github.com/lpalbou/AIRelaysEvil",
@@ -1121,6 +1127,8 @@ mod url_tests {
             "https://github.com/lpalbou/AIRelays/\"x",
             "https://github.com/lpalbou/AIRelays/a&calc",
             "file:///C:/Windows/System32/calc.exe",
+            "mailto:someone@example.com",
+            "mailto:contact@abstractframework.ai?subject=x",
             r"C:\Windows\System32\calc.exe",
         ] {
             assert!(!is_allowed_url(bad), "{bad}");
