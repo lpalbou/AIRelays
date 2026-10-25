@@ -187,13 +187,6 @@ html, body {
   max-width: 300px;
 }
 
-.model-reasoning {
-  margin-left: 10px;
-  font-size: 11px;
-  color: var(--muted, #8b93a7);
-  white-space: nowrap;
-}
-
 /* Busy state for refresh buttons */
 .spin {
   display: inline-flex;
@@ -444,6 +437,21 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
 
 .segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .segmented button.selected { background: var(--accent); color: #fff; }
+.segmented button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Inline confirmation before enabling internet access (no modal). */
+.internet-confirm {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 7px;
+  background: var(--warn-bg);
+  border-left: 3px solid var(--bad);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.internet-confirm-title { margin: 0 0 6px; color: var(--text); }
+.internet-confirm ul { margin: 0 0 10px; padding-left: 18px; }
+.internet-confirm li + li { margin-top: 3px; }
 
 .control-label {
   display: block;
@@ -623,17 +631,6 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
 
 /* ---------- models ---------- */
 
-.model-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.model-row:last-of-type { border-bottom: none; }
-
 .model-id {
   overflow-wrap: anywhere;
   font-family: var(--mono);
@@ -666,6 +663,8 @@ button.btn-ghost:hover { color: var(--text); border-color: var(--border); }
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+.endpoint.endpoint-pending { color: var(--text-faint); font-family: inherit; }
 
 .copy-btn {
   border: none;
@@ -959,6 +958,47 @@ tr.selected td { background: rgba(109, 124, 255, 0.12); }
   word-break: break-word;
 }
 
+/* ---------- traffic detail card: copy button + stale note ---------- */
+
+.detail-card {
+  position: relative;
+  margin-top: 12px;
+}
+
+.detail-card .detail {
+  margin-top: 0;
+  /* Reserve the copy button's column so it never covers the JSON. */
+  padding-right: 40px;
+}
+
+.detail-card .detail-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: inline-flex;
+  padding: 5px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.detail-card:hover .detail-copy,
+.detail-card:focus-within .detail-copy,
+.detail-card .detail-copy:focus-visible { opacity: 1; }
+
+@media (hover: none) {
+  .detail-card .detail-copy { opacity: 1; }
+}
+
+.detail-card .detail-note {
+  margin: 0 0 6px;
+  padding-right: 40px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
 /* ---------- forms ---------- */
 
 .form-grid {
@@ -1143,3 +1183,209 @@ button.about-email {
 }
 button.about-email:hover { text-decoration: underline; }
 button.about-email:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* ---------- Models table ----------
+   One table per provider card on the Models view. Columns hide on narrow
+   windows (Notes, then Structured output and the cost tier); notes then
+   show under the model id. The wrapper scrolls rather than the page. */
+
+.mt-wrap {
+  overflow-x: auto;
+  margin-top: 4px;
+}
+
+.models-table { table-layout: auto; }
+/* Caption and "(default)" hints: read by screen readers, not shown. */
+.mt-caption,
+.mt-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.models-table th { padding: 8px 8px 6px; cursor: default; }
+.models-table th[title] { text-decoration: underline dotted var(--text-faint); text-underline-offset: 3px; }
+.models-table td {
+  padding: 7px 8px;
+  vertical-align: top;
+  font-family: inherit;
+  white-space: normal;
+  color: var(--text-dim);
+}
+.models-table th:first-child, .models-table td:first-child { padding-left: 0; }
+.models-table tbody tr:last-child td { border-bottom: none; }
+.mt-row:hover td { background: var(--bg-hover); }
+.mt-row:focus { outline: none; }
+.mt-row:focus-visible td { background: var(--bg-hover); }
+.mt-row:focus-visible td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+
+.mt-id-line { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
+.mt-id-line .copy-btn { display: inline-flex; padding: 2px 4px; }
+.mt-row:hover .copy-btn, .mt-row:focus-visible .copy-btn { color: var(--accent-strong); }
+
+.mt-none { color: var(--text-faint); }
+
+.mt-accounts { display: inline-flex; flex-direction: column; gap: 3px; white-space: nowrap; }
+.mt-accounts-text { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.mt-bar {
+  display: block;
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.mt-bar-fill { display: block; height: 100%; border-radius: 2px; }
+.mt-bar-fill.is-full { background: var(--good); }
+.mt-bar-fill.is-partial { background: var(--warn); }
+.mt-bar-fill.is-empty { background: var(--bad); }
+
+.mt-modes { display: flex; flex-wrap: wrap; font-size: 12px; line-height: 1.6; }
+.mt-mode { white-space: nowrap; }
+.mt-mode:not(:last-child)::after { content: "·"; margin: 0 5px; color: var(--text-faint); font-weight: 400; }
+.mt-mode-default { color: var(--accent-strong); font-weight: 650; }
+
+.mt-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.mt-chip {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.mt-cost { display: inline-flex; flex-direction: column; gap: 2px; white-space: nowrap; }
+.mt-price { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.mt-tier { font-size: 11px; letter-spacing: 1px; }
+.mt-tier-on { color: var(--warn); }
+.mt-tier-off { color: var(--border); }
+
+.mt-notes { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.mt-badge { font-weight: 600; }
+.mt-notes-inline { display: none; margin-top: 4px; }
+
+@media (max-width: 1100px) {
+  .models-table .mt-col-notes { display: none; }
+  .mt-notes-inline { display: flex; }
+}
+
+@media (max-width: 860px) {
+  .models-table .mt-col-structured { display: none; }
+  .mt-tier { display: none; }
+  .models-table th, .models-table td { padding-left: 5px; padding-right: 5px; }
+  .models-table th { letter-spacing: 0.2px; }
+  .models-table .model-id { font-size: 12px; }
+}
+
+/* ---------- Connect examples ----------
+   "Try it" panel of "Connect Your App": beside the connection details on
+   wide windows, stacked under them below 1100 px. Grid tracks use
+   minmax(0, …) so the code block scrolls inside itself instead of
+   widening the card. */
+
+.connect-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.connect-main { min-width: 0; }
+
+.connect-examples {
+  min-width: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+@media (min-width: 1100px) {
+  .connect-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(380px, 44%);
+    gap: 22px;
+    align-items: start;
+  }
+  .connect-examples {
+    padding-top: 0;
+    padding-left: 20px;
+    border-top: 0;
+    border-left: 1px solid var(--border);
+  }
+  /* Keeps the key row's actions on one line in the narrower column. */
+  .connect-main .token-value { min-width: 180px; }
+}
+
+.ex-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.ex-title { margin: 0; font-size: 13px; font-weight: 700; }
+
+.ex-base { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ex-base-label { font-size: 11px; color: var(--text-faint); }
+.ex-base .segmented button { padding: 3px 10px; font-size: 11px; }
+
+.ex-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ex-tabs [role="tab"] {
+  margin-bottom: -1px;
+  padding: 5px 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.ex-tabs [role="tab"]:hover { color: var(--text); }
+.ex-tabs [role="tab"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 5px 5px 0 0; }
+.ex-tabs [role="tab"].selected { color: var(--text); border-bottom-color: var(--accent-strong); }
+
+.ex-panel { margin-top: 10px; min-width: 0; }
+
+.ex-code-wrap { position: relative; min-width: 0; }
+
+.ex-code {
+  margin: 0;
+  padding: 10px 40px 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 4;
+}
+
+.ex-code:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.ex-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  padding: 5px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+}
+
+.ex-note { margin: 6px 0 0; font-size: 11px; color: var(--text-faint); }

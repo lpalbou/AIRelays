@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import math
 import secrets
 import threading
@@ -40,6 +41,50 @@ def _token_fingerprint(value: str | None) -> str | None:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
+# "private" scope: the address ranges a home, office, or VPN network uses.
+# Spelled out instead of `ipaddress.is_private`, which also covers
+# documentation and benchmarking ranges (e.g. 203.0.113.0/24) that can be
+# routed on the internet in practice.
+_PRIVATE_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "127.0.0.0/8",  # loopback
+        "10.0.0.0/8",  # RFC 1918
+        "172.16.0.0/12",  # RFC 1918
+        "192.168.0.0/16",  # RFC 1918
+        "100.64.0.0/10",  # CGNAT shared space (Tailscale)
+        "169.254.0.0/16",  # IPv4 link-local
+        "::1/128",  # IPv6 loopback
+        "fc00::/7",  # IPv6 unique local
+        "fe80::/10",  # IPv6 link-local
+    )
+)
+
+
+def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        address = ipaddress.ip_address(value.strip().strip("[]"))
+    except ValueError:
+        return None
+    # An IPv4 client on a dual-stack listener arrives as ::ffff:a.b.c.d.
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped
+    return address
+
+
+def address_in_scope(value: str, scope: str) -> bool:
+    """Whether a client address may connect under `scope` ("loopback",
+    "private" or "any"). Unparsable addresses are out of every narrow scope."""
+    if scope == "any":
+        return True
+    address = _parse_ip(value)
+    if address is None:
+        return False
+    if scope == "loopback":
+        return address.is_loopback
+    return any(address in network for network in _PRIVATE_NETWORKS if network.version == address.version)
+
+
 def _error_response(
     status_code: int,
     message: str,
@@ -65,16 +110,52 @@ class EndpointProtector:
         return path.startswith("/v1/") or path.startswith("/no-tools/v1/")
 
     def client_ip(self, request: Request) -> str:
+        return self._client_address(request)[0]
+
+    def _client_address(self, request: Request) -> tuple[str, bool]:
+        """(address, from_network): from_network is False only when the
+        transport has no network peer at all (a Unix socket or an
+        in-process ASGI client)."""
         if self._settings.trust_x_forwarded_for:
             forwarded = request.headers.get("x-forwarded-for", "")
             if forwarded:
                 first = forwarded.split(",", 1)[0].strip()
                 if first:
-                    return first
+                    return first, True
         client = request.client
         if client and client.host:
-            return client.host
-        return "unknown"
+            # A TCP peer is always an IP literal; anything else is not a
+            # network client (e.g. Starlette's "testclient").
+            return client.host, _parse_ip(client.host) is not None
+        return "unknown", False
+
+    def _scope_rejection(self, request_id: str, request: Request) -> Response | None:
+        """Enforce `network_scope` before rate limits and auth, so a client
+        outside the allowed networks cannot even probe the API key."""
+        scope = self._settings.effective_network_scope()
+        if scope == "any":
+            return None
+        address, from_network = self._client_address(request)
+        if not from_network or address_in_scope(address, scope):
+            return None
+        if scope == "loopback":
+            code = "client_not_on_this_machine"
+            message = "This relay only accepts connections from this machine (network_scope = \"loopback\")."
+        else:
+            code = "client_not_on_private_network"
+            message = (
+                "This relay only accepts connections from private networks "
+                "(network_scope = \"private\"); this client address is public."
+            )
+        return self._reject(
+            request_id=request_id,
+            client_ip=address,
+            status_code=403,
+            error_type="permission_error",
+            code=code,
+            message=message,
+            reason="network_scope",
+        )
 
     def acquire(self, request_id: str, request: Request) -> tuple[AccessLease, Response | None]:
         client_ip = self.client_ip(request)
@@ -83,6 +164,12 @@ class EndpointProtector:
             client_ip=client_ip,
             protected=self.is_protected_path(request.url.path),
         )
+        # Every path, not only the API: in a narrow scope an outside client
+        # must not see the home page or probe /healthz either.
+        rejection = self._scope_rejection(request_id, request)
+        if rejection is not None:
+            lease.released = True  # No concurrency slot was acquired.
+            return lease, rejection
         if not lease.protected:
             return lease, None
 
@@ -177,6 +264,7 @@ class EndpointProtector:
         return {
             "protected_routes": ["/v1/*", "/no-tools/v1/*"],
             "require_bearer_auth": self._settings.require_bearer_auth,
+            "network_scope": self._settings.effective_network_scope(),
             "bearer_token_present": bool(self._settings.resolve_bearer_token()),
             "rate_limit_per_minute": self._settings.rate_limit_per_minute,
             "rate_limit_burst": self._settings.rate_limit_burst,

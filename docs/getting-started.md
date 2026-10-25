@@ -242,7 +242,10 @@ upstream `/models`, a tiny `/responses` smoke request, and Claude readiness
 when the Claude runtime is enabled. Use `airelays doctor --skip-response`
 to skip the response smoke request.
 
-List every model id the running relay accepts, grouped by provider:
+List every model id the running relay accepts, grouped by provider, with
+each model's reasoning modes and, when the provider publishes one, its API
+list price per 1M tokens (a relative cost indicator; subscription requests
+are not billed per token):
 
 ```bash
 airelays models
@@ -258,7 +261,9 @@ airelays models --json
 
 `airelays status` shows:
 
+- the installed AIRelays version (title line)
 - relay config and token state
+- **Who can connect**: the enforced [network scope](security.md#who-can-connect)
 - OpenAI runtime readiness
 - Claude runtime readiness when enabled
 - next recommended commands
@@ -286,6 +291,34 @@ export OPENAI_BASE_URL='http://127.0.0.1:8080/v1'
 export AIRELAYS_TOKEN="$(tr -d '\n' < ~/.airelays/relay-token)"
 ```
 
+## Use The Relay From Other Devices
+
+`airelays serve` listens on `127.0.0.1` by default, so only this machine can
+connect. To serve your phone, another computer, or a Tailscale network,
+listen on all interfaces:
+
+```bash
+airelays serve --host 0.0.0.0 --port 8080
+```
+
+The default `network_scope = "private"` then admits this machine and private
+networks (home and office LANs, `100.64.0.0/10` VPNs such as Tailscale) and
+answers every other address with `403 client_not_on_private_network`. Clients
+use `http://<this machine's LAN address>:8080/v1` with the same relay token.
+
+For access from anywhere, choose `any` (bearer auth stays required):
+
+```bash
+airelays init --host 0.0.0.0 --network-scope any   # add --force to rewrite an existing config
+airelays serve
+```
+
+`airelays init` prints **Who can connect** and the matching `airelays serve`
+command. Forward the port on your router and put the relay behind a TLS
+reverse proxy or a VPN; [Who Can Connect](security.md#who-can-connect) lists
+the steps, and [Troubleshooting](troubleshooting.md#the-internet-address-refuses-connections)
+covers refused connections.
+
 ## Subscription Status
 
 OpenAI subscription usage:
@@ -304,3 +337,7 @@ curl 'http://127.0.0.1:8080/v1/subscription/status?provider=claude' \
 
 See [Subscription Status](subscription-status.md) for multi-account
 parameters and the payload shape.
+
+If a step fails, see [Troubleshooting](troubleshooting.md). Next, read
+[API Notes](api.md) for routes and limits, or [Architecture](architecture.md)
+for how requests flow. Back to the [README](../README.md).

@@ -54,6 +54,11 @@ pub struct AppSettings {
     pub failed_auth_max_attempts: u32,
     pub failed_auth_block_seconds: u32,
     pub trust_x_forwarded_for: bool,
+    /// Who may connect: "loopback" (this machine), "private" (devices on
+    /// private networks — the relay refuses public client addresses), or
+    /// "any" (anyone who reaches the port; requires the API key). Settings
+    /// files from before this field load as "private", the relay default.
+    pub network_scope: String,
     pub max_upload_bytes: u64,
     pub max_total_upload_bytes: u64,
     pub enable_openai_provider: bool,
@@ -115,6 +120,7 @@ impl Default for AppSettings {
             failed_auth_max_attempts: 8,
             failed_auth_block_seconds: 900,
             trust_x_forwarded_for: false,
+            network_scope: "private".into(),
             max_upload_bytes: 32 * 1024 * 1024,
             max_total_upload_bytes: 256 * 1024 * 1024,
             enable_openai_provider: true,
@@ -139,6 +145,17 @@ impl Default for AppSettings {
 impl AppSettings {
     pub fn is_loopback_host(&self) -> bool {
         matches!(self.host.as_str(), "127.0.0.1" | "localhost" | "::1")
+    }
+
+    /// The scope the relay actually enforces: a loopback listener is
+    /// reachable from this machine only, whatever `network_scope` says.
+    /// Mirrors `Settings.effective_network_scope()` in the relay.
+    pub fn effective_network_scope(&self) -> &str {
+        if self.is_loopback_host() {
+            "loopback"
+        } else {
+            self.network_scope.as_str()
+        }
     }
 
     /// Host the app itself dials; wildcard binds are not dialable.
@@ -170,6 +187,17 @@ impl AppSettings {
             || self.host == "localhost";
         if !host_ok {
             return Err(format!("Host '{}' is not a valid IP address.", self.host));
+        }
+        if !matches!(self.network_scope.as_str(), "loopback" | "private" | "any") {
+            return Err("Who can connect must be loopback, private, or any.".into());
+        }
+        // Same rule the relay enforces at load: internet exposure without a
+        // key hands the subscription to anyone who finds the port.
+        if self.effective_network_scope() == "any" && !self.require_bearer_auth {
+            return Err(
+                "\"Anyone on the internet\" requires the API key: keep Protected mode, or limit who can connect first."
+                    .into(),
+            );
         }
         if !matches!(self.openai_balance.as_str(), "balanced" | "weighted" | "round_robin" | "ping_pong" | "ordered") {
             return Err("OpenAI account balancing must be balanced, weighted, round_robin, ping_pong, or ordered.".into());
@@ -285,6 +313,7 @@ impl AppSettings {
                 failed_auth_max_attempts: self.failed_auth_max_attempts,
                 failed_auth_block_seconds: self.failed_auth_block_seconds,
                 trust_x_forwarded_for: self.trust_x_forwarded_for,
+                network_scope: &self.network_scope,
             },
             uploads: UploadsSection {
                 max_upload_bytes: self.max_upload_bytes,
@@ -330,7 +359,7 @@ struct RelayConfigFile<'a> {
     paths: PathsSection,
     auth: AuthSection<'a>,
     upstream: UpstreamSection<'a>,
-    security: SecuritySection,
+    security: SecuritySection<'a>,
     uploads: UploadsSection,
     providers: ProvidersSection<'a>,
 }
@@ -364,7 +393,7 @@ struct UpstreamSection<'a> {
 }
 
 #[derive(Serialize)]
-struct SecuritySection {
+struct SecuritySection<'a> {
     require_bearer_auth: bool,
     bearer_token_file: String,
     auto_generate_bearer_token: bool,
@@ -375,6 +404,7 @@ struct SecuritySection {
     failed_auth_max_attempts: u32,
     failed_auth_block_seconds: u32,
     trust_x_forwarded_for: bool,
+    network_scope: &'a str,
 }
 
 #[derive(Serialize)]
@@ -553,6 +583,27 @@ mod tests {
             let saved = serde_json::to_value(&settings).unwrap();
             assert!(saved.get("authStorageMode").is_none());
         }
+    }
+
+    #[test]
+    fn network_scope_defaults_validates_and_renders() {
+        // Settings files written before the field existed load as "private".
+        let legacy: AppSettings = serde_json::from_str(r#"{"host": "0.0.0.0"}"#).unwrap();
+        assert_eq!(legacy.network_scope, "private");
+        legacy.validate().unwrap();
+        let rendered: toml::Value = toml::from_str(&legacy.render_config_toml().unwrap()).unwrap();
+        assert_eq!(rendered["security"]["network_scope"].as_str(), Some("private"));
+
+        let mut settings = AppSettings { network_scope: "internet".into(), ..AppSettings::default() };
+        assert!(settings.validate().is_err(), "a typo must not render");
+        settings.network_scope = "any".into();
+        settings.validate().unwrap();
+        settings.require_bearer_auth = false;
+        assert!(settings.validate().unwrap_err().contains("API key"));
+        // A loopback listener cannot be reached from the internet.
+        settings.host = "127.0.0.1".into();
+        assert_eq!(settings.effective_network_scope(), "loopback");
+        settings.validate().unwrap();
     }
 
     #[test]

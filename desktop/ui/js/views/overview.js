@@ -6,7 +6,7 @@ import { icon } from "../icons.js";
 
 let root = null;
 let lastState = null;
-let renderCache = { endpoints: "", accounts: "" };
+let renderCache = { endpoints: "", accounts: "", exampleBases: "" };
 // Fetched on demand, never polled; cleared when hidden again.
 let revealedToken = null;
 // Emails with an in-flight sign-out, for optimistic row dimming.
@@ -34,6 +34,29 @@ let resetsStamp = 0;
 let pendingRedeemTarget = null;
 const redeemInFlight = new Set();
 
+// "Try it" code examples beside the connection details. The selected
+// language is remembered across launches; the base-URL choice survives
+// re-renders (and returns when its address comes back).
+const EXAMPLE_TABS = [
+  { id: "curl", label: "curl" },
+  { id: "python", label: "Python" },
+  { id: "javascript", label: "JavaScript / TypeScript" },
+  { id: "rust", label: "Rust" },
+];
+const EXAMPLE_TAB_STORAGE = "airelays.connectExamples.tab";
+const KEY_MASK = "••••••••••••••••";
+const OPEN_MODE_KEY = "any-value";
+// Cheapest published OpenAI chat model today; used until the catalog loads.
+const FALLBACK_MODEL = "gpt-6-luna";
+const EXAMPLE_PROMPT = "Say hello in one sentence.";
+let exampleTab = storedExampleTab();
+let exampleBaseChoice = null;
+// First chat model of the relay's catalog, refreshed at most every 5 min
+// while the relay is reachable (one /v1/models request, never polled).
+let exampleModel = null;
+let exampleModelLoading = false;
+let exampleModelNextAt = 0;
+
 export const overviewView = {
   async mount(container, ctx) {
     root = document.createElement("div");
@@ -47,6 +70,7 @@ export const overviewView = {
   async update(state) {
     lastState = state;
     render(state);
+    if (state?.reachable) loadExampleModel();
     // Load usage automatically once the relay is reachable.
     if (state?.reachable && !usageLoading && (!usageLoadedOnce || Date.now() - usageLoadedAt >= 300_000)) {
       usageLoadedOnce = true;
@@ -61,7 +85,7 @@ export const overviewView = {
     root = null;
     lastState = null;
     revealedToken = null;
-    renderCache = { endpoints: "", accounts: "" };
+    renderCache = { endpoints: "", accounts: "", exampleBases: "" };
     pendingLogout.clear();
     pendingLogoutTarget = null;
     pendingClaudeLogout = null;
@@ -105,6 +129,8 @@ function template() {
     </section>
 
     <section class="card" aria-label="Connect your app">
+      <div class="connect-layout">
+      <div class="connect-main">
       <h2>Connect Your App</h2>
       <p class="card-caption">
         In your app or SDK, set the <strong>Base URL</strong> and <strong>API key</strong> below.
@@ -137,8 +163,27 @@ function template() {
             <div class="segmented" role="group" aria-labelledby="ov-net-label">
               <button id="ov-net-loopback">This machine only</button>
               <button id="ov-net-lan">Devices on my network</button>
+              <button id="ov-net-internet">Anyone on the internet</button>
             </div>
           </div>
+        </div>
+        <div class="internet-confirm" id="ov-internet-confirm" role="group" aria-label="Confirm internet access" hidden>
+          <p class="internet-confirm-title"><strong>Allow anyone on the internet to connect?</strong></p>
+          <ul>
+            <li>The relay accepts connections from any address as soon as your router forwards port <span id="ov-internet-port">8317</span> to this machine.</li>
+            <li>Everyone who has the API key can spend your subscription quota.</li>
+            <li>Traffic is plain HTTP without TLS: put the relay behind a TLS reverse proxy or a VPN before using it over the internet.</li>
+            <li>The API key becomes mandatory (Open mode is turned off); brute-force protection and rate limits apply per client IP.</li>
+          </ul>
+          <div class="row">
+            <span class="spacer"></span>
+            <button class="btn" id="ov-internet-cancel">Cancel</button>
+            <button class="btn btn-danger" id="ov-internet-enable">Enable internet access</button>
+          </div>
+        </div>
+        <div class="hint warn" id="ov-internet-warning" hidden>
+          <span>⚠</span>
+          <span><strong>Internet access is on:</strong> anyone who reaches this port and has the API key can use the relay and your subscription quota. Traffic is plain HTTP — use a TLS reverse proxy or a VPN.</span>
         </div>
         <div class="hint warn" id="ov-open-lan-warning" hidden>
           <span>⚠</span>
@@ -149,6 +194,9 @@ function template() {
           <span>Without a key, any program on this machine can use the relay and your subscription quota.</span>
         </div>
         <p class="card-caption">Access changes apply immediately and restart a running relay.</p>
+      </div>
+      </div>
+      ${examplesTemplate()}
       </div>
     </section>
 
@@ -326,8 +374,27 @@ function bindActions(ctx) {
 
   el("ov-auth-protected").addEventListener("click", () => call(api.setAuthMode(true), "Change failed"));
   el("ov-auth-open").addEventListener("click", () => call(api.setAuthMode(false), "Change failed"));
-  el("ov-net-loopback").addEventListener("click", () => call(api.setNetworkExposure(false), "Change failed"));
-  el("ov-net-lan").addEventListener("click", () => call(api.setNetworkExposure(true), "Change failed"));
+  const internetConfirm = el("ov-internet-confirm");
+  const setScope = (scope) => {
+    internetConfirm.hidden = true;
+    return call(api.setNetworkScope(scope), "Change failed");
+  };
+  el("ov-net-loopback").addEventListener("click", () => setScope("loopback"));
+  el("ov-net-lan").addEventListener("click", () => setScope("private"));
+  // Internet exposure is never one click away: the consequences are shown
+  // first, and only the explicit confirmation applies it.
+  el("ov-net-internet").addEventListener("click", () => {
+    if (el("ov-net-internet").getAttribute("aria-pressed") === "true") {
+      return;
+    }
+    internetConfirm.hidden = false;
+    el("ov-internet-enable").focus();
+  });
+  el("ov-internet-cancel").addEventListener("click", () => {
+    internetConfirm.hidden = true;
+    el("ov-net-internet").focus();
+  });
+  el("ov-internet-enable").addEventListener("click", () => setScope("any"));
 
   el("ov-token-toggle").addEventListener("click", async () => {
     if (revealedToken) {
@@ -341,6 +408,8 @@ function bindActions(ctx) {
     const token = revealedToken ?? (await fetchToken());
     if (token) await copyText(token, "API key copied");
   });
+
+  bindExamples();
 
   el("ov-token-rotate").addEventListener("click", () => el("ov-rotate-dialog").showModal());
   el("ov-rotate-cancel").addEventListener("click", () => el("ov-rotate-dialog").close());
@@ -893,14 +962,31 @@ function render(state) {
   el("ov-mismatch").hidden = !state.auth_mismatch;
 
   renderEndpoints(state);
+  renderExamples(state);
 
   const requireAuth = state.settings.requireBearerAuth;
-  const loopback = ["127.0.0.1", "localhost", "::1"].includes(state.settings.host);
+  const scope = networkScope(state.settings);
+  const loopback = scope === "loopback";
+  const internet = scope === "any";
 
   setSegment("ov-auth-protected", requireAuth);
   setSegment("ov-auth-open", !requireAuth);
   setSegment("ov-net-loopback", loopback);
-  setSegment("ov-net-lan", !loopback);
+  setSegment("ov-net-lan", scope === "private");
+  setSegment("ov-net-internet", internet);
+
+  // The backend refuses open auth with internet access too; the disabled
+  // button explains the rule before anyone hits the error.
+  const openButton = el("ov-auth-open");
+  openButton.disabled = internet;
+  openButton.title = internet
+    ? "Anyone on the internet can connect, so the API key is mandatory. Choose \u201cDevices on my network\u201d or \u201cThis machine only\u201d first."
+    : "";
+  el("ov-internet-port").textContent = String(state.settings.port);
+  if (internet) {
+    el("ov-internet-confirm").hidden = true;
+  }
+  el("ov-internet-warning").hidden = !internet;
 
   el("ov-open-lan-warning").hidden = requireAuth || loopback;
   el("ov-open-warning").hidden = requireAuth || !loopback;
@@ -970,6 +1056,15 @@ function render(state) {
   renderAccounts(state);
 }
 
+// Mirrors AppSettings::effective_network_scope: a loopback listener is
+// reachable from this machine only, whatever the saved scope says.
+function networkScope(settings) {
+  if (["127.0.0.1", "localhost", "::1"].includes(settings.host)) {
+    return "loopback";
+  }
+  return ["loopback", "any"].includes(settings.networkScope) ? settings.networkScope : "private";
+}
+
 function setSegment(id, selected) {
   const button = el(id);
   button.classList.toggle("selected", selected);
@@ -1028,11 +1123,23 @@ function endpointLine(tag, url) {
   return line;
 }
 
-function renderEndpoints(state) {
+// The addresses "Connect Your App" lists, shared by the address rows and
+// the examples' base-URL choice so both always show the same set.
+function connectAddresses(state) {
   const endpoints = [["Local", state.local_endpoint]].concat(
-    state.lan_endpoints.map((endpoint) => ["LAN", endpoint])
+    (state.lan_endpoints ?? []).map((endpoint) => ["LAN", endpoint])
   );
-  const cacheKey = JSON.stringify(endpoints);
+  const internet = networkScope(state.settings) === "any";
+  // The core only looks the public IP up (and only reports it) while the
+  // scope is "any"; guard here too so a stale field can never show.
+  const publicEndpoint = internet ? state.public_endpoint || null : null;
+  const publicPending = internet && !publicEndpoint && Boolean(state.public_ip_pending);
+  return { endpoints, internet, publicEndpoint, publicPending };
+}
+
+function renderEndpoints(state) {
+  const { endpoints, internet, publicEndpoint, publicPending } = connectAddresses(state);
+  const cacheKey = JSON.stringify([endpoints, internet, publicEndpoint, publicPending]);
   if (cacheKey === renderCache.endpoints) {
     return;
   }
@@ -1044,6 +1151,359 @@ function renderEndpoints(state) {
   container.innerHTML = "";
   for (const [tag, url] of endpoints) {
     container.appendChild(endpointLine(tag, url));
+  }
+  if (publicEndpoint) {
+    const line = endpointLine("Internet", publicEndpoint);
+    line.id = "ov-public-endpoint";
+    container.appendChild(line);
+  } else if (publicPending) {
+    const line = document.createElement("div");
+    line.className = "endpoint endpoint-pending";
+    line.id = "ov-public-endpoint-pending";
+    const tagEl = document.createElement("span");
+    tagEl.className = "tag";
+    tagEl.textContent = "Internet";
+    const text = document.createElement("span");
+    text.textContent = "looking up public address…";
+    line.append(tagEl, text);
+    container.appendChild(line);
+  }
+  if (internet) {
+    const port = state.settings.port;
+    const note = document.createElement("div");
+    note.className = "hint";
+    note.id = "ov-public-address-note";
+    note.innerHTML = "<span>ⓘ</span><span></span>";
+    const lanHost = (endpoints.find(([tag]) => tag === "LAN") ?? [])[1]?.match(/^https?:\/\/([^/:]+)/)?.[1];
+    const forward = `forward TCP port ${port} on your router to this machine${lanHost ? ` (${lanHost})` : ""}`;
+    const loopback = "From inside your own network the Internet address only answers when the router supports NAT loopback (hairpinning); test it from a phone on mobile data instead.";
+    note.lastElementChild.textContent = publicEndpoint || publicPending
+      ? `The Internet address is your router's public IP: clients only reach it once your router forwards port ${port} to this machine. If connections are refused, ${forward}. ${loopback} It is shown only while internet access is on.`
+      : `The public address could not be looked up. Internet clients use your router's public IP, and only reach it once your router forwards port ${port} to this machine: ${forward}. ${loopback}`;
+    container.appendChild(note);
+  }
+}
+
+// ---------- Connect examples ("Try it") ----------
+
+function examplesTemplate() {
+  const tabs = EXAMPLE_TABS.map((tab) => `
+        <button role="tab" id="ov-ex-tab-${tab.id}" data-tab="${tab.id}"
+                aria-controls="ov-ex-panel" aria-selected="false" tabindex="-1">${tab.label}</button>`).join("");
+  return `
+      <section class="connect-examples" aria-labelledby="ov-ex-title">
+        <div class="ex-head">
+          <h3 class="ex-title" id="ov-ex-title">Try it</h3>
+          <div class="ex-base">
+            <span class="ex-base-label" id="ov-ex-base-label">Base URL</span>
+            <div class="segmented" role="group" aria-labelledby="ov-ex-base-label" id="ov-ex-bases"></div>
+          </div>
+        </div>
+        <div class="ex-tabs" role="tablist" aria-label="Example language" id="ov-ex-tabs">${tabs}
+        </div>
+        <div class="ex-panel" role="tabpanel" id="ov-ex-panel" aria-labelledby="ov-ex-tab-curl">
+          <div class="ex-code-wrap">
+            <pre class="ex-code" tabindex="0" aria-label="Example code"><code id="ov-ex-code"></code></pre>
+            <button class="copy-btn ex-copy" id="ov-ex-copy" title="Copy example">${icon("copy", 13)}</button>
+          </div>
+          <p class="ex-note" id="ov-ex-note"></p>
+        </div>
+      </section>`;
+}
+
+function storedExampleTab() {
+  try {
+    const saved = localStorage.getItem(EXAMPLE_TAB_STORAGE);
+    if (EXAMPLE_TABS.some((tab) => tab.id === saved)) return saved;
+  } catch {
+    // Storage unavailable (private mode, sandbox): default tab.
+  }
+  return EXAMPLE_TABS[0].id;
+}
+
+function selectExampleTab(id, focus = false) {
+  exampleTab = id;
+  try {
+    localStorage.setItem(EXAMPLE_TAB_STORAGE, id);
+  } catch {
+    // Not remembered; still switches.
+  }
+  if (lastState) renderExamples(lastState);
+  if (focus) el(`ov-ex-tab-${id}`).focus();
+}
+
+function bindExamples() {
+  root.querySelectorAll("#ov-ex-tabs [role=tab]").forEach((tab) => {
+    tab.addEventListener("click", () => selectExampleTab(tab.dataset.tab));
+  });
+  // Arrow keys move between tabs (automatic activation), Home/End jump.
+  el("ov-ex-tabs").addEventListener("keydown", (event) => {
+    const count = EXAMPLE_TABS.length;
+    const index = EXAMPLE_TABS.findIndex((tab) => tab.id === exampleTab);
+    const next = {
+      ArrowRight: (index + 1) % count,
+      ArrowLeft: (index - 1 + count) % count,
+      Home: 0,
+      End: count - 1,
+    }[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    selectExampleTab(EXAMPLE_TABS[next].id, true);
+  });
+  el("ov-ex-bases").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-url]");
+    if (!button) return;
+    exampleBaseChoice = button.dataset.url;
+    if (lastState) renderExamples(lastState);
+  });
+  el("ov-ex-copy").addEventListener("click", copyExample);
+}
+
+// Every address the card shows, labelled like its row (several LAN
+// addresses are numbered); a pending Internet lookup is not offered.
+function exampleBases(state) {
+  const { endpoints, publicEndpoint } = connectAddresses(state);
+  const lanCount = endpoints.filter(([tag]) => tag === "LAN").length;
+  let lanIndex = 0;
+  const bases = endpoints.map(([tag, url]) => {
+    if (tag === "LAN" && lanCount > 1) {
+      lanIndex += 1;
+      return { label: `LAN ${lanIndex}`, url };
+    }
+    return { label: tag, url };
+  });
+  if (publicEndpoint) bases.push({ label: "Internet", url: publicEndpoint });
+  return bases.filter((base) => base.url);
+}
+
+function exampleModelId(state) {
+  return state.reachable && exampleModel ? exampleModel : FALLBACK_MODEL;
+}
+
+// The example defaults to the cheapest chat model the relay offers: lowest
+// published output price, then input price, then catalog order. Unpriced
+// models rank last; hidden, image-only and account-less models are skipped.
+function cheapestChatModel(models) {
+  if (!Array.isArray(models)) return null;
+  let best = null;
+  let bestRank = null;
+  for (const model of models) {
+    if (typeof model?.id !== "string") continue;
+    const meta = model.airelays ?? {};
+    if (meta.catalog_visibility === "hide") continue;
+    if (meta.account_availability && meta.account_availability.supported === 0) continue;
+    if (/image|embedding|tts|whisper|dall-e|moderation/i.test(model.id)) continue;
+    const pricing = meta.pricing ?? null;
+    const output = Number.isFinite(pricing?.output_per_million) ? pricing.output_per_million : Infinity;
+    const input = Number.isFinite(pricing?.input_per_million) ? pricing.input_per_million : Infinity;
+    const rank = [output, input];
+    if (bestRank === null || rank[0] < bestRank[0] || (rank[0] === bestRank[0] && rank[1] < bestRank[1])) {
+      best = model.id;
+      bestRank = rank;
+    }
+  }
+  return best;
+}
+
+async function loadExampleModel() {
+  if (exampleModelLoading || Date.now() < exampleModelNextAt) return;
+  exampleModelLoading = true;
+  try {
+    const payload = await api.getModels(false);
+    exampleModel = cheapestChatModel(payload?.data);
+    exampleModelNextAt = Date.now() + 300_000;
+  } catch {
+    // The snippet keeps its last (or the fallback) model; retry later.
+    exampleModelNextAt = Date.now() + 60_000;
+  } finally {
+    exampleModelLoading = false;
+  }
+  if (root && lastState) renderExamples(lastState);
+}
+
+function exampleTabLabel(id) {
+  return EXAMPLE_TABS.find((tab) => tab.id === id)?.label ?? id;
+}
+
+// One runnable chat completion per language. `key` is the literal key
+// text: the mask on screen, the real key only in the copied text.
+function exampleSnippet(lang, { base, model, key, open }) {
+  const q = (value) => JSON.stringify(value);
+  const pick = "Pick any model id from the Models tab.";
+  const openNote = "Open mode: the relay ignores the key, but SDKs need a non-empty string.";
+  const lines = [];
+  switch (lang) {
+    case "python":
+      lines.push(
+        "# pip install openai",
+        "from openai import OpenAI",
+        "",
+        "client = OpenAI(",
+        `    base_url=${q(base)},`,
+        ...(open ? [`    # ${openNote}`] : []),
+        `    api_key=${q(key)},`,
+        ")",
+        "",
+        `# ${pick}`,
+        "response = client.chat.completions.create(",
+        `    model=${q(model)},`,
+        `    messages=[{"role": "user", "content": ${q(EXAMPLE_PROMPT)}}],`,
+        ")",
+        "print(response.choices[0].message.content)",
+      );
+      break;
+    case "javascript":
+      lines.push(
+        "// npm install openai",
+        "// Save as example.mjs (or .ts), then: node example.mjs",
+        'import OpenAI from "openai";',
+        "",
+        "const client = new OpenAI({",
+        `  baseURL: ${q(base)},`,
+        ...(open ? [`  // ${openNote}`] : []),
+        `  apiKey: ${q(key)},`,
+        "});",
+        "",
+        `// ${pick}`,
+        "const response = await client.chat.completions.create({",
+        `  model: ${q(model)},`,
+        `  messages: [{ role: "user", content: ${q(EXAMPLE_PROMPT)} }],`,
+        "});",
+        "console.log(response.choices[0].message.content);",
+      );
+      break;
+    case "rust":
+      lines.push(
+        "// Cargo.toml",
+        "// [dependencies]",
+        '// async-openai = { version = "0.42.2", features = ["chat-completion"] }',
+        '// tokio = { version = "1", features = ["macros", "rt-multi-thread"] }',
+        "use async_openai::{",
+        "    config::OpenAIConfig,",
+        "    types::chat::{ChatCompletionRequestUserMessage, CreateChatCompletionRequestArgs},",
+        "    Client,",
+        "};",
+        "",
+        "#[tokio::main]",
+        "async fn main() -> Result<(), Box<dyn std::error::Error>> {",
+        "    let config = OpenAIConfig::new()",
+        `        .with_api_base(${q(base)})`,
+        ...(open ? [`        // ${openNote}`] : []),
+        `        .with_api_key(${q(key)});`,
+        "    let client = Client::with_config(config);",
+        "",
+        `    // ${pick}`,
+        "    let request = CreateChatCompletionRequestArgs::default()",
+        `        .model(${q(model)})`,
+        "        .messages([",
+        `            ChatCompletionRequestUserMessage::from(${q(EXAMPLE_PROMPT)}).into(),`,
+        "        ])",
+        "        .build()?;",
+        "    let response = client.chat().create(request).await?;",
+        "    if let Some(choice) = response.choices.first() {",
+        '        println!("{}", choice.message.content.as_deref().unwrap_or(""));',
+        "    }",
+        "    Ok(())",
+        "}",
+      );
+      break;
+    default: {
+      // curl: the JSON body sits in single quotes, the header in double.
+      const body = (value) => q(value).replace(/'/g, "'\\''");
+      const header = key.replace(/["\\$`]/g, "\\$&");
+      // No comment lines: an interactive zsh rejects a pasted "#" line
+      // ("command not found: #") unless interactive_comments is set.
+      lines.push(
+        `curl ${base}/chat/completions \\`,
+        '  -H "Content-Type: application/json" \\',
+        ...(open ? [] : [`  -H "Authorization: Bearer ${header}" \\`]),
+        "  -d '{",
+        `    "model": ${body(model)},`,
+        `    "messages": [{"role": "user", "content": ${body(EXAMPLE_PROMPT)}}]`,
+        "  }'",
+      );
+    }
+  }
+  return lines.join("\n");
+}
+
+function exampleContext(state) {
+  const bases = exampleBases(state);
+  const base = bases.find((entry) => entry.url === exampleBaseChoice) ?? bases[0];
+  return {
+    bases,
+    base: base?.url ?? state.local_endpoint,
+    model: exampleModelId(state),
+    open: !state.settings.requireBearerAuth,
+  };
+}
+
+function renderExamples(state) {
+  if (!root) return;
+  const context = exampleContext(state);
+
+  const basesKey = JSON.stringify(context.bases);
+  const basesEl = el("ov-ex-bases");
+  if (basesKey !== renderCache.exampleBases) {
+    renderCache.exampleBases = basesKey;
+    basesEl.innerHTML = "";
+    for (const entry of context.bases) {
+      const button = document.createElement("button");
+      button.textContent = entry.label;
+      button.dataset.url = entry.url;
+      button.title = entry.url;
+      basesEl.appendChild(button);
+    }
+  }
+  for (const button of basesEl.querySelectorAll("button")) {
+    const selected = button.dataset.url === context.base;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  }
+
+  for (const tab of root.querySelectorAll("#ov-ex-tabs [role=tab]")) {
+    const selected = tab.dataset.tab === exampleTab;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    tab.classList.toggle("selected", selected);
+  }
+  el("ov-ex-panel").setAttribute("aria-labelledby", `ov-ex-tab-${exampleTab}`);
+
+  const text = exampleSnippet(exampleTab, { ...context, key: context.open ? OPEN_MODE_KEY : KEY_MASK });
+  const code = el("ov-ex-code");
+  if (code.textContent !== text) code.textContent = text;
+  const label = exampleTabLabel(exampleTab);
+  el("ov-ex-copy").setAttribute("aria-label",
+    context.open ? `Copy ${label} example` : `Copy ${label} example with the API key`);
+  el("ov-ex-note").textContent = context.open
+    ? "Open mode: the example uses a placeholder key."
+    : "The key is hidden on screen; Copy includes it.";
+}
+
+// Copies the shown example with the real key in place of the mask, read
+// the same way as the key row's Copy (fresh, so a rotation is picked up).
+async function copyExample() {
+  if (!lastState) return;
+  const context = exampleContext(lastState);
+  const lang = exampleTab;
+  if (context.open) {
+    await copyText(exampleSnippet(lang, { ...context, key: OPEN_MODE_KEY }), "Example copied");
+    return;
+  }
+  let token = null;
+  try {
+    token = await api.tokenAction("show");
+  } catch {
+    token = revealedToken;
+  }
+  if (token) {
+    await copyText(exampleSnippet(lang, { ...context, key: token }), "Example copied with your API key");
+  } else {
+    await copyText(
+      exampleSnippet(lang, { ...context, key: KEY_MASK }),
+      "Example copied without the key",
+      "The API key could not be read: replace the dots with your key."
+    );
   }
 }
 

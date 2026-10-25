@@ -120,11 +120,16 @@ bearer_token_file = "~/.airelays/relay-token"
 auto_generate_bearer_token = false
 rate_limit_per_minute = 120
 rate_limit_burst = 40
-concurrent_requests_per_ip = 8
+concurrent_requests_per_ip = 50
 failed_auth_window_seconds = 300
 failed_auth_max_attempts = 8
 failed_auth_block_seconds = 900
 trust_x_forwarded_for = false
+# Who may connect: "loopback" (this machine), "private" (default: loopback,
+# RFC 1918, 100.64.0.0/10 CGNAT/Tailscale, link-local, IPv6 ULA and
+# link-local) or "any" (the internet; requires require_bearer_auth = true).
+# A loopback host always means "loopback". See docs/security.md#who-can-connect.
+network_scope = "private"
 
 [uploads]
 max_upload_bytes = 33554432
@@ -172,7 +177,7 @@ image_timeout_seconds = 300.0
 image_usage_probe = true
 
 [providers.claude]
-enabled = false
+enabled = true
 bin = "claude"
 command = []                          # full argv, wins over `bin` (see below)
 timeout_seconds = 600.0
@@ -183,6 +188,26 @@ strip_api_key_env = true
 models = ["claude:sonnet", "claude:opus", "claude:haiku", "claude:fable"]
 oauth_token_file = "~/.airelays/claude-token"   # written by `airelays claude set-token`
 ```
+
+## Listener And Network Scope
+
+`[server] host` and `port` choose where the relay listens; `[security]
+network_scope` chooses which client addresses it serves:
+
+- `host = "127.0.0.1"` (CLI default): this machine only, whatever the scope.
+- `host = "0.0.0.0"` with `network_scope = "private"` (the default scope):
+  devices on your home, office or VPN network. The desktop app's default
+  (`0.0.0.0:8317`).
+- `host = "0.0.0.0"` with `network_scope = "any"`: anyone who can reach the
+  port, for example through router port forwarding. Requires
+  `require_bearer_auth = true`.
+
+`airelays init --host 0.0.0.0 --port 8080 --network-scope private` writes
+these keys into a new config file (`--force` rewrites an existing one).
+`airelays serve --host`, `--port` and `--network-scope` override them for one
+server process. See [Who Can Connect](security.md#who-can-connect) for the
+address ranges, the 403 codes, the internet setup steps and the
+`trust_x_forwarded_for` interplay.
 
 ## Important Environment Variables
 
@@ -200,6 +225,10 @@ oauth_token_file = "~/.airelays/claude-token"   # written by `airelays claude se
 - `AIRELAYS_CLIENT_VERSION`
 - `AIRELAYS_REQUEST_TIMEOUT_SECONDS`
 - `AIRELAYS_REQUIRE_BEARER_AUTH`
+- `AIRELAYS_NETWORK_SCOPE` (`private` default, `loopback`, or `any`; `any` requires bearer auth).
+  `airelays serve --network-scope <scope>` overrides it for one server process; an unknown value
+  stops the relay at startup. See [Who Can Connect](security.md#who-can-connect).
+- `AIRELAYS_TRUST_X_FORWARDED_FOR` (`false` default; refused with the Claude runtime)
 - `AIRELAYS_BEARER_TOKEN`
 - `AIRELAYS_BEARER_TOKEN_FILE`
 - `AIRELAYS_LOG_STREAM_LINES`

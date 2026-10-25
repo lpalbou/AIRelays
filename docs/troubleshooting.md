@@ -386,13 +386,77 @@ Checks:
   request body from the traffic log and compare it with the documented
   supported shapes in [docs/api.md](api.md)
 
-## Claude startup refusal
+## The relay refuses to start: network scope or Claude guardrail
 
-When the Claude runtime is enabled:
+`airelays serve` and `airelays init` stop with a message instead of starting
+an unsafe or ambiguous relay:
 
-- keep the listener on `127.0.0.1`, `localhost`, or `::1`
-- keep relay bearer auth enabled
-- keep `trust_x_forwarded_for=false`
+- "`network_scope = "any"` (anyone on the internet) requires
+  `require_bearer_auth = true`": internet access needs the API key. Drop
+  `--no-auth` (or set `require_bearer_auth = true`), or choose
+  `--network-scope private` or `loopback`.
+- `Invalid [security] network_scope value ...`: use `loopback`, `private`,
+  or `any` in `config.toml` or `AIRELAYS_NETWORK_SCOPE`.
+- `The Claude runtime does not allow trust_x_forwarded_for`: set
+  `trust_x_forwarded_for = false`, or disable the Claude runtime
+  (`[providers.claude] enabled = false`).
+
+See [Who Can Connect](security.md#who-can-connect) and
+[Configuration](configuration.md#listener-and-network-scope).
+
+## `403 client_not_on_private_network` or `client_not_on_this_machine`
+
+The relay answered, but the client's address is outside its
+[network scope](security.md#who-can-connect); the check runs before auth, so
+the API key was not even looked at.
+
+- `client_not_on_private_network`: the scope is `private` and the client
+  came from a public address, for example through router port forwarding,
+  a cloud host, or a reverse proxy with `trust_x_forwarded_for = true`.
+- `client_not_on_this_machine`: the scope is `loopback` on a non-loopback
+  listener, and the client is another device.
+
+Check what the relay enforces:
+
+```bash
+airelays status          # "Who can connect"
+```
+
+Fix: connect from an allowed network (for example over Tailscale, which
+`private` allows), or widen the scope with `airelays serve --host 0.0.0.0
+--network-scope any` (the API key stays required). The desktop app's **Who
+can connect** selector does the same. A refused request is logged as an
+`endpoint_rejected` traffic record with reason `network_scope`.
+
+## The Internet address refuses connections
+
+You chose **Anyone on the internet** (or `network_scope = "any"`), but
+clients cannot reach the public address.
+
+- Confirm the scope: `airelays status` must show `any (anyone on the
+  internet ...)`. A listener on `127.0.0.1` narrows every scope to
+  `loopback`; listen on `0.0.0.0`.
+- Forward the relay's TCP port (CLI default `8080`, desktop `8317`) on your
+  router to this machine's private address, the **LAN** row in the desktop
+  Connect card.
+- Allow incoming connections for the relay in the macOS application firewall
+  or your Linux host firewall.
+- Test from outside your network, for example from a phone on mobile data.
+  From inside the same network the public address only answers when the
+  router supports NAT loopback (hairpinning); use the LAN address there.
+- Some providers place customers behind carrier-grade NAT, where port
+  forwarding on your router cannot reach you. Use a VPN such as Tailscale
+  (allowed by the default `private` scope) or a reverse proxy on a host with
+  a public address.
+- The desktop shows "The public address could not be looked up" when
+  `api.ipify.org` and `checkip.amazonaws.com` are unreachable; the relay
+  still serves the scope, and clients can use your router's public IP.
+
+Verify recovery from the outside device:
+
+```bash
+curl http://<PUBLIC_IP>:<PORT>/healthz
+```
 
 ## `429 Too many invalid authentication attempts from this IP`
 

@@ -10,17 +10,39 @@
 //! Security toggles (auth mode, LAN exposure) intentionally live only in
 //! the dashboard, where their consequences are explained — not one
 //! accidental menu click away.
+//!
+//! Clicks: left click always brings the dashboard forward; right click
+//! opens the menu. On Linux the appindicator host owns every click and
+//! always shows the menu, which therefore starts with "Open Dashboard".
+//!
+//! macOS 27 stopped delivering clicks to tray-icon's overlay view while an
+//! NSMenu is attached to the NSStatusItem: AppKit opens the attached menu
+//! on any click, so `show_menu_on_left_click(false)` had no effect and the
+//! left-click event never arrived. tray-icon 0.24 (Tauri 2.11) attaches the
+//! menu permanently; 0.25.1 (Tauri 2.12) attaches it only while showing
+//! it. Until the app moves to Tauri 2.12, the macOS tray carries no menu:
+//! a right click attaches it, pops it up, and detaches it again.
 
 use crate::relay::robust_lock;
 use crate::state::AppState;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
 pub(crate) const TRAY_ID: &str = "airelays-tray";
+
+/// Menu item ids for the address entries are `copy-addr-<index>` into this
+/// list, which is replaced together with the menu it was built for.
+const COPY_ADDRESS_PREFIX: &str = "copy-addr-";
+static MENU_ADDRESSES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// The current menu on macOS, attached to the status item only while it is
+/// shown (see the module docs).
+#[cfg(target_os = "macos")]
+static MAC_MENU: Mutex<Option<Menu<tauri::Wry>>> = Mutex::new(None);
 
 // Last icon actually applied to the tray (0 = none yet). A missed or failed
 // set_icon used to stick until the next reachability *change*; tracking the
@@ -75,39 +97,123 @@ fn monotonic_ms() -> u64 {
 }
 
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
-    let tray = TrayIconBuilder::with_id(TRAY_ID)
+    let menu = build_menu(app)?;
+    let builder = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon_image(ICON_DISCONNECTED))
         .tooltip(format!("AIRelays {}", app.package_info().version))
-        .menu(&build_menu(app)?)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
-            if matches!(
-                event,
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
+            if let TrayIconEvent::Click { button, button_state, .. } = event {
+                match click_action(button, button_state) {
+                    ClickAction::ShowDashboard => crate::commands::show_dashboard(tray.app_handle()),
+                    ClickAction::ShowMenu => show_menu_soon(tray.app_handle()),
+                    ClickAction::None => {}
                 }
-            ) {
-                crate::commands::show_dashboard(tray.app_handle());
             }
         })
-        .on_menu_event(handle_menu_event)
-        .build(app)?;
+        .on_menu_event(handle_menu_event);
+    #[cfg(target_os = "macos")]
+    let builder = {
+        *robust_lock(&MAC_MENU) = Some(menu);
+        builder
+    };
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.menu(&menu);
+    let tray = builder.build(app)?;
     let _ = tray;
     APPLIED_ICON.store(ICON_DISCONNECTED, Ordering::Relaxed);
     Ok(())
 }
 
-/// Rebuilds menu and icon to match current state. Called on lifecycle and
-/// reachability changes.
+#[derive(Debug, PartialEq, Eq)]
+enum ClickAction {
+    ShowDashboard,
+    ShowMenu,
+    None,
+}
+
+/// What a tray click does. Left click opens the dashboard: on macOS on
+/// press or release (the overlay view reports both; showing is
+/// idempotent), elsewhere on release like native tray icons. Right click
+/// opens the menu: macOS pops it up on press (see `show_menu_soon`);
+/// Windows shows it natively on release; Linux never reports clicks.
+fn click_action(button: MouseButton, state: MouseButtonState) -> ClickAction {
+    match (button, state) {
+        (MouseButton::Left, MouseButtonState::Up) => ClickAction::ShowDashboard,
+        (MouseButton::Left, MouseButtonState::Down) if cfg!(target_os = "macos") => {
+            ClickAction::ShowDashboard
+        }
+        (MouseButton::Right, MouseButtonState::Down) if cfg!(target_os = "macos") => {
+            ClickAction::ShowMenu
+        }
+        _ => ClickAction::None,
+    }
+}
+
+/// Pops the menu up on macOS (other platforms show it natively). Runs one
+/// main-loop turn later: the tray event handler holds Tauri's listener
+/// lock, and the menu runs a nested event loop until it closes.
+fn show_menu_soon(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || pop_up_menu(&handle));
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
+
+#[cfg(target_os = "macos")]
+fn pop_up_menu(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    let menu = robust_lock(&MAC_MENU).clone();
+    let Some(menu) = menu else {
+        return;
+    };
+    if tray.set_menu(Some(menu)).is_ok() {
+        // NSStatusBarButton.performClick: blocks until the menu closes.
+        let _ = tray.with_inner_tray_icon(|inner| inner.show_menu());
+    }
+    // Detached again, so the next left click reaches the dashboard handler.
+    let _ = tray.set_menu(None::<Menu<tauri::Wry>>);
+}
+
+/// Rebuilds menu and icon to match current state. Called on lifecycle,
+/// reachability, settings, and address-list changes.
 pub fn refresh(app: &AppHandle) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         if let Ok(menu) = build_menu(app) {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = tray;
+                *robust_lock(&MAC_MENU) = Some(menu);
+            }
+            #[cfg(not(target_os = "macos"))]
             let _ = tray.set_menu(Some(menu));
         }
     }
     sync_icon(app);
+}
+
+/// Every URL the relay is reachable at, local endpoint first, then LAN,
+/// then the public (internet) endpoint when known; the status loop compares
+/// it every tick (cheap: interface enumeration is cached for 10 s, the
+/// public IP for minutes) and rebuilds the menu when Wi-Fi, settings or a
+/// finished public-IP lookup change it.
+pub fn menu_addresses(settings: &crate::settings::AppSettings, public: Option<&str>) -> Vec<String> {
+    let local = settings.base_url();
+    let mut addresses = vec![local.clone()];
+    for url in crate::commands::lan_endpoints(settings).into_iter().chain(public.map(String::from)) {
+        if !addresses.contains(&url) {
+            addresses.push(url);
+        }
+    }
+    addresses
 }
 
 /// Re-asserts the tray icon from current reachability. No-op when already
@@ -187,7 +293,10 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let managed = state.supervisor.is_managed();
     let auth_mismatch = *robust_lock(&state.auth_mismatch);
     let lifecycle = *robust_lock(&state.supervisor.lifecycle);
-    let endpoint = robust_lock(&state.settings).base_url();
+    let settings = robust_lock(&state.settings).clone();
+    let endpoint = settings.base_url();
+    let (public, _) = crate::public_ip::endpoint(app, &settings);
+    let addresses = menu_addresses(&settings, public.as_deref());
 
     // Same decision order as the dashboard hero and sidebar: the three
     // surfaces must never contradict each other for one underlying state.
@@ -214,6 +323,33 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         None::<&str>,
     )?;
     let open = MenuItem::with_id(app, "open-dashboard", "Open Dashboard", true, None::<&str>)?;
+    let copy = Submenu::with_id(app, "addresses", "Copy Address", true)?;
+    for (index, url) in addresses.iter().enumerate() {
+        let place = if index == 0 {
+            "this machine"
+        } else if public.as_deref() == Some(url.as_str()) {
+            "internet"
+        } else {
+            "network"
+        };
+        copy.append(&MenuItem::with_id(
+            app,
+            format!("{COPY_ADDRESS_PREFIX}{index}"),
+            format!("{url}  ({place})"),
+            true,
+            None::<&str>,
+        )?)?;
+    }
+    if settings.effective_network_scope() == "any" && public.is_none() {
+        copy.append(&MenuItem::with_id(
+            app,
+            "addresses-public-note",
+            "Internet address: your router's public IP and forwarded port",
+            false,
+            None::<&str>,
+        )?)?;
+    }
+    *robust_lock(&MENU_ADDRESSES) = addresses;
     let start = MenuItem::with_id(app, "start", "Start Relay", !managed, None::<&str>)?;
     let stop = MenuItem::with_id(app, "stop", "Stop Relay", managed, None::<&str>)?;
     let restart = MenuItem::with_id(app, "restart", "Restart Relay", managed, None::<&str>)?;
@@ -225,6 +361,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &status_line,
             &PredefinedMenuItem::separator(app)?,
             &open,
+            &copy,
             &PredefinedMenuItem::separator(app)?,
             &start,
             &stop,
@@ -263,6 +400,92 @@ fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
                 app.exit(0);
             });
         }
-        _ => {}
+        id => {
+            if let Some(url) = id
+                .strip_prefix(COPY_ADDRESS_PREFIX)
+                .and_then(|index| index.parse::<usize>().ok())
+                .and_then(|index| robust_lock(&MENU_ADDRESSES).get(index).cloned())
+            {
+                copy_address(&app, &url);
+            }
+        }
+    }
+}
+
+fn copy_address(app: &AppHandle, url: &str) {
+    let state = app.state::<AppState>();
+    match copy_to_clipboard(url) {
+        Ok(()) => {
+            state.supervisor.log("app", &format!("Copied {url} to the clipboard."), false);
+            crate::state::notify(app, "Address copied", &format!("Copied {url}"));
+        }
+        Err(error) => {
+            let message = format!("Cannot copy {url} to the clipboard: {error}");
+            state.supervisor.log("app", &message, true);
+            crate::state::notify(app, "Copy failed", &message);
+        }
+    }
+}
+
+/// One clipboard handle for the process lifetime: on X11 the owning
+/// process serves the copied text, so a dropped handle would lose it.
+fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    static CLIPBOARD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
+    let mut clipboard = robust_lock(&CLIPBOARD);
+    if clipboard.is_none() {
+        *clipboard = Some(arboard::Clipboard::new().map_err(|error| error.to_string())?);
+    }
+    clipboard
+        .as_mut()
+        .expect("clipboard initialized above")
+        .set_text(text.to_string())
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn left_click_opens_the_dashboard_and_right_click_the_menu() {
+        assert_eq!(click_action(MouseButton::Left, MouseButtonState::Up), ClickAction::ShowDashboard);
+        assert_eq!(click_action(MouseButton::Middle, MouseButtonState::Up), ClickAction::None);
+        if cfg!(target_os = "macos") {
+            assert_eq!(click_action(MouseButton::Left, MouseButtonState::Down), ClickAction::ShowDashboard);
+            assert_eq!(click_action(MouseButton::Right, MouseButtonState::Down), ClickAction::ShowMenu);
+        } else {
+            // Windows shows the attached menu natively on right release.
+            assert_eq!(click_action(MouseButton::Right, MouseButtonState::Up), ClickAction::None);
+        }
+    }
+
+    #[test]
+    fn addresses_list_the_local_endpoint_first_without_duplicates() {
+        let mut settings = crate::settings::AppSettings {
+            host: "127.0.0.1".into(),
+            ..Default::default()
+        };
+        assert_eq!(menu_addresses(&settings, None), vec![settings.base_url()]);
+        settings.host = "0.0.0.0".into();
+        let addresses = menu_addresses(&settings, None);
+        assert_eq!(addresses[0], format!("http://127.0.0.1:{}/v1", settings.port));
+        let mut unique = addresses.clone();
+        unique.dedup();
+        assert_eq!(unique.len(), addresses.len());
+        assert!(addresses[1..].iter().all(|url| !url.contains("127.0.0.1")));
+    }
+
+    #[test]
+    fn addresses_end_with_the_public_endpoint_when_known() {
+        let settings = crate::settings::AppSettings {
+            host: "0.0.0.0".into(),
+            network_scope: "any".into(),
+            ..Default::default()
+        };
+        let public = format!("http://203.0.113.10:{}/v1", settings.port);
+        let addresses = menu_addresses(&settings, Some(&public));
+        assert_eq!(addresses.last(), Some(&public));
+        assert_eq!(addresses.iter().filter(|url| **url == public).count(), 1);
+        assert_eq!(addresses[0], settings.base_url());
     }
 }

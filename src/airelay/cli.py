@@ -50,7 +50,26 @@ def _serve_command(settings: Settings) -> str:
     command = f"airelays serve --host {settings.host} --port {settings.port}"
     if not settings.require_bearer_auth:
         command += " --no-auth"
+    if settings.network_scope != "private":
+        command += f" --network-scope {settings.network_scope}"
     return command
+
+
+_NETWORK_SCOPE_TEXT = {
+    "loopback": "this machine only",
+    "private": "devices on private networks",
+    "any": "anyone on the internet (API key required)",
+}
+
+
+def _network_scope_text(scope: object, effective: object) -> str:
+    """One line for the status/init summaries, e.g. `private (devices on
+    private networks)`; a loopback listener narrows any setting to loopback."""
+    label = str(effective or scope or "private")
+    text = f"{label} ({_NETWORK_SCOPE_TEXT.get(label, label)})"
+    if scope and effective and scope != effective:
+        text += f"; configured {scope}, narrowed by the loopback listener"
+    return text
 
 
 def _client_usage_payload(settings: Settings, include_token: bool = False) -> dict[str, object]:
@@ -113,6 +132,8 @@ def _base_settings(args: argparse.Namespace) -> Settings:
     if getattr(args, "no_auth", False):
         settings.require_bearer_auth = False
         settings.auto_generate_bearer_token = False
+    if getattr(args, "network_scope", None):
+        settings.network_scope = args.network_scope
     return settings
 
 
@@ -210,6 +231,8 @@ def _init_payload(
         "bearer_token_created": token_created,
         "bearer_token_source": settings.bearer_token_source(),
         "relay_token": token_to_show,
+        "network_scope": settings.network_scope,
+        "effective_network_scope": settings.effective_network_scope(),
         "client": _client_usage_payload(settings, include_token=bool(token_to_show)),
         "next_steps": next_steps,
     }
@@ -776,6 +799,11 @@ def _print_init_summary(payload: dict[str, object]) -> None:
         _print_field("Token file", payload.get("bearer_token_file"))
     else:
         _print_field("Bearer auth", "disabled", kind="warn")
+    _print_field(
+        "Who can connect",
+        _network_scope_text(payload.get("network_scope"), payload.get("effective_network_scope")),
+        kind="warn" if payload.get("effective_network_scope") == "any" else "plain",
+    )
     _print_field("Client base URL", client.get("base_url"))
     _print_client_section(client, include_token=bool(payload.get("relay_token")))
     _print_steps([str(step) for step in payload.get("next_steps", [])])
@@ -799,6 +827,11 @@ def _print_status_summary(payload: dict[str, object]) -> None:
         bool(relay.get("require_bearer_auth")),
         true_text="enabled",
         false_text="disabled",
+    )
+    _print_field(
+        "Who can connect",
+        _network_scope_text(relay.get("network_scope"), relay.get("effective_network_scope")),
+        kind="warn" if relay.get("effective_network_scope") == "any" else "plain",
     )
     if bool(relay.get("require_bearer_auth")):
         _print_bool(
@@ -1105,6 +1138,19 @@ def _run_init(args: argparse.Namespace) -> None:
         settings.validate_provider_guardrails()
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from exc
+    requested = [
+        flag
+        for flag, value in (("--host", args.host), ("--port", args.port), ("--network-scope", args.network_scope))
+        if value is not None
+    ]
+    if requested and settings.config_path.exists() and not args.force:
+        # Silently keeping the old file while printing the requested values
+        # would be worse than refusing: the operator believes the relay is
+        # now internet-facing (or loopback-only) when nothing changed.
+        raise SystemExit(
+            f"{settings.config_path} already exists; {', '.join(requested)} would not be written. "
+            "Re-run with --force to rewrite the config, or edit the file."
+        )
     created_config = settings.write_config_file(force=args.force)
     token = settings.resolve_bearer_token()
     token_created = False
@@ -1846,6 +1892,16 @@ def _run_claude_logout(args: argparse.Namespace) -> None:
             print(f"Signed out Claude account {outcome['slug']}.")
 
 
+def _usd(value: object) -> str:
+    """$4, $1.25, $0.20, $0.075: whole dollars bare, cents kept."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "?"
+    if float(value).is_integer():
+        return f"${value:.0f}"
+    whole, _, cents = f"{value:.3f}".rstrip("0").partition(".")
+    return f"${whole}.{cents.ljust(2, '0')}"
+
+
 def _run_models(args: argparse.Namespace) -> None:
     """Lists model ids from the running relay — the same list the desktop
     Models tab shows, one source of truth for what the endpoint accepts."""
@@ -1894,10 +1950,18 @@ def _run_models(args: argparse.Namespace) -> None:
             resolved = extension.get("resolved_model")
             if resolved and resolved != model.get("id"):
                 suffix += f"  resolves to: {resolved}"
+            pricing = extension.get("pricing")
+            if isinstance(pricing, dict):
+                suffix += (
+                    f"  list price: {_usd(pricing.get('input_per_million'))} in"
+                    f" / {_usd(pricing.get('output_per_million'))} out per 1M"
+                )
             print(f"  {str(model.get('id')).ljust(width)}{suffix}")
     print()
     print("  Use these ids as `model` in requests to the endpoint above.")
     print("  Set `reasoning_effort` to one of the listed reasoning modes.")
+    print("  List prices are the providers' pay-as-you-go API rates, shown only as a")
+    print("  relative cost indicator: subscription requests are not billed per token.")
     print()
 
 
@@ -2059,6 +2123,15 @@ def build_parser() -> argparse.ArgumentParser:
             "login is still required"
         ),
     )
+    serve.add_argument(
+        "--network-scope",
+        choices=("loopback", "private", "any"),
+        default=None,
+        help=(
+            "Which client addresses may connect: this machine, private networks "
+            "(default), or anyone on the internet (requires bearer auth)"
+        ),
+    )
     serve.set_defaults(func=_run_serve)
 
     logs = subparsers.add_parser(
@@ -2100,6 +2173,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--show-token",
         action="store_true",
         help="Reveal the current relay token even when it was already present",
+    )
+    init.add_argument("--host", default=None, help="Listener address to write (127.0.0.1 or 0.0.0.0)")
+    init.add_argument("--port", type=int, default=None, help="Listener port to write")
+    init.add_argument(
+        "--network-scope",
+        choices=["loopback", "private", "any"],
+        default=None,
+        help=(
+            "Which client addresses may connect: this machine, private networks "
+            "(default), or anyone on the internet (requires bearer auth; refused with --no-auth)"
+        ),
     )
     init.set_defaults(func=_run_init)
 

@@ -1,22 +1,27 @@
 # AIRelays
 
-AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes. The default runtime uses an AIRelays-owned ChatGPT subscription login and balances requests across multiple of your own OpenAI accounts by default; it also serves image generation and edits (`/v1/images/generations`, `/v1/images/edits`, `gpt-image-2`) on that subscription. The Claude runtime balances your own subscriptions through AIRelays-owned local `claude` CLI profiles (never your personal Claude Code sign-in) for `claude:*` and `claude-*` models, with chat, completions and Responses, images, files, conversations and tool calls (see docs/capabilities.md). AIRelays protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default and can run all enabled providers in open local relay mode. A cross-platform desktop app (macOS, Windows, Linux) wraps the same relay with a system tray and dashboard.
+AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes. The default runtime uses an AIRelays-owned ChatGPT subscription login and balances requests across multiple of your own OpenAI accounts by default; it also serves image generation and edits (`/v1/images/generations`, `/v1/images/edits`, `gpt-image-2`) on that subscription. The Claude runtime balances your own subscriptions through AIRelays-owned local `claude` CLI profiles (never your personal Claude Code sign-in) for `claude:*` and `claude-*` models, with chat, completions and Responses, images, files, conversations and tool calls (see docs/capabilities.md). AIRelays protects `/v1/*` and `/no-tools/v1/*` with its own relay bearer token by default and can run all enabled providers in open local relay mode. `[security] network_scope` (`loopback`, `private` default, `any`) decides which client addresses may connect at all. A cross-platform desktop app (macOS, Windows, Linux) wraps the same relay with a system tray and dashboard.
 
 ## Key Docs
 
 - [README.md](README.md): overview, install (CLI and desktop), quick start, compatibility layer
 - [docs/getting-started.md](docs/getting-started.md): setup, custom CLI configuration, multi-account sign-in, verification
-- [docs/configuration.md](docs/configuration.md): config file shape, environment overrides, and traffic-log retention
-- [docs/security.md](docs/security.md): relay auth, open local relay mode, Claude guardrails, desktop update integrity
+- [docs/configuration.md](docs/configuration.md): config file shape, listener and network scope, environment overrides, and traffic-log retention
+- [docs/security.md](docs/security.md): relay auth, who can connect (`network_scope`) and internet setup, open local relay mode, Claude guardrails, desktop update integrity
 - [docs/capabilities.md](docs/capabilities.md): what works on GPT models and on Claude models, side by side
-- [docs/api.md](docs/api.md): routes, compatibility adaptations, provider limits
-- [docs/architecture.md](docs/architecture.md): request flow and module boundaries
+- [docs/api.md](docs/api.md): routes, compatibility adaptations, model metadata and reference pricing, errors, provider limits
+- [docs/architecture.md](docs/architecture.md): components, request admission pipeline, request flow, module boundaries
 - [docs/subscription-status.md](docs/subscription-status.md): usage reporting for OpenAI and Claude, desktop account details via **?**
 - [docs/faq.md](docs/faq.md): common questions and limits
 - [docs/troubleshooting.md](docs/troubleshooting.md): symptoms, causes, fixes
 - [docs/adr/README.md](docs/adr/README.md): durable design decisions
-- [desktop/README.md](desktop/README.md): combined connection/access card, hide-on-blur dashboard, tray controls, About page and in-place updates, build, supervision
+- [desktop/README.md](desktop/README.md): Connect card with who-can-connect and **Try it** examples, Models table with prices, Traffic detail, tray menu (Copy Address), About page and in-place updates, build, supervision
 - [DISCLAIMER.md](DISCLAIMER.md): independence and intended use
+- [docs/README.md](docs/README.md): index of every documentation page
+
+## Agent Skill
+
+- [skills/airelays/SKILL.md](skills/airelays/SKILL.md): agent skill that teaches agents to install, run and call AIRelays (CLI and HTTP API), with its limits, sharp edges and error fixes
 
 ## Install
 
@@ -27,10 +32,11 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 ## Main Commands
 
-- `airelays init` / `airelays init --no-auth`
+- `airelays init` / `airelays init --no-auth` / `airelays init --host 0.0.0.0 --network-scope any` (writes a new config; `--force` rewrites one)
 - `airelays login` (additive; repeat to enroll more accounts) / `airelays login --device` (headless)
 - `airelays logout <email>` / `airelays accounts` (list, order, refresh, resets, redeem)
-- `airelays serve` / `airelays serve --no-auth`
+- `airelays serve` / `airelays serve --no-auth` / `airelays serve --host 0.0.0.0 --network-scope private|any` / `--balance <strategy>`
+- `airelays balance [strategy] [--provider claude]` (switch account balancing on the running relay)
 - `airelays status` / `airelays doctor` / `airelays models` / `airelays usage` / `airelays logs`
 - `airelays token show` / `airelays token rotate`
 - `airelays claude set-token` (optional headless setup token; account `default`, inference-only)
@@ -42,6 +48,11 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 - Shared CLI options (`--config`, `--data-dir`, `--logs-dir`, `--auth-storage`, `--bearer-token-file`) work before or after subcommands; a later explicit value wins. `--auth-storage` is accepted for compatibility only.
 - Sign-ins (OpenAI, relay token, Claude setup token) are owner-only files in the data directory on every OS; AIRelays does not use the OS keychain. OpenAI sign-ins that 0.16.0 or earlier kept in the keychain need a new sign-in (`airelays doctor` lists them under `openai_keyring_sign_ins`).
+
+- Who can connect: `[security] network_scope` (`AIRELAYS_NETWORK_SCOPE`, `airelays serve --network-scope`, `airelays init --network-scope`) is `loopback`, `private` (default: loopback, RFC 1918, CGNAT 100.64/10, link-local, IPv6 ULA and link-local) or `any`. It is checked on every route before rate limits and auth; refused clients get 403 `client_not_on_private_network` or `client_not_on_this_machine`. A loopback listener (CLI default `127.0.0.1`) always enforces `loopback`. `any` requires `require_bearer_auth = true` (refused with `--no-auth`). With `trust_x_forwarded_for = true` the scope applies to the first `X-Forwarded-For` address. `airelays init`/`status` print it as **Who can connect**; `/v1/relay/status` reports `relay.network_scope`, `relay.effective_network_scope` and `security.network_scope`. Internet use needs router port forwarding and a TLS reverse proxy or VPN (see docs/security.md).
+- Desktop: **Anyone on the internet** asks for confirmation, turns the API key on and disables **Open (no key)**; the Connect card and the tray's **Copy Address** submenu then show the public address (looked up from api.ipify.org, then checkip.amazonaws.com, only in that scope). The **Try it** panel shows curl, Python, JavaScript/TypeScript and Rust examples for the cheapest priced chat model, with the key masked on screen and included by Copy. Tray: left click opens the dashboard and right click the menu on macOS and Windows; on Linux every click opens the menu.
+- `/v1/models` entries carry `airelays.pricing` (provider API list price in USD per 1M tokens: input, cached input, output, `matched_family`, `source`, `as_of`, `cost_tier`) or `null` when unpublished; `airelays models` prints it. Subscription requests are not billed per token, so it is only a relative cost indicator.
+- Default per-IP limits: 120 requests/minute, burst 40, 50 concurrent requests, temporary block after repeated bad tokens. `GET /healthz` is public (scope still applies) and returns the relay version.
 
 - Traffic logs default to 7 days, 1024 MiB total, and hourly/50 MiB rotation. `airelays logs`, GET/PUT `/v1/relay/logging`, and tray Settings inspect or change the saved policy; see `docs/configuration.md` for limits and permanent-deletion behavior.
 

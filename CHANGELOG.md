@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.22.0
+
+### Added
+
+- Desktop: the tray menu has a **Copy Address** submenu listing every URL
+  the relay answers at (the local endpoint and each private-network
+  address); clicking one copies it to the clipboard and confirms with a
+  notification. Wi-Fi or settings changes refresh the list.
+- A third access level, **Anyone on the internet**. The relay enforces a new
+  `[security] network_scope` setting (`AIRELAYS_NETWORK_SCOPE`,
+  `airelays serve --network-scope`): `loopback`, `private` (default: loopback,
+  RFC 1918, CGNAT 100.64/10, link-local, IPv6 ULA) or `any`. Clients outside
+  the scope get a 403 before rate limits and auth, on every path. `any`
+  refuses to start without `require_bearer_auth = true`. The dashboard asks
+  for confirmation with an explicit warning (router forwarding, quota
+  exposure, plain HTTP without TLS), switches auth to Protected in the same
+  change, and disables **Open (no key)** while internet access is on.
+  `airelays init --host 0.0.0.0 --network-scope any` configures a headless
+  relay for internet use (refused together with `--no-auth`); `airelays
+  init`, `airelays status` and `/v1/relay/status` report the scope as
+  **Who can connect**, and the suggested serve command carries it. While internet
+  access is on, the Connect card and the tray's **Copy Address** submenu
+  also list the machine's public address (looked up from api.ipify.org,
+  then checkip.amazonaws.com, only in that scope; re-checked every ten
+  minutes, a failed lookup after one minute); clients reach it once the
+  router forwards the port.
+- Desktop: a **Try it** panel beside the Connect card with curl, Python,
+  JavaScript/TypeScript and Rust examples for one chat completion against
+  the chosen address (Local, LAN or Internet) and the cheapest chat model in
+  the catalog (lowest published output price, then input price).
+  The key is masked on screen; the panel's Copy button copies the example
+  with the real key. The curl example carries no comment lines, so it pastes
+  into an interactive zsh unchanged. The Internet note explains port
+  forwarding and NAT loopback when the public address refuses connections.
+- Models: `/v1/models` carries `airelays.pricing` (input, cached input and
+  output USD per 1M tokens, source and date) from a small static table of
+  the providers' published API list prices; `airelays models` prints it.
+  Subscription requests are not billed per token, so the price is only a
+  relative cost indicator; models without a published price carry `null`.
+- An agent skill, [`skills/airelays`](skills/airelays/SKILL.md), teaches AI
+  agents to install, run and call the relay (see "For AI agents" in the
+  README).
+
+### Changed
+
+- Desktop: on macOS and Windows, left click on the tray icon always opens
+  the dashboard and right click opens the menu, including on macOS 27.
+  A window brought forward by a tray click
+  is no longer hidden by the blur that click causes. Linux keeps the
+  AppIndicator behavior: every click opens the menu, which starts with
+  **Open Dashboard**.
+- Desktop: the Models tab is one table per provider with Model, Accounts
+  (coverage bar), Reasoning (default mode highlighted), Structured output,
+  Cost / 1M and Notes columns; rows are keyboard navigable and the table
+  fits the 760 px minimum width.
+- Desktop: in Traffic, a selected request stays selected and readable while
+  new requests arrive: its detail is rewritten only when its content changes,
+  the table keeps its scroll position, and a request that leaves the recent
+  list keeps its cached detail with a note. The detail card has a hover copy
+  button.
+- Desktop: `set_network_exposure` is replaced by `set_network_scope`
+  (`loopback` / `private` / `any`); the old command remains as a shim.
+  Settings files without `networkScope` load as `private`.
+
 ## 0.21.0
 
 ### Added

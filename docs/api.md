@@ -1,6 +1,20 @@
 # API Notes
 
-## Traffic log retention API
+Every route below answers only clients inside the relay's
+[network scope](security.md#who-can-connect); others get `403` (see
+[Errors](#errors)). `/v1/*` and `/no-tools/v1/*` also need the relay token
+unless the relay runs in open mode. For setup, see
+[Getting Started](getting-started.md); for how a request flows through the
+relay, see [Architecture](architecture.md).
+
+## `GET /healthz`
+
+Public (no relay token), but subject to the network scope. Returns
+`{"ok": true, "app_name": "AIRelays", "version": "X.Y.Z"}` with the running
+relay's version. It does not check provider sign-ins; use
+`GET /v1/relay/status` or `airelays doctor` for readiness.
+
+## `GET`/`PUT /v1/relay/balance`
 
 `GET /v1/relay/balance` returns the account-routing strategy of each provider pool
 (`openai`, `claude`) and the accepted names; `PUT /v1/relay/balance` with
@@ -8,6 +22,8 @@
 strategy for the next request, no restart (runtime only: the config file and
 `AIRELAYS_*_BALANCE` still decide the next start; 422 on an unknown name).
 `airelays balance [strategy] [--provider claude]` is the CLI front for both.
+
+## Traffic log retention API
 
 `GET /v1/relay/logging` returns current policy and disk usage without deleting
 logs. `PUT /v1/relay/logging` validates, persists and applies a partial policy
@@ -205,6 +221,9 @@ Returns an OpenAI-style models list built from the enabled provider runtimes.
 - Configured OpenAI `extra_models` and Claude `models` extend discovery. They are retained for compatibility and may not have catalog confirmation. A missing or incompatible Claude CLI retains configured ids and the last successful catalog; `providers.claude.models_discovery_error` in relay status reports discovery failures. Failed Claude probes are cached for the same interval to avoid repeatedly launching a failing CLI.
 - With several OpenAI accounts, discovery returns the union of successful catalogs and preserves each model's metadata. `airelays.account_availability` reports `supported` and `total` account counts without disclosing account identities. A failed account catalog does not hide models returned by other accounts. Routing retains last-known membership during catalog outages rather than broadening a known subset.
 - `airelays.catalog_visibility` and `airelays.description` preserve upstream metadata. Entries marked `hide` appear as **upstream-hidden** in the desktop; AIRelays does not infer their underlying identity or promote them as recommended models.
+- `airelays.pricing` is a reference to the provider's published pay-as-you-go API list price, or `null` when none is published for that model (codename-only or upstream-hidden catalog entries, for example). It carries `input_per_million`, `cached_input_per_million` (null when not published), `output_per_million`, `currency` (`USD`), `unit` (`per_million_tokens`), `as_of` (the date the price was checked), `source` (the pricing page), `matched_family` (the priced model id it matched), `basis` (tier and context notes, such as the short-context rate) and `cost_tier` (1 to 5 by output price). A model id matches its own entry or a dated snapshot of it (`claude-haiku-4-5-20251001` → `claude-haiku-4-5`); `claude:*` aliases are priced through `resolved_model`, and other variants get no price rather than a sibling's.
+
+  These prices are **not** what a relay request costs. AIRelays runs on subscription quota, and subscription plans are not billed per token; the list price is only a relative cost indicator between models. The table is static in `airelay.model_pricing`, checked on the OpenAI and Anthropic pricing pages on 2026-10-25, and changes only with a release. The desktop Models tab shows it as **Cost / 1M** (input / output, "—" when `null`) and `airelays models` prints it; the desktop's **Try it** examples default to the chat model with the lowest output price, then input price.
 - Catalog discovery reports provider availability and capabilities; it does not generate a test response for every model. Account limits and upstream availability still apply when serving a request.
 
 `GET /v1/models/{model}` returns that model's entry from the list (ids match
@@ -380,6 +399,11 @@ the relay's own image count for the window; `image_limited` and
 `image_limited_for_seconds` appear while an account's image bucket is
 benched (text requests are unaffected).
 
+`relay.network_scope` is the configured [network scope](security.md#who-can-connect),
+and `relay.effective_network_scope` and `security.network_scope` the scope the
+relay enforces (`loopback` whenever it listens on a loopback address).
+`security` also reports the rate limits and the calling client's allowance.
+
 `GET /v1/relay/status?activity_only=true` returns only
 `{"requests_total": N}`. It requires the same authentication as the full
 status, but it does not scan storage or probe providers, is not itself
@@ -393,13 +417,16 @@ account and provider, text windows and the image-generation quota alike
 (`--json` for the raw payloads).
 
 `airelays status` reports local config, relay-token, and provider readiness
-state. `airelays doctor` runs the same local checks and also probes the OpenAI
+state, and the enforced network scope as **Who can connect** (`airelays init`
+prints the same line). `airelays doctor` runs the same local checks and also probes the OpenAI
 upstream `/models` route plus a tiny `/responses` smoke request when the OpenAI
 runtime is enabled and logged in, and reports a `CLAUDE_CODE_OAUTH_TOKEN` set in
 the relay's environment, which AIRelays ignores. Use
 `airelays doctor --skip-response` to skip the response smoke request.
 `airelays models` lists every model id the running relay accepts, grouped by
-provider (`--json` supported). `airelays accounts resets` shows each OpenAI
+provider, with reasoning modes, structured-output types, alias resolutions and,
+for priced models, `list price: $X in / $Y out per 1M` (`--json` prints the raw
+`/v1/models` payload). `airelays accounts resets` shows each OpenAI
 account's usage resets and `airelays accounts redeem <email>` spends one
 through the running relay (see the two `/v1/relay/accounts/resets` routes
 above; `--yes` skips the confirmation, `--credit <id>` picks a credit).
@@ -679,6 +706,15 @@ for existing AIRelays clients:
   parameters and features return 422 (see ADR 0001)
 - a Claude answer in `json_object` mode that is not one JSON object returns
   502 `invalid_json_output`; retrying usually helps, or use `json_schema`
+- a client outside the relay's [network scope](security.md#who-can-connect)
+  gets 403 with type `permission_error` and code
+  `client_not_on_private_network` (scope `private`) or
+  `client_not_on_this_machine` (scope `loopback`), on every route and before
+  rate limits and auth (see
+  [Troubleshooting](troubleshooting.md#403-client_not_on_private_network-or-client_not_on_this_machine))
+- a missing or wrong relay token returns 401 `invalid_api_key`; repeated bad
+  tokens from one IP return 429 `ip_temporarily_blocked`, and per-IP limits
+  return 429 `rate_limit_exceeded` or `too_many_concurrent_requests`
 - a quota or cooldown rejection returns 429 with a `Retry-After` header when
   the reset time is known (OpenAI SDKs then wait, or stop retrying when the
   reset is more than two minutes away); a Claude CLI that is not signed in

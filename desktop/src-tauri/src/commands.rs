@@ -47,6 +47,12 @@ pub struct UiState {
     pub relay_status: Option<Value>,
     pub local_endpoint: String,
     pub lan_endpoints: Vec<String>,
+    /// `http://<public ip>:<port>/v1` while the scope is "any" and the
+    /// lookup succeeded; None otherwise. Reaching it needs a router port
+    /// forward, which this app cannot see.
+    pub public_endpoint: Option<String>,
+    /// True while the first public-IP lookup for the "any" scope runs.
+    pub public_ip_pending: bool,
     pub config_path: String,
     pub logs_dir: String,
     /// The running app version (from the compiled package info), so every
@@ -56,12 +62,30 @@ pub struct UiState {
 
 // MARK: internal helpers shared with the tray
 
+/// Brings the dashboard forward. Never toggles: a visible but unfocused
+/// window is focused, not hidden.
 pub fn show_dashboard(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        mark_dashboard_shown();
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+/// Monotonic time of the last show_dashboard. The hide-on-blur check runs
+/// 120 ms after a blur; on macOS an accessory app's window becomes key
+/// asynchronously, so a blur from the tray click itself could otherwise
+/// hide the window this click just asked to show.
+static DASHBOARD_SHOWN_AT: Mutex<Option<Instant>> = Mutex::new(None);
+const DASHBOARD_SHOW_GRACE: Duration = Duration::from_millis(600);
+
+fn mark_dashboard_shown() {
+    *robust_lock(&DASHBOARD_SHOWN_AT) = Some(Instant::now());
+}
+
+pub fn dashboard_recently_shown() -> bool {
+    robust_lock(&DASHBOARD_SHOWN_AT).is_some_and(|at| at.elapsed() < DASHBOARD_SHOW_GRACE)
 }
 
 pub fn start_relay_blocking(app: &AppHandle) -> Result<u32, String> {
@@ -107,8 +131,17 @@ fn apply_settings_change(
     let state = app.state::<AppState>();
     let settings = {
         let mut settings = robust_lock(&state.settings);
-        mutate(&mut settings);
-        settings.clone()
+        // Validate the mutated copy before committing: a refused change
+        // (e.g. open auth while anyone on the internet may connect) must
+        // leave the saved settings untouched, not half-applied.
+        let mut next = settings.clone();
+        mutate(&mut next);
+        if let Err(error) = next.validate() {
+            state.supervisor.log("config", &error, true);
+            return Err(error);
+        }
+        *settings = next.clone();
+        next
     };
     let result = state
         .persist_settings()
@@ -135,25 +168,52 @@ pub fn apply_auth_mode_blocking(app: &AppHandle, require_token: bool) -> Result<
     Ok(())
 }
 
-pub fn apply_network_exposure_blocking(app: &AppHandle, exposed: bool) -> Result<(), String> {
-    apply_settings_change(
-        app,
-        if exposed {
-            "Listener: all interfaces (private network can connect)."
-        } else {
-            "Listener: loopback only (this machine)."
-        },
-        |settings| {
-            settings.host = if exposed { "0.0.0.0".into() } else { "127.0.0.1".into() };
-        },
-    )?;
+/// Who can connect: "loopback" (this machine), "private" (devices on
+/// private networks) or "any" (anyone who reaches the port). "any" turns
+/// the API key on in the same settings change: the relay refuses to load
+/// internet exposure with open auth, so the two can never disagree.
+pub fn apply_network_scope_blocking(app: &AppHandle, scope: &str) -> Result<(), String> {
+    if !matches!(scope, "loopback" | "private" | "any") {
+        return Err(format!("Unknown network scope '{scope}': use loopback, private, or any."));
+    }
+    let was_open = !robust_lock(&app.state::<AppState>().settings).require_bearer_auth;
+    let note = match scope {
+        "loopback" => "Listener: loopback only (this machine).".to_string(),
+        "private" => "Listener: all interfaces; only private-network addresses may connect.".to_string(),
+        _ if was_open => "Listener: all interfaces; anyone on the internet may connect. Auth mode switched to protected: the API key is required.".to_string(),
+        _ => "Listener: all interfaces; anyone on the internet may connect (API key required).".to_string(),
+    };
+    let scope = scope.to_string();
+    apply_settings_change(app, &note, move |settings| {
+        settings.host = if scope == "loopback" { "127.0.0.1".into() } else { "0.0.0.0".into() };
+        if scope == "any" {
+            settings.require_bearer_auth = true;
+        }
+        settings.network_scope = scope;
+    })?;
+    // Fresh lookup on entering "any", cleared cache on leaving it.
+    crate::public_ip::reset(app);
     restart_if_managed_blocking(app);
     Ok(())
 }
 
+/// Every address a client can use for this relay: the local endpoint first,
+/// then one per private-network interface when the listener is reachable
+/// beyond this machine. Shared by the dashboard and the tray menu.
+pub(crate) fn lan_endpoints(settings: &AppSettings) -> Vec<String> {
+    if settings.effective_network_scope() == "loopback" {
+        return Vec::new();
+    }
+    let port = settings.port;
+    lan_addresses()
+        .into_iter()
+        .map(|ip| format!("http://{ip}:{port}/v1"))
+        .collect()
+}
+
 /// Interface enumeration is not free; cache briefly since the dashboard
 /// polls every 1.5 s.
-fn lan_addresses() -> Vec<String> {
+pub(crate) fn lan_addresses() -> Vec<String> {
     static CACHE: Mutex<Option<(Instant, Vec<String>)>> = Mutex::new(None);
     let mut cache = robust_lock(&CACHE);
     if let Some((at, addresses)) = cache.as_ref() {
@@ -282,8 +342,9 @@ fn concise_error(output: &str) -> String {
 pub fn get_state(app: AppHandle) -> UiState {
     let state = app.state::<AppState>();
     let settings = robust_lock(&state.settings).clone();
-    let port = settings.port;
     let relay_status = robust_lock(&state.relay_status).clone();
+    // Never blocks: reads the cache and at most starts a background lookup.
+    let (public_endpoint, public_ip_pending) = crate::public_ip::endpoint(&app, &settings);
     let ui_state = UiState {
         lifecycle: state.lifecycle(),
         // Debounced /healthz liveness — deliberately NOT derived from the
@@ -299,14 +360,9 @@ pub fn get_state(app: AppHandle) -> UiState {
         claude_effective: settings.claude_effectively_enabled(),
         claude_token_present: AppSettings::data_dir().join("claude-token").exists(),
         local_endpoint: settings.base_url(),
-        lan_endpoints: if settings.is_loopback_host() {
-            Vec::new()
-        } else {
-            lan_addresses()
-                .into_iter()
-                .map(|ip| format!("http://{ip}:{port}/v1"))
-                .collect()
-        },
+        lan_endpoints: lan_endpoints(&settings),
+        public_endpoint,
+        public_ip_pending,
         relay_status,
         config_path: AppSettings::relay_config_path().to_string_lossy().into_owned(),
         logs_dir: AppSettings::logs_dir().to_string_lossy().into_owned(),
@@ -379,10 +435,17 @@ pub async fn set_auth_mode(app: AppHandle, require_token: bool) -> Result<(), St
 }
 
 #[tauri::command]
-pub async fn set_network_exposure(app: AppHandle, exposed: bool) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || apply_network_exposure_blocking(&app, exposed))
+pub async fn set_network_scope(app: AppHandle, scope: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || apply_network_scope_blocking(&app, &scope))
         .await
         .map_err(|error| error.to_string())?
+}
+
+/// Pre-0.21 dashboards' boolean toggle: exposed means "devices on my
+/// network" (the old wording), never internet access.
+#[tauri::command]
+pub async fn set_network_exposure(app: AppHandle, exposed: bool) -> Result<(), String> {
+    set_network_scope(app, if exposed { "private" } else { "loopback" }.into()).await
 }
 
 /// Whether the app is registered to start at login (OS state, not a

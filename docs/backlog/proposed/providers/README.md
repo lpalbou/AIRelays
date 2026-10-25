@@ -18,3 +18,6 @@ Promote to `planned/` only when evidence shows urgency.
   own framing is "may be useless, except to simplify key management, which may or
   may not be a good thing"; requires a new ADR amending ADR 0002 before any
   implementation.
+- [0028_disclose_dropped_content_part_fields.md](0028_disclose_dropped_content_part_fields.md):
+  content-part fields the relay drops (e.g. Anthropic `cache_control`) are listed in
+  `x-airelays-ignored-parameters` like top-level ones; per-runtime prompt-caching docs.

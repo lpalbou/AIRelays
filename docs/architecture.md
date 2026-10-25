@@ -15,7 +15,7 @@ flowchart LR
     Client["OpenAI-compatible client"] -->|"bearer token"| Edge
 
     subgraph Relay["AIRelays (local)"]
-        Edge["FastAPI edge\nauth · rate limits · traffic log"] --> Registry["Provider registry\nmodel id → runtime"]
+        Edge["FastAPI edge\nnetwork scope · rate limits · auth · traffic log"] --> Registry["Provider registry\nmodel id → runtime"]
         Registry -->|"other model ids"| Retry["Retry layer\nexponential backoff\npre-first-byte only"]
         Retry --> Pool["OpenAI account pool\nbalanced selection · benching · failover"]
         Registry -->|"claude:* model ids"| ClaudePool["Claude account pool\ncapacity · cooldown · failover"]
@@ -33,7 +33,10 @@ flowchart LR
 ## Request Flow
 
 1. FastAPI receives an OpenAI-shaped request.
-2. Middleware enforces relay auth and local abuse controls.
+2. Middleware admits it in a fixed order (see the diagram below): the
+   [network scope](security.md#who-can-connect) first, on every route; then,
+   for `/v1/*` and `/no-tools/v1/*`, the temporary bad-token block, the
+   per-IP concurrency and rate limits, and relay bearer auth.
 3. AIRelays resolves the request model id to a provider runtime.
    OpenAI model admission uses the account-scoped upstream catalog; catalog
    requests follow the installed Codex version in automatic mode. Claude
@@ -47,6 +50,26 @@ flowchart LR
 6. If every account fails, the retry layer waits an exponential backoff (`retry_attempts`, default 3 retries at 5s/20s/60s) and re-runs the whole pool pass — again only while no response byte has reached the client. Quota errors whose reset lies beyond the backoff budget return immediately.
 7. The selected runtime returns streamed or aggregated output in the matching OpenAI-shaped envelope; failures return OpenAI-shaped error JSON with the upstream's own reason, and failures after streaming started surface in-band.
 8. AIRelays logs the request, runtime selection, account selection, retries, and result.
+
+```mermaid
+flowchart TD
+    Req["Incoming request"] --> Scope{"Client address inside\nnetwork_scope?\n(loopback · private · any)"}
+    Scope -->|"no"| R403["403 client_not_on_private_network\nor client_not_on_this_machine"]
+    Scope -->|"yes"| Path{"/v1/* or /no-tools/v1/*?"}
+    Path -->|"no: /, /healthz"| Public["Public page or health check"]
+    Path -->|"yes"| Block{"IP blocked after\nrepeated bad tokens?"}
+    Block -->|"yes"| R429a["429 ip_temporarily_blocked"]
+    Block -->|"no"| Limits{"Within per-IP concurrency\nand rate limits?"}
+    Limits -->|"no"| R429b["429 too_many_concurrent_requests\nor rate_limit_exceeded"]
+    Limits -->|"yes"| Auth{"Relay token valid,\nor open mode?"}
+    Auth -->|"no"| R401["401 invalid_api_key"]
+    Auth -->|"yes"| Registry["Provider registry\nmodel id → runtime"]
+```
+
+Every rejection is written to the traffic log as an `endpoint_rejected`
+record. A loopback listener always enforces the `loopback` scope; with
+`trust_x_forwarded_for = true` the client address is the first
+`X-Forwarded-For` hop.
 
 Claude selection uses available account slots, fresh weekly usage, and known
 model-specific limits. Without fresh usage, eligible accounts rotate. A CLI
@@ -144,106 +167,137 @@ they do not establish support on an unknown account.
 
 ## Main Components
 
-### `airelays.config`
+The implementation lives in the `airelay` package; the `airelays` package
+re-exports several of its modules under the distribution name.
+
+### `airelay.config`
 
 - config resolution
 - local paths
 - relay token state
+- the listener and `network_scope`, with the effective scope and the
+  "`any` requires bearer auth" guardrail
 - provider toggles and runtime guardrails
 
-### `airelays.private_io`
+### `airelay.private_io`
 
 - owner-only directories and atomically replaced owner-only files, the same
   way on every OS (ADR 0008)
 - the cross-process lock that serializes OpenAI token refreshes
 
-### `airelays.security`
+### `airelay.security`
 
+- network-scope check on every route (private ranges spelled out, IPv4-mapped
+  IPv6 normalized)
 - relay bearer auth
 - per-IP limits
 - temporary bad-token blocks
 
-### `airelays.auth`
+### `airelay.auth`
 
 - AIRelays-owned OpenAI subscription auth
 - browser and device login
 - token refresh
 
-### `airelays.accounts`
+### `airelay.accounts`
 
 - multi-account discovery and storage slots
-- balanced account selection (capacity-aware default; round-robin and ordered opt-ins)
+- account selection: `balanced` (capacity-aware default), `weighted`, `round_robin`, `ping_pong`, and `ordered`
 - usage-limit benching with evidence-gated release
 - cached, single-flighted usage probes with a background refresher
 - account failover and launch-time capacity/model warm-up
 
-### `airelays.backend`
+### `airelay.backend`
 
 - OpenAI runtime HTTP calls to the verified ChatGPT backend
 - structured errors for upstream HTTP, transport, and in-stream failures
 
-### `airelays.retry`
+### `airelay.retry`
 
 - automatic retry with exponential backoff for failed OpenAI upstream calls
 - runs only while no response byte has reached the client
 - skips retries a quota reset horizon proves futile; stops for disconnected clients
 
-### `airelays.providers`
+### `airelay.providers`
 
 - provider registry
 - provider model catalogs
 - provider readiness
 - Claude runtime
 
-### `airelays.claude_launch`
+### `airelay.model_pricing`
+
+- the static table of providers' published API list prices behind
+  `airelays.pricing` in `/v1/models` (exact ids and dated snapshots only; no
+  price is inferred from a sibling model)
+
+### `airelay.claude_launch`
 
 - one launcher for every `claude` process: resolution, child environment,
   argument limits, and per-OS process flags (no console windows on Windows)
 
-### `airelays.transforms`
+### `airelay.transforms`
 
 - OpenAI runtime request and response translation
 - unknown-parameter disclosure and output-token limits for both runtimes
 
-### `airelays.media`
+### `airelay.media`
 
 - the image and document check shared by both runtimes (format sniffing,
   size caps)
 
-### `airelays.claude_content`
+### `airelay.claude_content`
 
 - chat messages as the single transcript message a Claude CLI run receives,
   with images and documents in place
 
-### `airelays.chat_responses`
+### `airelay.chat_responses`
 
 - `/v1/responses` on top of the Claude chat path: request translation,
   Responses objects and stream events, and conversation item conversion
 
-### `airelays.conversations`
+### `airelay.conversations`
 
 - conversation history: prepended to each turn and recorded once a turn
   succeeds, for both runtimes
 
-### `airelays.claude_tool_stub` and `airelays.claude_tool_guard`
+### `airelay.claude_tool_stub` and `airelay.claude_tool_guard`
 
 - the tool helper that describes client tools to the Claude CLI and runs
   nothing, and the pre-execution check that denies every client tool call
 
-### `airelays.store`
+### `airelay.store`
 
 - local files
 - local conversation state (shared by both runtimes)
 
-### `airelays.traffic`
+### `airelay.traffic`
 
 - redacted JSONL logging
 - hourly and size rotation, age/total-size retention, and visible storage errors
-- shared policy persistence and process locking in `airelays.log_retention`
+- shared policy persistence and process locking in `airelay.log_retention`
 
 The relay owns retention; CLI and tray/API controls use the same saved policy.
 See [the retention decision](adr/0005-bounded-traffic-log-retention.md) for
 ownership, alternatives, migration, and operating limits.
+
+## Desktop App
+
+The desktop app ([desktop/README.md](../desktop/README.md)) is a Tauri shell
+around the same relay: its Rust core renders `config.toml` (including
+`[security] network_scope` from the **Who can connect** selector), supervises
+the `airelays serve` process, owns the tray menu (**Copy Address** lists the
+local, LAN and, in the `any` scope, public addresses), and looks up the
+public address only in the `any` scope. The dashboard is a web UI that calls
+the core, which reads status, models, usage and logs from the relay's HTTP API.
+
+```mermaid
+flowchart LR
+    UI["Dashboard (web UI)\nConnect card · Try it · Models · Traffic"] -->|"commands"| Core["Rust core\nsettings · supervision · tray"]
+    Core -->|"renders config.toml · starts / restarts\nHTTP API with relay token"| Relay["airelays serve\n(embedded runtime)"]
+    Core -->|"public IP lookup\nscope any only"| Echo["api.ipify.org →\ncheckip.amazonaws.com"]
+    Core --> Tray["Tray menu\nOpen Dashboard · Copy Address · Start/Stop"]
+```
 
 ## State Model
 
@@ -265,3 +319,7 @@ Claude runtime:
 - no silent truncation
 - no fake token budgets
 - no reuse of upstream subscription auth as relay-client auth
+
+See [API Notes](api.md) for the routes, [Security](security.md) for the
+access model, and the [ADR index](adr/README.md) for the decisions behind
+these boundaries.

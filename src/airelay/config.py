@@ -95,6 +95,23 @@ def _normalized_balance(value: Any, provider: str = "openai") -> str:
     )
 
 
+NETWORK_SCOPES = ("loopback", "private", "any")
+
+
+def _normalized_network_scope(value: Any) -> str:
+    """Who may connect, validated like the balancing strategies: a typo
+    must fail at startup, never silently widen (or narrow) the audience."""
+    if value is None:
+        return "private"
+    text = str(value).strip().lower()
+    if text in NETWORK_SCOPES:
+        return text
+    raise ValueError(
+        f"Invalid [security] network_scope value {value!r}: "
+        "use \"loopback\", \"private\", or \"any\"."
+    )
+
+
 def _path(value: Any, default: Path) -> Path:
     if value is None:
         return default.expanduser()
@@ -215,6 +232,11 @@ class Settings:
     failed_auth_max_attempts: int = 8
     failed_auth_block_seconds: int = 900
     trust_x_forwarded_for: bool = False
+    # Which client addresses may use the relay: "loopback" (this machine),
+    # "private" (loopback, RFC 1918, CGNAT/Tailscale, link-local, IPv6 ULA)
+    # or "any" (the internet; requires bearer auth). A loopback listener
+    # implies "loopback" whatever this says.
+    network_scope: str = "private"
     max_upload_bytes: int = 32 * 1024 * 1024
     max_total_upload_bytes: int = 256 * 1024 * 1024
     # Log every raw upstream SSE line to the traffic log. Invaluable for
@@ -432,6 +454,10 @@ class Settings:
                 or _cfg(payload, "security", "trust_x_forwarded_for"),
                 False,
             ),
+            network_scope=_normalized_network_scope(
+                _env("AIRELAYS_NETWORK_SCOPE", "AIRELAY_NETWORK_SCOPE")
+                or _cfg(payload, "security", "network_scope")
+            ),
             max_upload_bytes=_int(
                 _env("AIRELAYS_MAX_UPLOAD_BYTES", "AIRELAY_MAX_UPLOAD_BYTES")
                 or _cfg(payload, "uploads", "max_upload_bytes"),
@@ -645,7 +671,28 @@ class Settings:
     def is_loopback_host(self) -> bool:
         return self.host in {"127.0.0.1", "localhost", "::1"}
 
+    def effective_network_scope(self) -> str:
+        """The scope actually enforced: a loopback listener can only ever be
+        reached from this machine, whatever `network_scope` says."""
+        if self.is_loopback_host():
+            return "loopback"
+        return self.network_scope
+
+    def validate_network_scope(self) -> None:
+        """Internet exposure without a key would hand the subscription to
+        anyone who finds the port: refuse to load such a config."""
+        _normalized_network_scope(self.network_scope)
+        if self.effective_network_scope() == "any" and not self.require_bearer_auth:
+            raise RuntimeError(
+                "`network_scope = \"any\"` (anyone on the internet) requires "
+                "`require_bearer_auth = true`: enable the API key, or limit "
+                "`network_scope` to \"private\" or \"loopback\"."
+            )
+
     def validate_provider_guardrails(self) -> None:
+        # Every load path (serve, init, doctor, create_app) runs this, so
+        # the network guardrail lives here too.
+        self.validate_network_scope()
         if not self.enable_claude:
             return
         if self.trust_x_forwarded_for:
@@ -695,6 +742,7 @@ failed_auth_window_seconds = {self.failed_auth_window_seconds}
 failed_auth_max_attempts = {self.failed_auth_max_attempts}
 failed_auth_block_seconds = {self.failed_auth_block_seconds}
 trust_x_forwarded_for = {str(self.trust_x_forwarded_for).lower()}
+network_scope = {_toml_str(self.network_scope)}
 
 [uploads]
 max_upload_bytes = {self.max_upload_bytes}
@@ -758,6 +806,8 @@ models = [{", ".join(_toml_str(model) for model in self.claude_models)}]
             "failed_auth_max_attempts": self.failed_auth_max_attempts,
             "failed_auth_block_seconds": self.failed_auth_block_seconds,
             "trust_x_forwarded_for": self.trust_x_forwarded_for,
+            "network_scope": self.network_scope,
+            "effective_network_scope": self.effective_network_scope(),
             "max_upload_bytes": self.max_upload_bytes,
             "max_total_upload_bytes": self.max_total_upload_bytes,
             "client_base_url": self.client_base_url(),

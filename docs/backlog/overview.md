@@ -7,8 +7,8 @@ AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provi
 ## Counts
 
 - Planned: 3
-- Proposed: 4
-- Completed: 11
+- Proposed: 5
+- Completed: 14
 - Deprecated: 1
 - Recurrent: 0
 
@@ -34,16 +34,20 @@ Planned track [cross-platform runtime](planned/platform/README.md) (ADR 0008): 0
 - [Provider runtimes](proposed/providers/README.md)
   - [0015_claude_token_shape_validation_on_set_token.md](proposed/providers/0015_claude_token_shape_validation_on_set_token.md)
   - [0018_metered_embeddings_capability_slice.md](proposed/providers/0018_metered_embeddings_capability_slice.md) — single opt-in API key for `/v1/embeddings` only; both subscriptions verifiably cannot produce embeddings. Value uncertain (possibly reduces to key-management centralization, a double-edged trade); promotion requires a new ADR amending ADR 0002, a demonstrated recurring need, and explicit rejection of the local/direct/sidecar alternatives.
+  - [0028_disclose_dropped_content_part_fields.md](proposed/providers/0028_disclose_dropped_content_part_fields.md) — content-part fields the relay drops (e.g. `cache_control`) are disclosed like top-level ones; per-runtime prompt-caching docs (reported by RAGnarok, 2026-10-21).
 
 ## Completed Work
 
 - [Cross-platform runtime](completed/platform/README.md)
   - [0025_uniform_cross_platform_runtime_first_slice.md](completed/platform/0025_uniform_cross_platform_runtime_first_slice.md)
+  - [0029_tray_addresses_and_left_click.md](completed/platform/0029_tray_addresses_and_left_click.md)
+  - [0030_internet_access_scope.md](completed/platform/0030_internet_access_scope.md)
 - [Provider runtimes](completed/providers/README.md)
   - [0001_provider_runtime_registry_for_subscription_relays.md](completed/providers/0001_provider_runtime_registry_for_subscription_relays.md)
   - [0010_experimental_claude_subscription_cli_adapter.md](completed/providers/0010_experimental_claude_subscription_cli_adapter.md)
   - [0011_claude_runtime_mainline_graduation.md](completed/providers/0011_claude_runtime_mainline_graduation.md)
   - [0026_chat_completions_usage_contract.md](completed/providers/0026_chat_completions_usage_contract.md)
+  - [0031_models_table_and_pricing_reference.md](completed/providers/0031_models_table_and_pricing_reference.md)
 - [Multi-account pool](completed/accounts/README.md)
   - [0012_balanced_multi_account_routing_and_pool_hardening.md](completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening.md)
   - [0013_openai_usage_probe_caching_and_single_flight.md](completed/accounts/0013_openai_usage_probe_caching_and_single_flight.md)
@@ -64,6 +68,9 @@ Planned track [cross-platform runtime](planned/platform/README.md) (ADR 0008): 0
 | 0025 | Uniform cross-platform runtime, first slice | (worked directly; recorded post-completion) | `docs/backlog/completed/platform/0025_uniform_cross_platform_runtime_first_slice.md` | 2026-10-11 | Completed | File-only private credentials with a cross-process refresh lock, one `claude` launcher, isolated bundled interpreter, valid macOS signing, tests on three OSes (ADR 0008). | Three per-OS adversarial reviews; `pytest` 444 passed on 3.11–3.13; `cargo test`; desktop browser tests; MkDocs/build/twine green |
 | 0026 | Chat Completions usage contract and OpenAI conformance | (worked directly; recorded post-completion) | `docs/backlog/completed/providers/0026_chat_completions_usage_contract.md` | 2026-10-11 | Completed | Chat and completions report OpenAI's CompletionUsage on both runtimes (Claude counts cached prompt tokens); spec-shaped streamed usage; `/v1/responses` unchanged. | Three adversarial reviews; 85 contract/conformance tests; `pytest` 529 on 3.11–3.13; live schema validation (0 failures) and openai-python 3.29.0 checks |
 | 0027 | Images, files, conversations, `/v1/responses` and tool calls on Claude models | `docs/backlog/planned/providers/0027_images_and_claude_tools.md` | `docs/backlog/completed/providers/0027_images_and_claude_tools.md` | 2026-10-15 | Completed | Claude models gain the GPT feature set on the same endpoint; tool calls are returned to the client and never run. | Two adversarial audits; `pytest` 605 on 3.11–3.13; live SDK 28/28 and openai-openapi validation (0 failures) |
+| 0029 | Tray address submenu and left-click dashboard | (worked directly; recorded post-completion) | `docs/backlog/completed/platform/0029_tray_addresses_and_left_click.md` | 2026-10-25 | Completed | **Copy Address** submenu copies any local or LAN endpoint; left click opens the dashboard on macOS 27 (menu attached only while shown, matching tray-icon 0.25.1). | `cargo check`; `cargo test` 24 passed; manual tray click check pending on packaged builds |
+| 0030 | Internet access scope with a mandatory API key | (worked directly; recorded post-completion) | `docs/backlog/completed/platform/0030_internet_access_scope.md` | 2026-10-25 | Completed | `[security] network_scope` (loopback / private / any) enforced by the relay before auth; **Anyone on the internet** behind an inline confirmation, forces Protected auth. | `pytest -q` 731 passed; `cargo test`; desktop browser tests 27 passed; `mkdocs build` |
+| 0031 | Models table and pricing reference | (worked directly; recorded post-completion) | `docs/backlog/completed/providers/0031_models_table_and_pricing_reference.md` | 2026-10-25 | Completed | Models tab is one table per provider (accounts, reasoning, structured output, cost, notes); `airelays.pricing` in `/v1/models` carries providers' API list prices as a relative cost indicator. | `pytest -q` 731 passed; browser test `test_models_table_browser.py` 6 passed; live `/v1/models` check |
 
 ## Deprecated Work
 

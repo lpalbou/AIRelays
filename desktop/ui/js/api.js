@@ -17,7 +17,8 @@ export const api = {
   stopRelay: () => invoke("stop_relay"),
   restartRelay: () => invoke("restart_relay"),
   setAuthMode: (requireToken) => invoke("set_auth_mode", { requireToken }),
-  setNetworkExposure: (exposed) => invoke("set_network_exposure", { exposed }),
+  // "loopback" | "private" | "any"; "any" also turns the API key on.
+  setNetworkScope: (scope) => invoke("set_network_scope", { scope }),
   getConsole: () => invoke("get_console"),
   clearConsole: () => invoke("clear_console"),
   getTraffic: () => invoke("get_traffic"),
@@ -74,10 +75,10 @@ export async function call(promise, errorTitle) {
   }
 }
 
-export async function copyText(text, title = "Copied") {
+export async function copyText(text, title = "Copied", body = "") {
   try {
     await navigator.clipboard.writeText(text);
-    toast(title, "", "success");
+    toast(title, body, "success");
     return;
   } catch {
     // WebKitGTK builds without async clipboard fall through.
@@ -92,7 +93,7 @@ export async function copyText(text, title = "Copied") {
     const ok = document.execCommand("copy");
     area.remove();
     if (!ok) throw new Error("execCommand failed");
-    toast(title, "", "success");
+    toast(title, body, "success");
   } catch {
     toast("Copy failed", "Select the text and copy it manually.", "error");
   }

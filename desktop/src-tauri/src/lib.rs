@@ -2,6 +2,7 @@
 //! and hosts the shared web dashboard.
 
 mod commands;
+mod public_ip;
 mod relay;
 mod settings;
 mod state;
@@ -12,8 +13,16 @@ mod updates;
 use state::AppState;
 use tauri::Manager;
 
-fn should_hide_dashboard(label: &str, tray_available: bool, visible: bool, focused: bool) -> bool {
-    label == "main" && tray_available && visible && !focused
+fn should_hide_dashboard(
+    label: &str,
+    tray_available: bool,
+    visible: bool,
+    focused: bool,
+    recently_shown: bool,
+) -> bool {
+    // A window just brought forward (tray click, second launch) must not
+    // be hidden by the blur that the click itself caused.
+    label == "main" && tray_available && visible && !focused && !recently_shown
 }
 
 /// Marks launches made by the login item.
@@ -112,6 +121,7 @@ pub fn run() {
                                 window.app_handle().tray_by_id(tray::TRAY_ID).is_some(),
                                 window.is_visible().unwrap_or(false),
                                 window.is_focused().unwrap_or(true),
+                                commands::dashboard_recently_shown(),
                             ) {
                                 let _ = window.hide();
                             }
@@ -129,6 +139,7 @@ pub fn run() {
             commands::restart_relay,
             commands::set_auth_mode,
             commands::set_network_exposure,
+            commands::set_network_scope,
             commands::get_console,
             commands::clear_console,
             commands::get_traffic,
@@ -185,10 +196,12 @@ mod tests {
 
     #[test]
     fn dashboard_hides_only_after_blur_with_a_tray_available() {
-        assert!(should_hide_dashboard("main", true, true, false));
-        assert!(!should_hide_dashboard("main", true, true, true));
-        assert!(!should_hide_dashboard("main", false, true, false));
-        assert!(!should_hide_dashboard("main", true, false, false));
-        assert!(!should_hide_dashboard("other", true, true, false));
+        assert!(should_hide_dashboard("main", true, true, false, false));
+        assert!(!should_hide_dashboard("main", true, true, true, false));
+        assert!(!should_hide_dashboard("main", false, true, false, false));
+        assert!(!should_hide_dashboard("main", true, false, false, false));
+        assert!(!should_hide_dashboard("other", true, true, false, false));
+        // A tray click that shows the window also blurs it on some systems.
+        assert!(!should_hide_dashboard("main", true, true, false, true));
     }
 }

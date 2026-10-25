@@ -24,3 +24,4 @@ These completed items record the initial provider-runtime expansion that turned 
 - [Disclaimer](../../../disclaimer.md)
 - [0026_chat_completions_usage_contract.md](0026_chat_completions_usage_contract.md): chat and completions report OpenAI's CompletionUsage on both runtimes, with spec-shaped streamed usage
 - [0027_images_and_claude_tools.md](0027_images_and_claude_tools.md): Claude models gain images, files, conversations, `/v1/responses` and tool calls (returned to the client, never run)
+- [0031_models_table_and_pricing_reference.md](0031_models_table_and_pricing_reference.md): the desktop Models page becomes one table per provider, and `/v1/models` carries the providers' API list prices as a relative cost reference

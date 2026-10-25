@@ -18,3 +18,4 @@ High-priority classes include:
 - log redaction failures
 - rate-limit or temporary-block bypass
 - accidental exposure of protected `/v1/*` routes
+- network-scope bypass (a client outside `[security] network_scope` reaching any route)

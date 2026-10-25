@@ -24,6 +24,7 @@ const settings = {
   failedAuthMaxAttempts: 8,
   failedAuthBlockSeconds: 900,
   trustXForwardedFor: false,
+  networkScope: "private",
   maxUploadBytes: 33554432,
   maxTotalUploadBytes: 268435456,
   enableOpenaiProvider: true,
@@ -46,6 +47,7 @@ const settings = {
 let managed = true;
 let mockAutostart = false;
 let mockResetRedeemed = false;
+let mockToken = "airtk_mock_2f9c8e1a7b3d4c5e6f708192a3b4c5d6";
 let claudeAccounts = [
   {slug: "claude-perso", email: "perso@claude.ai", subscription_type: "pro", ready_for_requests: true, managed_profile: true},
   {slug: "claude-work", email: "work@claude.ai", subscription_type: "max", ready_for_requests: true, managed_profile: true},
@@ -146,6 +148,12 @@ const state = () => ({
     : null,
   local_endpoint: `http://127.0.0.1:${settings.port}/v1`,
   lan_endpoints: settings.host === "0.0.0.0" ? [`http://192.168.1.146:${settings.port}/v1`] : [],
+  // Documentation-range address (RFC 5737), only while the scope is "any",
+  // like the core's public-IP lookup.
+  public_endpoint: settings.networkScope === "any" && settings.host !== "127.0.0.1"
+    ? `http://203.0.113.10:${settings.port}/v1`
+    : null,
+  public_ip_pending: false,
   config_path: "~/.config/airelays/config.toml",
   logs_dir: "~/.airelays/logs",
 });
@@ -165,7 +173,7 @@ const traffic = [
     method: "POST", path: "/v1/chat/completions", provider: "openai",
     model: "gpt-5.5", status_code: 200, last_phase: "outbound_response",
     event_count: 4, input_tokens: 42, output_tokens: 128, account: "work@company.com",
-    details: '{\n  "phase": "outbound_response",\n  "status_code": 200,\n  "model": "gpt-5.5"\n}',
+    details: '{\n  "request_id": "req-1",\n  "phase": "outbound_response",\n  "status_code": 200,\n  "model": "gpt-5.5"\n}',
   },
   {
     id: "req-2", last_seen: new Date(Date.now() - 90000).toISOString(),
@@ -182,6 +190,28 @@ const traffic = [
     details: '{\n  "phase": "inbound_rejected",\n  "status_code": 401,\n  "reason": "invalid bearer token"\n}',
   },
 ];
+
+// ---- Traffic polling (traffic view): each get_traffic call adds one new,
+// deterministic newest request (req-live-1, req-live-2, ...) and keeps a
+// bounded window, like the relay's retained log tail, so selection and
+// scroll behavior can be exercised across polls.
+const TRAFFIC_WINDOW = 12;
+let trafficPolls = 0;
+
+function mockTraffic() {
+  trafficPolls += 1;
+  const n = trafficPolls;
+  traffic.unshift({
+    id: `req-live-${n}`, last_seen: new Date(Date.now()).toISOString(),
+    method: "POST", path: "/v1/responses", provider: "openai",
+    model: "gpt-5.5", status_code: 200, last_phase: "outbound_response",
+    event_count: 2, input_tokens: 10 + n, output_tokens: 20 + n, account: "work@company.com",
+    details: `{\n  "request_id": "req-live-${n}",\n  "phase": "inbound_request",\n  "path": "/v1/responses"\n}\n\n{\n  "request_id": "req-live-${n}",\n  "phase": "outbound_response",\n  "status_code": 200\n}`,
+  });
+  traffic.length = Math.min(traffic.length, TRAFFIC_WINDOW);
+  return structuredClone(traffic);
+}
+// ---- end traffic polling
 
 let logRetention = {
   policy: { retention_days: 7, max_total_mb: 1024, max_file_mb: 50 },
@@ -217,10 +247,24 @@ export async function mockInvoke(command, args = {}) {
       managed = true;
       return 12345;
     case "set_auth_mode":
+      // Same rule as AppSettings::validate: internet access needs the key.
+      if (!args.requireToken && settings.networkScope === "any" && settings.host !== "127.0.0.1") {
+        throw "\"Anyone on the internet\" requires the API key: keep Protected mode, or limit who can connect first.";
+      }
       settings.requireBearerAuth = args.requireToken;
       return null;
+    case "set_network_scope":
+      settings.host = args.scope === "loopback" ? "127.0.0.1" : "0.0.0.0";
+      settings.networkScope = args.scope;
+      // Internet access forces the API key on in the same change.
+      if (args.scope === "any") {
+        settings.requireBearerAuth = true;
+      }
+      return null;
     case "set_network_exposure":
+      // Pre-scope command, kept as a shim like the Rust one.
       settings.host = args.exposed ? "0.0.0.0" : "127.0.0.1";
+      settings.networkScope = args.exposed ? "private" : "loopback";
       return null;
     case "get_console":
       return consoleEntries;
@@ -228,11 +272,13 @@ export async function mockInvoke(command, args = {}) {
       consoleEntries.length = 0;
       return null;
     case "get_traffic":
-      return traffic;
+      return mockTraffic(); // grows by one newest request per poll
     case "token_action":
-      return args.action === "rotate"
-        ? "airtk_rotated_9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a"
-        : "airtk_mock_2f9c8e1a7b3d4c5e6f708192a3b4c5d6";
+      // Remembers rotations and custom keys, like the real key file.
+      if (args.action === "rotate") {
+        mockToken = "airtk_rotated_9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a";
+      }
+      return mockToken;
     case "run_doctor":
       return true;
     case "get_usage":
@@ -489,18 +535,49 @@ export async function mockInvoke(command, args = {}) {
       return { token_removed: args.account === "default", cli_signed_out: true, cli_error: null };
     case "cancel_login":
       return null;
-    case "get_models":
+    case "get_models": {
+      // Mirrors the relay's `/v1/models` metadata: account availability,
+      // reasoning, structured output and the API list-price reference.
+      const reasoning = (modes, fallback) => ({ parameter: "reasoning_effort", modes, default: fallback });
+      const structured = (types) => ({ parameter: "response_format", types });
+      const price = (family, input, cached, output, tier, source) => ({
+        input_per_million: input, cached_input_per_million: cached, output_per_million: output,
+        currency: "USD", unit: "per_million_tokens", as_of: "2026-10-25", matched_family: family, cost_tier: tier,
+        basis: "Standard API list price.",
+        source: source === "claude" ? "https://platform.claude.com/docs/en/about-claude/pricing" : "https://developers.openai.com/api/docs/pricing",
+      });
+      const gpt = ["low", "medium", "high", "xhigh", "max"];
+      const claude = ["low", "medium", "high", "xhigh", "max"];
+      const both = ["json_schema", "json_object"];
+      const openai = (id, extra) => ({ id, object: "model", owned_by: "airelays-openai-subscription", airelays: {
+        provider: "openai", discovery_source: "upstream_catalog", account_availability: { supported: 2, total: 2 },
+        catalog_visibility: "list", reasoning: reasoning(gpt, "medium"), structured_output: structured(both), pricing: null, ...extra } });
+      const anthropic = (id, extra) => ({ id, object: "model", owned_by: "airelays-claude-subscription", airelays: {
+        provider: "claude", discovery_source: "claude_cli", account_availability: null, resolved_model: id,
+        reasoning: reasoning(claude, null), structured_output: structured(both), pricing: null, ...extra } });
       return {
         object: "list",
         data: [
-          { id: "gpt-5.5", object: "model", airelays: { provider: "openai", reasoning: { parameter: "reasoning_effort", modes: ["none", "low", "medium", "high", "xhigh"], default: "none" }, structured_output: { parameter: "response_format", types: ["json_schema"] } } },
-          { id: "gpt-5.4", object: "model", airelays: { provider: "openai", reasoning: { parameter: "reasoning_effort", modes: ["none", "low", "medium", "high", "xhigh"], default: "none" }, structured_output: { parameter: "response_format", types: ["json_schema"] } } },
-          { id: "gpt-5.4-mini", object: "model", airelays: { provider: "openai", reasoning: { parameter: "reasoning_effort", modes: ["none", "low", "medium", "high", "xhigh"], default: "none" }, structured_output: { parameter: "response_format", types: ["json_schema"] } } },
-          { id: "claude:sonnet", object: "model", airelays: { provider: "claude", reasoning: { parameter: "reasoning_effort", modes: ["low", "medium", "high", "xhigh", "max"], default: null }, structured_output: { parameter: "response_format", types: ["json_schema", "json_object"] } } },
-          { id: "claude:opus", object: "model", airelays: { provider: "claude", reasoning: { parameter: "reasoning_effort", modes: ["low", "medium", "high", "xhigh", "max"], default: null }, structured_output: { parameter: "response_format", types: ["json_schema", "json_object"] } } },
+          openai("gpt-6-astra", { display_name: "GPT-6-Astra", reasoning: reasoning([...gpt, "ultra"], "medium"), pricing: price("gpt-6-astra", 10, 1, 50, 5) }),
+          openai("gpt-reserve", { display_name: "GPT-Reserve", catalog_visibility: "hide" }),
+          openai("gpt-5.6-sol", { display_name: "GPT-5.6-Sol", reasoning: reasoning([...gpt, "ultra"], "low"), account_availability: { supported: 1, total: 2 }, pricing: price("gpt-5.6-sol", 4, 0.4, 20, 4) }),
+          openai("gpt-5.6-terra", { display_name: "GPT-5.6-Terra", pricing: price("gpt-5.6-terra", 2, 0.2, 12, 3) }),
+          openai("gpt-5.6-luna", { display_name: "GPT-5.6-Luna", pricing: price("gpt-5.6-luna", 0.2, 0.02, 1.2, 2) }),
+          openai("codex-auto-review", { display_name: "Codex Auto Review", catalog_visibility: "hide" }),
+          openai("gpt-5.5", { discovery_source: "configured", account_availability: null, catalog_visibility: null, reasoning: reasoning(["none", "low", "medium", "high", "xhigh"], "none"), pricing: price("gpt-5.5", 5, 0.5, 30, 4) }),
+          openai("gpt-image-2", { display_name: "GPT Image 2", discovery_source: "configured", account_availability: null, catalog_visibility: null, reasoning: reasoning([], null), structured_output: structured([]), pricing: price("gpt-image-2", 5, 1.25, 30, 4) }),
+          anthropic("claude-sonnet-5-5", { display_name: "Sonnet 5.5", pricing: price("claude-sonnet-5-5", 2, 0.1, 10, 3, "claude") }),
+          anthropic("claude:sonnet", { display_name: "Sonnet 5.5", resolved_model: "claude-sonnet-5-5", pricing: price("claude-sonnet-5-5", 2, 0.1, 10, 3, "claude") }),
+          anthropic("claude:opus", { display_name: "Opus 5.5", resolved_model: "claude-opus-5-5", pricing: price("claude-opus-5-5", 4, 0.2, 20, 4, "claude") }),
+          anthropic("claude:haiku", { display_name: "Haiku 5.5", resolved_model: "claude-haiku-5-5", pricing: price("claude-haiku-5-5", 0.1, 0.01, 0.5, 1, "claude") }),
+          anthropic("claude-opus-5-5", { display_name: "Opus 5.5", pricing: price("claude-opus-5-5", 4, 0.2, 20, 4, "claude") }),
+          anthropic("claude-haiku-4-5-20251001", { display_name: "Haiku 4.5", reasoning: reasoning([], null), pricing: price("claude-haiku-4-5", 1, 0.1, 5, 2, "claude") }),
         ],
       };
+    }
     case "set_custom_token":
+      mockToken = args.token;
+      return null;
     case "set_claude_token":
     case "submit_login_code":
     case "open_path":

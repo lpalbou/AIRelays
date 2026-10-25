@@ -22,7 +22,7 @@ const HEALTH_FAILURES_TO_DECLARE_DOWN: u32 = 3;
 /// not liveness.
 const STATUS_FETCH_EVERY_TICKS: u64 = 3;
 
-fn notify(app: &AppHandle, title: &str, body: &str) {
+pub(crate) fn notify(app: &AppHandle, title: &str, body: &str) {
     // Best effort: a denied notification permission must never affect
     // supervision itself.
     let _ = app.notification().builder().title(title).body(body).show();
@@ -65,6 +65,12 @@ pub struct AppState {
     /// Set when the user cancels the running sign-in, so its non-zero exit
     /// is reported as a cancellation instead of a failure.
     pub login_cancelled: std::sync::atomic::AtomicBool,
+    /// The machine's public IP as seen by an echo service, with the time of
+    /// the lookup (inner None: the lookup failed). Only ever filled while
+    /// the scope is "any"; see `public_ip.rs` for the privacy rule.
+    pub public_ip: Mutex<Option<(Instant, Option<String>)>>,
+    /// True while a public-IP lookup is in flight (at most one at a time).
+    pub public_ip_lookup_running: std::sync::atomic::AtomicBool,
 }
 
 impl AppState {
@@ -98,6 +104,8 @@ impl AppState {
             login_provider: Mutex::new(None),
             login_stdin: Mutex::new(None),
             login_cancelled: std::sync::atomic::AtomicBool::new(false),
+            public_ip: Mutex::new(None),
+            public_ip_lookup_running: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -162,6 +170,9 @@ pub fn spawn_status_loop(app: AppHandle) {
             .build()
             .expect("reqwest client");
         let mut last_reachable: Option<bool> = None;
+        // The tray's address submenu: Wi-Fi changes move LAN addresses
+        // without any lifecycle event, so compare the list every tick.
+        let mut last_addresses: Option<Vec<String>> = None;
         // Liveness debounce and the status-fetch cadence divider.
         let mut health_failures: u32 = 0;
         let mut mismatch_streak: u32 = 0;
@@ -406,8 +417,18 @@ pub fn spawn_status_loop(app: AppHandle) {
                 *robust_lock(&state.relay_reachable) = reachable;
                 *robust_lock(&state.auth_mismatch) = mismatch_streak >= 2;
 
-                if exited || last_reachable != Some(reachable) {
+                let settings = robust_lock(&state.settings).clone();
+                // Reading the public endpoint here also starts its lookup
+                // (scope "any" only), so the tray learns it with no
+                // dashboard open; the diff below rebuilds the menu when it lands.
+                let (public, _) = crate::public_ip::endpoint(&app, &settings);
+                let addresses = crate::tray::menu_addresses(&settings, public.as_deref());
+                if exited
+                    || last_reachable != Some(reachable)
+                    || last_addresses.as_ref() != Some(&addresses)
+                {
                     last_reachable = Some(reachable);
+                    last_addresses = Some(addresses);
                     crate::tray::refresh(&app);
                 }
                 crate::tray::sync_icon(&app);

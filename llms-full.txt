@@ -6,16 +6,17 @@
 
 - README.md: overview, install (CLI and desktop), quick start, compatibility layer
 - docs/getting-started.md: setup, custom CLI configuration, multi-account sign-in, verification
-- docs/configuration.md: config file shape and environment overrides
-- docs/security.md: relay auth, open local relay mode, Claude guardrails
+- docs/configuration.md: config file shape, listener and network scope, environment overrides
+- docs/security.md: relay auth, who can connect (`network_scope`) and internet setup, open local relay mode, Claude guardrails
 - docs/capabilities.md: what works on GPT models and on Claude models, side by side
-- docs/api.md: routes, compatibility adaptations, provider limits
-- docs/architecture.md: request flow and module boundaries
+- docs/api.md: routes, compatibility adaptations, model metadata and reference pricing, errors, provider limits
+- docs/architecture.md: components, request admission pipeline, request flow, module boundaries
 - docs/subscription-status.md: usage reporting for OpenAI and Claude
 - docs/faq.md: common questions and limits
 - docs/troubleshooting.md: symptoms, causes, fixes
-- desktop/README.md: combined connection/access card, hide-on-blur dashboard, tray controls, build, supervision
+- desktop/README.md: Connect card with who-can-connect and Try it examples, Models table with prices, Traffic detail, tray menu, build, supervision
 - docs/adr/README.md: durable design decisions
+- skills/airelays/SKILL.md: agent skill for AI agents that install, run and call AIRelays (not aggregated here)
 
 ---
 
@@ -141,6 +142,7 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - The default runtime uses an AIRelays-owned ChatGPT subscription login.
 - The Claude runtime uses AIRelays-owned local `claude` CLI profiles; the personal Claude Code sign-in is never used or changed.
 - AIRelays protects the relay with its own bearer token by default; open local relay mode (`--no-auth`) disables only the client-token gate.
+- `[security] network_scope` decides who may connect at all: this machine (`loopback`), private networks (`private`, default) or anyone (`any`, API key required). The CLI listens on `127.0.0.1`, which always means this machine only.
 - Traffic logs rotate hourly and at a size limit. By default, AIRelays keeps
   up to 7 days and 1024 MiB of managed traffic logs.
 - AIRelays is an independent third-party project designed for a single user running a local relay for personal convenience. It is not a shared, pooled, multi-user, or resale service (see DISCLAIMER.md).
@@ -171,9 +173,15 @@ irm https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-desk
 
 Set `AIRELAYS_VERSION=X.Y.Z` to pin a release, `AIRELAYS_SHA256=<hex>` to require a specific installer digest, and `AIRELAYS_NO_LAUNCH=1` to skip starting the app. To update, use the dashboard's About page (Update button, from 0.19.0 on) or run the same command again. Desktop builds are not notarized or code-signed; see docs/troubleshooting.md "Desktop app install" for Gatekeeper, SmartScreen, and AppImage FUSE notes, and for Windows 0.18.0-and-earlier builds whose relay fails with `No module named 'threading'` (fixed in 0.19.0; reinstall). Intel Macs and non-x86_64 Linux use the headless installer.
 
-Desktop app details: a Tauri tray app under `desktop/` with a dashboard for relay start/stop, auth and network modes, OpenAI and Claude sign-in/sign-out, per-account usage bars, a model list with copy-ready ids, live traffic, and diagnostics. The tray icon shows connection state and pulses on request activity; the app can start at login, starts the relay when it opens, and restarts a crashed relay automatically. The About page shows the version, author (Laurent-Philippe Albou, PhD, contact@abstractframework.ai) and MIT license, links (docs, changelog, issues, source, license, disclaimer), checks GitHub Releases for a newer stable release, and updates in place: it closes the app, runs the one-line installer pinned to that release's version and published SHA-256, and reopens AIRelays (the current version reopens with the reason if the install fails; log at `~/.airelays/update/update.log`). In-place updates apply to copies installed by the one-line installers; others get the release page. Both installs share the same config (`~/.config/airelays`) and data (`~/.airelays`).
+Desktop app details: a Tauri tray app under `desktop/` with a dashboard for relay start/stop, auth and network modes, OpenAI and Claude sign-in/sign-out, per-account usage bars, a models table with copy-ready ids and reference prices, live traffic with a request detail pane, and diagnostics. The tray icon shows connection state and pulses on request activity; the app can start at login, starts the relay when it opens, and restarts a crashed relay automatically. The About page shows the version, author (Laurent-Philippe Albou, PhD, contact@abstractframework.ai) and MIT license, links (docs, changelog, issues, source, license, disclaimer), checks GitHub Releases for a newer stable release, and updates in place: it closes the app, runs the one-line installer pinned to that release's version and published SHA-256, and reopens AIRelays (the current version reopens with the reason if the install fails; log at `~/.airelays/update/update.log`). In-place updates apply to copies installed by the one-line installers; others get the release page. Both installs share the same config (`~/.config/airelays`) and data (`~/.airelays`).
 
-In Overview, **Connect Your App** combines the endpoint and relay key with authentication and network access controls. Access changes apply immediately and restart a running relay. Clicking outside the dashboard hides it while preserving the relay, page, and unsaved edits. On macOS and Windows, left-click the tray icon to reopen it; right-click opens the menu. **Open Dashboard** remains available in the tray menu on all platforms. Automatic hiding is disabled if tray initialization fails; opening the already-running macOS app also reopens the dashboard.
+In Overview, **Connect Your App** combines the endpoint addresses (Local, each LAN address, and Internet while **Anyone on the internet** is selected) and relay key with **Authentication** and **Who can connect** (**This machine only**, **Devices on my network**, **Anyone on the internet**). Access changes apply immediately and restart a running relay. **Anyone on the internet** applies only after a confirmation that explains router port forwarding, quota exposure and plain HTTP; it turns the API key on and keeps **Open (no key)** disabled. The public address is looked up from `https://api.ipify.org`, then `https://checkip.amazonaws.com`, only in that scope (re-checked every ten minutes, a failed lookup after a minute); a note explains port forwarding and NAT loopback (test from a phone on mobile data). The **Try it** panel beside the card shows one chat completion in curl, Python, JavaScript/TypeScript or Rust against the chosen base URL (Local, LAN or Internet) and the cheapest chat model in the catalog (lowest published output price, then input price); the key is masked on screen and the copy button copies the example with the real key; the curl example has no comment lines, so it pastes into an interactive zsh.
+
+The Models tab is one table per provider: Model, Accounts (coverage bar), Reasoning (default highlighted), Structured output, Cost / 1M (input / output list price with a `$` to `$$$$$` tier, "—" when unpublished) and Notes; rows are keyboard navigable. In Traffic, a selected request stays selected while new ones arrive, the table keeps its scroll position, the detail card has a copy button, and a request that leaves the recent list keeps its detail with a note.
+
+Clicking outside the dashboard hides it while preserving the relay, page, and unsaved edits. On macOS and Windows, left-click the tray icon to open the dashboard; right-click opens the menu. On Linux every click opens the menu, which starts with **Open Dashboard**. The tray's **Copy Address** submenu lists every URL the relay answers at (this machine, each private-network address, and the public address while **Anyone on the internet** is selected) and copies one with a notification. Automatic hiding is disabled if tray initialization fails; opening the already-running macOS app also reopens the dashboard.
+
+For AI agents: the repository ships an agent skill at `skills/airelays/` (see the README's "For AI agents" section for the install command).
 
 ## First Run (CLI)
 
@@ -300,6 +308,18 @@ Environment overrides are `AIRELAYS_CLAUDE_BALANCE`,
 - API key: the relay token (`airelays token show`); any placeholder in open mode
 - List accepted model ids: `airelays models` or `GET /v1/models`
 
+## Who Can Connect (from docs/security.md)
+
+`[security] network_scope` (env `AIRELAYS_NETWORK_SCOPE`, `airelays serve --network-scope`, `airelays init --network-scope`) decides which client addresses the relay serves. It is checked on every route, public ones included, before rate limits and authentication:
+
+- `loopback`: this machine only; refused clients get 403 `client_not_on_this_machine`. A listener on `127.0.0.1`, `localhost` or `::1` (the CLI default) always enforces it, whatever the setting (`airelays status`: "configured any, narrowed by the loopback listener").
+- `private` (default): loopback plus `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (CGNAT, Tailscale), `169.254.0.0/16`, IPv6 ULA `fc00::/7` and link-local `fe80::/10`, including IPv4-mapped forms; others get 403 `client_not_on_private_network`. The desktop's **Devices on my network**.
+- `any`: every address; requires `require_bearer_auth = true` (the relay refuses to start and `airelays init` refuses to write the config otherwise, including with `--no-auth`). Rate limits and failed-auth blocking apply per client IP.
+
+Refusals use OpenAI's error object with type `permission_error` and are logged as `endpoint_rejected` records with reason `network_scope`. `airelays init` and `airelays status` print the scope as **Who can connect**; `GET /v1/relay/status` reports `relay.network_scope`, `relay.effective_network_scope` and `security.network_scope`.
+
+Headless internet setup: `airelays init --host 0.0.0.0 --network-scope any` (it writes host, port and scope when it creates the config and stops on an existing one unless `--force` rewrites it), `airelays login --device`, `airelays serve`. Then forward the relay's TCP port (CLI `8080`, desktop `8317`) on the router to this machine, allow it in the host firewall, and test from outside the network (NAT loopback is needed to reach the public address from inside). Put the relay behind a TLS reverse proxy or a VPN: it speaks plain HTTP. A reverse proxy on the same machine appears as `127.0.0.1` unless `trust_x_forwarded_for = true`, which applies the scope, rate limits and blocks to the first `X-Forwarded-For` address (then the proxy needs `network_scope = "any"`); the Claude runtime refuses `trust_x_forwarded_for`.
+
 ## Multiple OpenAI Accounts
 
 `/v1/models` returns the union of enrolled accounts' catalogs. Balancing,
@@ -314,18 +334,19 @@ One person can enroll several of their own OpenAI subscriptions; `airelays login
 
 ## Routes
 
-- `GET /v1/models` (and `GET /v1/models/{model}`) — models from all enabled providers, with an `airelays` extension block per record. OpenAI queries its authenticated upstream catalog using the installed Codex version (`client_version = "auto"`, tested floor `0.153.4`; the former `0.124.0` default also uses automatic mode). Claude queries its CLI initialization catalog without submitting generation prompts and exposes both aliases and concrete model ids. Configured overrides extend discovery; `extra_models` defaults to empty. `airelays.discovery_source` distinguishes provider catalogs from configured overrides, and `airelays.resolved_model` shows the concrete Claude model behind an alias. `GET /v1/models?refresh=true` bypasses provider caches, including all OpenAI account catalogs; the desktop Refresh button uses it, and the Models tab reloads every five minutes while reachable. Failed Claude discovery retains configured ids and the last successful catalog, with its error in relay status. Catalog listing does not guarantee a successful generation under current account limits.
+- `GET /v1/models` (and `GET /v1/models/{model}`) — models from all enabled providers, with an `airelays` extension block per record (provider, `reasoning`, `structured_output`, `resolved_model`, `account_availability`, and `pricing`: the provider's published API list price in USD per 1M tokens with `input_per_million`, `cached_input_per_million`, `output_per_million`, `as_of`, `source`, `matched_family`, `basis`, `cost_tier`, or `null` when unpublished; exact ids and dated snapshots match, `claude:*` aliases are priced through `resolved_model`, no sibling price is inferred; not what a subscription request costs). OpenAI queries its authenticated upstream catalog using the installed Codex version (`client_version = "auto"`, tested floor `0.153.4`; the former `0.124.0` default also uses automatic mode). Claude queries its CLI initialization catalog without submitting generation prompts and exposes both aliases and concrete model ids. Configured overrides extend discovery; `extra_models` defaults to empty. `airelays.discovery_source` distinguishes provider catalogs from configured overrides, and `airelays.resolved_model` shows the concrete Claude model behind an alias. `GET /v1/models?refresh=true` bypasses provider caches, including all OpenAI account catalogs; the desktop Refresh button uses it, and the Models tab reloads every five minutes while reachable. Failed Claude discovery retains configured ids and the last successful catalog, with its error in relay status. Catalog listing does not guarantee a successful generation under current account limits.
 - `POST /v1/responses`, `POST /v1/chat/completions`, `POST /v1/completions` — text generation on both runtimes (see the capability matrix above)
 - `POST /v1/images/generations`, `POST /v1/images/edits` — image generation and edits on the OpenAI runtime (`gpt-image-2`, listed in `/v1/models`); image variations stay `501`
 - `GET /v1/subscription/status` (alias `GET /v1/account/rate_limits`) — normalized usage; `?provider=claude`, `?account=`, `?all_accounts=true`, `?raw=true`
 - `POST /v1/relay/accounts/refresh` — clear usage-limit holds and re-check capacity
 - `GET /v1/relay/accounts/resets` — per-account OpenAI usage-limit reset credits (title, grantor, grant/expiry, `available_count`, `applicable_available_count`, `redeemable_now`); `?account=`, `?force=true`, `?raw=true`
 - `POST /v1/relay/accounts/resets/redeem` — redeem one reset credit through the relay (`account` required with several accounts, optional `credit_id`, idempotent `redeem_request_id`); the upstream outcome (`reset`, `nothing_to_reset`, `no_credit`, `already_redeemed`) is reported verbatim and the account's usage re-read
-- `GET /v1/relay/status` — diagnostics, provider readiness, `requests_total`; `?activity_only=true` returns only the counter for frequent polling
+- `GET /v1/relay/status` — diagnostics, provider readiness, network scope (`relay.network_scope`, `relay.effective_network_scope`, `security.network_scope`), `requests_total`; `?activity_only=true` returns only the counter for frequent polling
+- `GET`/`PUT /v1/relay/balance` — account-balancing strategy per provider, switched live for the next request (runtime only; 422 on an unknown name)
 - `GET`/`PUT /v1/relay/logging` — traffic-log retention policy and usage
 - `POST/GET/DELETE /v1/files...`, `POST/GET/DELETE /v1/conversations...` — local files and conversations
 - `/no-tools/v1/*` — tool-disabled variants
-- `GET /healthz` — minimal public health check
+- `GET /healthz` — public health check returning `{"ok": true, "app_name": "AIRelays", "version": ...}` (the network scope still applies)
 
 ## Compatibility Layer
 
@@ -374,23 +395,25 @@ The image-generation quota is a separate 24-hour upstream bucket that the usage 
 
 ## Security Defaults
 
-- default listener `127.0.0.1:8080` (CLI) / `0.0.0.0:8317` (desktop, with a one-click loopback switch)
+- default listener `127.0.0.1:8080` (CLI) / `0.0.0.0:8317` (desktop, scope `private`, switchable to this machine only or anyone on the internet)
+- `network_scope = "private"` by default; clients outside the scope get 403 on every route before rate limits and auth
 - protected routes `/v1/*` and `/no-tools/v1/*`; public: `/` and `GET /healthz`
-- rate limit 120 requests/minute (burst 40), 8 concurrent requests per IP, temporary IP block after repeated bad tokens
+- rate limit 120 requests/minute (burst 40), 50 concurrent requests per IP, temporary IP block after repeated bad tokens
 - the Claude runtime follows the relay's listener (local or network) and its auth mode; it is refused only with `trust_x_forwarded_for`
 - desktop update check reads the public GitHub Releases list only; in-place updates install only the offered release and enforce its published SHA-256 digest
 
 ## Configuration
 
-Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/config.toml` → defaults. Notable keys: `[server] host/port`, `[security] require_bearer_auth`, `[logging] stream_lines`, `retention_days`, `max_total_mb`, and `max_file_mb`, `[providers.openai] enabled/balance/account_cooldown_seconds/retry_attempts/retry_backoff_seconds`, `[providers.claude] enabled/bin/models/balance/oauth_token_file`. Saved log-directory retention policy overrides the three logging defaults. See docs/configuration.md for the full file shape and limits.
+Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/config.toml` → defaults. Notable keys: `[server] host/port`, `[security] require_bearer_auth/network_scope/trust_x_forwarded_for`, `[logging] stream_lines`, `retention_days`, `max_total_mb`, and `max_file_mb`, `[providers.openai] enabled/balance/account_cooldown_seconds/retry_attempts/retry_backoff_seconds`, `[providers.claude] enabled/bin/models/balance/oauth_token_file`. Saved log-directory retention policy overrides the three logging defaults. See docs/configuration.md for the full file shape and limits.
 
 ## Diagnostics
 
 - `airelays logs` — inspect or apply traffic-log retention, including `--retention-days 30` for a month and `--max-total-mb` / `--max-file-mb` limits in MiB. The tray's Settings → Traffic log retention and GET/PUT `/v1/relay/logging` use the same saved policy. Defaults are 7 days, 1024 MiB total, and 50 MiB per file; `0` days disables the age limit only. Cleanup permanently removes oldest managed files, including eligible existing traffic logs. It excludes console output, uploads, and conversations. See docs/configuration.md, docs/api.md, and docs/troubleshooting.md for limits, API response fields, and cleanup-error recovery.
 
-- `airelays status` — local config, token, and provider readiness
+- `airelays status` — version, local config, token, provider readiness, and **Who can connect**
+- `airelays init` — writes a new config (`--host`, `--port`, `--network-scope`, `--no-auth`; `--force` rewrites an existing one) and the relay token, then prints **Who can connect** and the matching `airelays serve` command
 - `airelays doctor` — setup checks plus live upstream `/models` and a tiny `/responses` smoke request (`--skip-response` to skip)
-- `airelays models` — model ids the running relay accepts, grouped by provider
+- `airelays models` — model ids the running relay accepts, grouped by provider, with reasoning modes and `list price: $X in / $Y out per 1M` for priced models (a relative cost indicator; subscriptions are not billed per token)
 - Traffic logs: hourly JSONL under `~/.airelays/logs`, with per-request records (tokens, status, serving account, adaptations)
 
 ## Paths
@@ -401,6 +424,9 @@ Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/
 ## Troubleshooting Pointers
 
 - 401 then 429: wrong/missing relay token; repeated failures trigger a temporary IP block
+- 403 `client_not_on_private_network` / `client_not_on_this_machine`: the client is outside `network_scope`; check `airelays status` ("Who can connect"), connect from an allowed network (Tailscale is private), or widen the scope with `--host 0.0.0.0 --network-scope any`
+- the Internet address refuses connections: the listener must be `0.0.0.0` with scope `any`; forward the TCP port on the router; allow it in the firewall; test from mobile data (NAT loopback); behind carrier-grade NAT use a VPN or a public reverse proxy
+- the relay refuses to start: `network_scope = "any"` needs bearer auth; an unknown scope value is an error; the Claude runtime refuses `trust_x_forwarded_for`
 - answers cut with `finish_reason: "length"`: the request's output-token limit was reached (enforced on both account types; GPT minimum 16)
 - Claude 502 `cli_tools_unavailable`: the CLI could not load the request's tools (check that each tool's `parameters` is an object schema; reinstall AIRelays if its tool helper is missing); `cli_unexpected_tools`: the CLI offered or attempted an undefined tool and the request was stopped; neither pauses an account
 - 422 for an image or document: images must be PNG, JPEG, GIF or WebP; documents PDF or UTF-8 text; Claude CMYK or animated images must be converted

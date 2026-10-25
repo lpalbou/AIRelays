@@ -48,6 +48,38 @@ airelays init --no-auth
 airelays serve --no-auth --port 8080
 ```
 
+Open mode is refused while `network_scope = "any"` (anyone on the internet)
+on a non-loopback listener.
+
+## Who can connect to my relay?
+
+The CLI listens on `127.0.0.1`, so only this machine can connect. Listening
+on `0.0.0.0` adds the devices that `[security] network_scope` allows:
+`private` (default) admits private networks, including Tailscale's
+`100.64.0.0/10`, and `any` admits every address but requires the API key.
+Clients outside the scope get `403` on every route before rate limits and
+auth. The desktop app shows the same choice as **Who can connect**. See
+[Who Can Connect](security.md#who-can-connect).
+
+## Can I reach my relay from outside my home network?
+
+Yes. Use a VPN such as Tailscale with the default `private` scope, or choose
+`any` (desktop: **Anyone on the internet**; CLI: `airelays init --host 0.0.0.0
+--network-scope any` or `airelays serve --host 0.0.0.0 --network-scope any`),
+forward the relay's port on your router, and put a TLS reverse proxy in
+front, because the relay speaks plain HTTP. Everyone who has the key can
+spend your subscription quota. See
+[the internet setup](security.md#internet-access-from-a-headless-relay) and
+[Troubleshooting](troubleshooting.md#the-internet-address-refuses-connections).
+
+## What does the price in the Models tab mean?
+
+It is the provider's published pay-as-you-go API list price per 1M tokens
+(`airelays.pricing` in `/v1/models`, also printed by `airelays models`).
+Subscription requests are not billed per token, so it is only a relative
+cost indicator between models. Models without a published price show "—"
+(`pricing: null`). See [`GET /v1/models`](api.md#get-v1models).
+
 ## Does AIRelays support Claude?
 
 Yes, through the same OpenAI-compatible endpoint as GPT models.
@@ -154,8 +186,8 @@ No.
 
 The dashboard hides when it loses focus; the relay keeps running and unsaved
 edits remain in the window. On macOS and Windows, left-click the tray icon to
-reopen it, or right-click for the menu. **Open Dashboard** is available in the
-tray menu on all platforms. In Overview, **Connect Your App** contains both
+reopen it, or right-click for the menu. On Linux the tray always opens the
+menu, which starts with **Open Dashboard**. In Overview, **Connect Your App** contains both
 connection details and the authentication/network access controls.
 
 ## Are output-token limits enforced?
@@ -169,4 +201,11 @@ cut by the limit reports `finish_reason: "length"` (`status: "incomplete"` on
 
 ## Why did I get `401` and then `429`?
 
-The relay token was missing or wrong, and repeated bad attempts triggered the temporary IP block.
+The relay token was missing or wrong, and repeated bad attempts triggered the
+temporary IP block. See
+[Troubleshooting](troubleshooting.md#429-too-many-invalid-authentication-attempts-from-this-ip).
+
+## Why did I get `403 client_not_on_private_network`?
+
+The client's address is outside the relay's network scope. See
+[Troubleshooting](troubleshooting.md#403-client_not_on_private_network-or-client_not_on_this_machine).

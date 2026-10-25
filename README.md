@@ -94,17 +94,21 @@ Releases page directly; the builds are not notarized or code-signed, see
 
 The tray app ([desktop/](desktop/README.md)) provides a dashboard with relay
 start/stop, auth and network modes, OpenAI and Claude sign-in/sign-out,
-per-account usage bars (text windows and the 24-hour image quota), a model
-list with copy-ready ids, live traffic, and
-diagnostics. The tray icon shows connection state and pulses on request
+per-account usage bars (text windows and the 24-hour image quota), a models
+table with copy-ready ids and reference prices, live traffic with a request
+detail pane, and diagnostics. The tray icon shows connection state and pulses on request
 activity; the app can start at login, starts the relay when it opens, and
 restarts a crashed relay automatically.
 
-In Overview, **Connect Your App** brings the endpoint, relay key, authentication,
-and network access controls together. Clicking outside the dashboard hides it
-without stopping the relay or discarding edits. On macOS and Windows, left-click
-the tray icon to reopen it; right-click for the menu. **Open Dashboard** is also
-available from the tray menu on every platform.
+In Overview, **Connect Your App** brings the endpoint addresses, relay key,
+authentication, and **Who can connect** (this machine, devices on your
+network, or anyone on the internet) together, next to a **Try it** panel with
+ready-to-run curl, Python, JavaScript/TypeScript and Rust examples. Clicking
+outside the dashboard hides it without stopping the relay or discarding
+edits. On macOS and Windows, left-click the tray icon to reopen it and
+right-click for the menu; on Linux the tray always opens the menu, which
+starts with **Open Dashboard**. The menu's **Copy Address** submenu copies any
+address the relay answers at.
 
 To build the installers from source (Rust and Node required), see
 [desktop/README.md](desktop/README.md#build-installers):
@@ -227,7 +231,7 @@ Claude Code sign-in, a custom `CLAUDE_CONFIG_DIR`, or an exported
 `CLAUDE_CODE_OAUTH_TOKEN`, connect it once with `airelays claude login` (or
 `airelays claude set-token`). Profiles already enrolled keep working.
 
-When the Claude runtime is enabled, AIRelays keeps the same auth behavior as the rest of the relay. The default protected mode requires the AIRelays bearer token; `--no-auth` starts an open local relay. Claude is served on the same listener as every other model: on this machine only, or to your network when you bind the relay there.
+When the Claude runtime is enabled, AIRelays keeps the same auth behavior as the rest of the relay. The default protected mode requires the AIRelays bearer token; `--no-auth` starts an open local relay. Claude is served on the same listener and [network scope](docs/security.md#who-can-connect) as every other model.
 
 ## Basic Verification
 
@@ -291,6 +295,24 @@ curl http://127.0.0.1:8080/v1/chat/completions \
   }'
 ```
 
+## Use It From Other Devices
+
+The CLI listens on `127.0.0.1` (this machine only). To serve other devices,
+listen on all interfaces; `[security] network_scope` then decides who may
+connect:
+
+```bash
+airelays serve --host 0.0.0.0                          # devices on private networks (default scope)
+airelays serve --host 0.0.0.0 --network-scope any      # anyone who reaches the port; API key required
+```
+
+`airelays init --host 0.0.0.0 --network-scope any` writes the same settings
+into a new config file, and `airelays status` prints them as **Who can
+connect**. Internet access also needs router port forwarding, and a TLS
+reverse proxy or a VPN, because the relay speaks plain HTTP. See
+[Who Can Connect](docs/security.md#who-can-connect) for the address ranges,
+the `403` codes and the full internet setup.
+
 ## Multiple OpenAI Accounts
 
 One person can enroll several of their own OpenAI subscriptions and let the
@@ -301,10 +323,10 @@ relay balance across them. Signing in again with a different account adds it
 airelays login            # first account
 airelays login            # second account — added alongside the first
 airelays accounts         # list accounts and the commands to manage them
-airelays logout perso@gmail.com          # sign one account out
-airelays accounts order work@company.com perso@gmail.com   # change priority
+airelays logout you@example.com          # sign one account out
+airelays accounts order work@example.com you@example.com   # change priority
 airelays accounts resets                 # usage resets OpenAI granted, per account
-airelays accounts redeem perso@gmail.com # redeem one now (asks first)
+airelays accounts redeem you@example.com # redeem one now (asks first)
 ```
 
 `airelays accounts` is the hub: it lists your accounts in balancing order and
@@ -360,6 +382,7 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 - Claude model discovery queries the installed CLI and exposes both aliases and concrete model ids. The Models tab and `airelays models` show each reported alias resolution, such as `claude:fable` resolving to `claude-fable-5-1`.
 - The Models tab refreshes automatically every five minutes while reachable. Its Refresh button, or `GET /v1/models?refresh=true`, requests fresh provider catalogs. See [model discovery](docs/api.md#get-v1models) for cache and availability limits.
 - With multiple OpenAI accounts, `/v1/models` is the union of their catalogs. Balancing, conversation affinity, and failover stay within each model's supporting account subset. The Models tab shows account coverage and labels entries the upstream hides from its own picker.
+- The Models tab lists each provider's models as a table: id, account coverage, reasoning modes, structured output, and the provider's published API list price per 1M tokens (`airelays.pricing` in `/v1/models`, also printed by `airelays models`). That price is only a relative cost indicator: subscription requests are not billed per token. Models without a published price show "—".
 - Subscription bars report upstream allowances, including Claude's separately scoped Fable weekly cap when present. Hover over or activate the **?** beside an account name for credit details and snapshot times; percentages are not token counts. An OpenAI account holding a usage reset ("Redeem reset" in Codex) shows it under its bars with its expiry and a **Redeem now** button, so you never need an OpenAI app to use it. See [Subscription Status](docs/subscription-status.md).
 - AIRelays rejects requests when the selected runtime is disabled or the route is outside that runtime's published subset
 
@@ -370,11 +393,14 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 - `GET /v1/subscription/status` (OpenAI and `?provider=claude`)
 - `GET /v1/account/rate_limits`
 - `GET /v1/relay/status`
+- `GET`/`PUT /v1/relay/balance` (account-balancing strategy, live)
+- `GET`/`PUT /v1/relay/logging` (traffic-log retention)
 - `POST /v1/relay/accounts/refresh`
 - `GET /v1/relay/accounts/resets` and `POST /v1/relay/accounts/resets/redeem` (OpenAI usage resets: see them, redeem one)
 - `POST /v1/responses`
 - `POST /v1/chat/completions`
 - `POST /v1/completions`
+- `POST /v1/images/generations` and `POST /v1/images/edits`
 - `POST /v1/files`
 - `GET /v1/files`
 - `GET /v1/files/{file_id}`
@@ -506,8 +532,11 @@ Claude runtime:
 - public routes: `/` and `GET /healthz`
 - protected diagnostics: `GET /v1/relay/status`
 - default rate limit: `120` requests/minute with burst `40`
-- default concurrent request cap: `8` per IP
+- default concurrent request cap: `50` per IP
 - repeated bad tokens trigger a temporary IP block
+- who can connect: `network_scope = "private"` by default (this machine and
+  private networks); a loopback listener serves this machine only, and
+  clients outside the scope get `403` on every route before auth
 - the Claude runtime follows the relay's listener and its protected or open local auth mode
 
 ## Configuration
@@ -532,6 +561,7 @@ AIRelays reads configuration in this order:
 Important toggles:
 
 - `AIRELAYS_REQUIRE_BEARER_AUTH`
+- `AIRELAYS_NETWORK_SCOPE` (`loopback`, `private`, or `any`)
 - `AIRELAYS_BEARER_TOKEN`
 - `AIRELAYS_BEARER_TOKEN_FILE`
 - `AIRELAYS_ENABLE_OPENAI`
@@ -549,9 +579,29 @@ Important toggles:
 - Claude accounts: `~/.airelays/claude/accounts/<id>/`; setup token: `~/.airelays/claude-token`
 - earlier singular AIRelay paths remain compatible for local upgrades
 
+## For AI agents
+
+If you are an AI agent, you can register and use our agent skill
+[`airelays`](https://github.com/lpalbou/AIRelays/tree/main/skills/airelays) to
+become an expert on this package. Install it by copying the `skills/airelays/`
+folder of the version you use into your agent's skills directory (for example
+`~/.claude/skills` for Claude Code; see your agent's documentation for its
+skills directory):
+
+```bash
+SKILLS_DIR=~/.claude/skills
+tmp="$(mktemp -d)"
+git clone --depth 1 --branch main https://github.com/lpalbou/AIRelays.git "$tmp" \
+  && mkdir -p "$SKILLS_DIR" && cp -R "$tmp/skills/airelays" "$SKILLS_DIR/" \
+  && echo "installed: $SKILLS_DIR/airelays"
+rm -rf "$tmp"
+```
+
 ## More Docs
 
+- [docs/README.md](docs/README.md): the documentation index
 - [docs/getting-started.md](docs/getting-started.md)
+- [docs/capabilities.md](docs/capabilities.md)
 - [docs/configuration.md](docs/configuration.md)
 - [docs/security.md](docs/security.md)
 - [docs/api.md](docs/api.md)
@@ -560,3 +610,5 @@ Important toggles:
 - [docs/faq.md](docs/faq.md)
 - [docs/troubleshooting.md](docs/troubleshooting.md)
 - [docs/disclaimer.md](docs/disclaimer.md)
+- [desktop/README.md](desktop/README.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [CHANGELOG.md](CHANGELOG.md)

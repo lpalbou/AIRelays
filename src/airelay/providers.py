@@ -41,6 +41,7 @@ from airelay import claude_tool_guard, claude_tool_stub
 from airelay.claude_launch import ArgumentsTooLong, ClaudeLauncher, workdir
 from airelay.errors import InvalidRequestError, RequestTooLargeError
 from airelay.media import MAX_REQUEST_MEDIA_BYTES
+from airelay.model_pricing import pricing_payload
 from airelay.private_io import write_private
 from airelay.traffic import TrafficLogger, snapshot_body
 from airelay.transforms import (
@@ -174,6 +175,9 @@ class ProviderModel:
                     "parameter": "response_format",
                     "types": list(self.structured_output_types),
                 },
+                # API list price as a relative cost indicator only; the
+                # subscription runtimes are not billed per token.
+                "pricing": pricing_payload(self.resolved_model, self.upstream_id, self.id),
             },
         }
 
