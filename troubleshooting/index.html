@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -796,10 +796,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#claude-startup-refusal" class="md-nav__link">
+  <a href="#the-relay-refuses-to-start-network-scope-or-claude-guardrail" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Claude startup refusal
+        The relay refuses to start: network scope or Claude guardrail
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#403-client_not_on_private_network-or-client_not_on_this_machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        403 client_not_on_private_network or client_not_on_this_machine
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-internet-address-refuses-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Internet address refuses connections
       
     </span>
   </a>
@@ -1460,10 +1482,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#claude-startup-refusal" class="md-nav__link">
+  <a href="#the-relay-refuses-to-start-network-scope-or-claude-guardrail" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Claude startup refusal
+        The relay refuses to start: network scope or Claude guardrail
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#403-client_not_on_private_network-or-client_not_on_this_machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        403 client_not_on_private_network or client_not_on_this_machine
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-internet-address-refuses-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Internet address refuses connections
       
     </span>
   </a>
@@ -1878,13 +1922,67 @@ and rejects OpenAI model ids that are absent from a working live
   request body from the traffic log and compare it with the documented
   supported shapes in <a href="../api/">docs/api.md</a></li>
 </ul>
-<h2 id="claude-startup-refusal">Claude startup refusal<a class="headerlink" href="#claude-startup-refusal" title="Permanent link">&para;</a></h2>
-<p>When the Claude runtime is enabled:</p>
+<h2 id="the-relay-refuses-to-start-network-scope-or-claude-guardrail">The relay refuses to start: network scope or Claude guardrail<a class="headerlink" href="#the-relay-refuses-to-start-network-scope-or-claude-guardrail" title="Permanent link">&para;</a></h2>
+<p><code>airelays serve</code> and <code>airelays init</code> stop with a message instead of starting
+an unsafe or ambiguous relay:</p>
 <ul>
-<li>keep the listener on <code>127.0.0.1</code>, <code>localhost</code>, or <code>::1</code></li>
-<li>keep relay bearer auth enabled</li>
-<li>keep <code>trust_x_forwarded_for=false</code></li>
+<li>"<code>network_scope = "any"</code> (anyone on the internet) requires
+  <code>require_bearer_auth = true</code>": internet access needs the API key. Drop
+  <code>--no-auth</code> (or set <code>require_bearer_auth = true</code>), or choose
+  <code>--network-scope private</code> or <code>loopback</code>.</li>
+<li><code>Invalid [security] network_scope value ...</code>: use <code>loopback</code>, <code>private</code>,
+  or <code>any</code> in <code>config.toml</code> or <code>AIRELAYS_NETWORK_SCOPE</code>.</li>
+<li><code>The Claude runtime does not allow trust_x_forwarded_for</code>: set
+  <code>trust_x_forwarded_for = false</code>, or disable the Claude runtime
+  (<code>[providers.claude] enabled = false</code>).</li>
 </ul>
+<p>See <a href="../security/#who-can-connect">Who Can Connect</a> and
+<a href="../configuration/#listener-and-network-scope">Configuration</a>.</p>
+<h2 id="403-client_not_on_private_network-or-client_not_on_this_machine"><code>403 client_not_on_private_network</code> or <code>client_not_on_this_machine</code><a class="headerlink" href="#403-client_not_on_private_network-or-client_not_on_this_machine" title="Permanent link">&para;</a></h2>
+<p>The relay answered, but the client's address is outside its
+<a href="../security/#who-can-connect">network scope</a>; the check runs before auth, so
+the API key was not even looked at.</p>
+<ul>
+<li><code>client_not_on_private_network</code>: the scope is <code>private</code> and the client
+  came from a public address, for example through router port forwarding,
+  a cloud host, or a reverse proxy with <code>trust_x_forwarded_for = true</code>.</li>
+<li><code>client_not_on_this_machine</code>: the scope is <code>loopback</code> on a non-loopback
+  listener, and the client is another device.</li>
+</ul>
+<p>Check what the relay enforces:</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>status<span class="w">          </span><span class="c1"># "Who can connect"</span>
+</code></pre></div>
+<p>Fix: connect from an allowed network (for example over Tailscale, which
+<code>private</code> allows), or widen the scope with <code>airelays serve --host 0.0.0.0
+--network-scope any</code> (the API key stays required). The desktop app's <strong>Who
+can connect</strong> selector does the same. A refused request is logged as an
+<code>endpoint_rejected</code> traffic record with reason <code>network_scope</code>.</p>
+<h2 id="the-internet-address-refuses-connections">The Internet address refuses connections<a class="headerlink" href="#the-internet-address-refuses-connections" title="Permanent link">&para;</a></h2>
+<p>You chose <strong>Anyone on the internet</strong> (or <code>network_scope = "any"</code>), but
+clients cannot reach the public address.</p>
+<ul>
+<li>Confirm the scope: <code>airelays status</code> must show <code>any (anyone on the
+  internet ...)</code>. A listener on <code>127.0.0.1</code> narrows every scope to
+  <code>loopback</code>; listen on <code>0.0.0.0</code>.</li>
+<li>Forward the relay's TCP port (CLI default <code>8080</code>, desktop <code>8317</code>) on your
+  router to this machine's private address, the <strong>LAN</strong> row in the desktop
+  Connect card.</li>
+<li>Allow incoming connections for the relay in the macOS application firewall
+  or your Linux host firewall.</li>
+<li>Test from outside your network, for example from a phone on mobile data.
+  From inside the same network the public address only answers when the
+  router supports NAT loopback (hairpinning); use the LAN address there.</li>
+<li>Some providers place customers behind carrier-grade NAT, where port
+  forwarding on your router cannot reach you. Use a VPN such as Tailscale
+  (allowed by the default <code>private</code> scope) or a reverse proxy on a host with
+  a public address.</li>
+<li>The desktop shows "The public address could not be looked up" when
+  <code>api.ipify.org</code> and <code>checkip.amazonaws.com</code> are unreachable; the relay
+  still serves the scope, and clients can use your router's public IP.</li>
+</ul>
+<p>Verify recovery from the outside device:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://&lt;PUBLIC_IP&gt;:&lt;PORT&gt;/healthz
+</code></pre></div>
 <h2 id="429-too-many-invalid-authentication-attempts-from-this-ip"><code>429 Too many invalid authentication attempts from this IP</code><a class="headerlink" href="#429-too-many-invalid-authentication-attempts-from-this-ip" title="Permanent link">&para;</a></h2>
 <ul>
 <li>wait for the <code>Retry-After</code> window</li>
@@ -1986,10 +2084,10 @@ without sending a generation request.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

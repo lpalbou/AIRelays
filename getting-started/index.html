@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -441,6 +441,17 @@
     <span class="md-ellipsis">
       
         Client Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#use-the-relay-from-other-devices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use The Relay From Other Devices
       
     </span>
   </a>
@@ -1152,6 +1163,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#use-the-relay-from-other-devices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use The Relay From Other Devices
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#subscription-status" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1346,7 +1368,10 @@ to change as a multipart file. See
 upstream <code>/models</code>, a tiny <code>/responses</code> smoke request, and Claude readiness
 when the Claude runtime is enabled. Use <code>airelays doctor --skip-response</code>
 to skip the response smoke request.</p>
-<p>List every model id the running relay accepts, grouped by provider:</p>
+<p>List every model id the running relay accepts, grouped by provider, with
+each model's reasoning modes and, when the provider publishes one, its API
+list price per 1M tokens (a relative cost indicator; subscription requests
+are not billed per token):</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>models
 </code></pre></div>
 <p>Machine-readable output:</p>
@@ -1356,7 +1381,9 @@ airelays<span class="w"> </span>models<span class="w"> </span>--json
 </code></pre></div>
 <p><code>airelays status</code> shows:</p>
 <ul>
+<li>the installed AIRelays version (title line)</li>
 <li>relay config and token state</li>
+<li><strong>Who can connect</strong>: the enforced <a href="../security/#who-can-connect">network scope</a></li>
 <li>OpenAI runtime readiness</li>
 <li>Claude runtime readiness when enabled</li>
 <li>next recommended commands</li>
@@ -1376,6 +1403,25 @@ airelays<span class="w"> </span>models<span class="w"> </span>--json
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_BASE_URL</span><span class="o">=</span><span class="s1">'http://127.0.0.1:8080/v1'</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">AIRELAYS_TOKEN</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>tr<span class="w"> </span>-d<span class="w"> </span><span class="s1">'\n'</span><span class="w"> </span>&lt;<span class="w"> </span>~/.airelays/relay-token<span class="k">)</span><span class="s2">"</span>
 </code></pre></div>
+<h2 id="use-the-relay-from-other-devices">Use The Relay From Other Devices<a class="headerlink" href="#use-the-relay-from-other-devices" title="Permanent link">&para;</a></h2>
+<p><code>airelays serve</code> listens on <code>127.0.0.1</code> by default, so only this machine can
+connect. To serve your phone, another computer, or a Tailscale network,
+listen on all interfaces:</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>serve<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+</code></pre></div>
+<p>The default <code>network_scope = "private"</code> then admits this machine and private
+networks (home and office LANs, <code>100.64.0.0/10</code> VPNs such as Tailscale) and
+answers every other address with <code>403 client_not_on_private_network</code>. Clients
+use <code>http://&lt;this machine's LAN address&gt;:8080/v1</code> with the same relay token.</p>
+<p>For access from anywhere, choose <code>any</code> (bearer auth stays required):</p>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--network-scope<span class="w"> </span>any<span class="w">   </span><span class="c1"># add --force to rewrite an existing config</span>
+airelays<span class="w"> </span>serve
+</code></pre></div>
+<p><code>airelays init</code> prints <strong>Who can connect</strong> and the matching <code>airelays serve</code>
+command. Forward the port on your router and put the relay behind a TLS
+reverse proxy or a VPN; <a href="../security/#who-can-connect">Who Can Connect</a> lists
+the steps, and <a href="../troubleshooting/#the-internet-address-refuses-connections">Troubleshooting</a>
+covers refused connections.</p>
 <h2 id="subscription-status">Subscription Status<a class="headerlink" href="#subscription-status" title="Permanent link">&para;</a></h2>
 <p>OpenAI subscription usage:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/v1/subscription/status<span class="w"> </span><span class="se">\</span>
@@ -1387,6 +1433,9 @@ airelays<span class="w"> </span>models<span class="w"> </span>--json
 </code></pre></div>
 <p>See <a href="../subscription-status/">Subscription Status</a> for multi-account
 parameters and the payload shape.</p>
+<p>If a step fails, see <a href="../troubleshooting/">Troubleshooting</a>. Next, read
+<a href="../api/">API Notes</a> for routes and limits, or <a href="../architecture/">Architecture</a>
+for how requests flow. Back to the <a href="../README.md">README</a>.</p>
 
 
 
@@ -1442,10 +1491,10 @@ parameters and the payload shape.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

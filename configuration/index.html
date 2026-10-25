@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -391,6 +391,17 @@
     <span class="md-ellipsis">
       
         Sample Config
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#listener-and-network-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Listener And Network Scope
       
     </span>
   </a>
@@ -1020,6 +1031,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#listener-and-network-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Listener And Network Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#important-environment-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1197,11 +1219,16 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <span class="n">auto_generate_bearer_token</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
 <span class="n">rate_limit_per_minute</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">120</span>
 <span class="n">rate_limit_burst</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">40</span>
-<span class="n">concurrent_requests_per_ip</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+<span class="n">concurrent_requests_per_ip</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">50</span>
 <span class="n">failed_auth_window_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">300</span>
 <span class="n">failed_auth_max_attempts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
 <span class="n">failed_auth_block_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">900</span>
 <span class="n">trust_x_forwarded_for</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<span class="c1"># Who may connect: "loopback" (this machine), "private" (default: loopback,</span>
+<span class="c1"># RFC 1918, 100.64.0.0/10 CGNAT/Tailscale, link-local, IPv6 ULA and</span>
+<span class="c1"># link-local) or "any" (the internet; requires require_bearer_auth = true).</span>
+<span class="c1"># A loopback host always means "loopback". See docs/security.md#who-can-connect.</span>
+<span class="n">network_scope</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"private"</span>
 
 <span class="k">[uploads]</span>
 <span class="n">max_upload_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">33554432</span>
@@ -1249,7 +1276,7 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <span class="n">image_usage_probe</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 
 <span class="k">[providers.claude]</span>
-<span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="n">bin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"claude"</span>
 <span class="n">command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span><span class="w">                          </span><span class="c1"># full argv, wins over `bin` (see below)</span>
 <span class="n">timeout_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">600.0</span>
@@ -1260,6 +1287,24 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <span class="n">models</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"claude:sonnet"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:opus"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:haiku"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude:fable"</span><span class="p">]</span>
 <span class="n">oauth_token_file</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"~/.airelays/claude-token"</span><span class="w">   </span><span class="c1"># written by `airelays claude set-token`</span>
 </code></pre></div>
+<h2 id="listener-and-network-scope">Listener And Network Scope<a class="headerlink" href="#listener-and-network-scope" title="Permanent link">&para;</a></h2>
+<p><code>[server] host</code> and <code>port</code> choose where the relay listens; <code>[security]
+network_scope</code> chooses which client addresses it serves:</p>
+<ul>
+<li><code>host = "127.0.0.1"</code> (CLI default): this machine only, whatever the scope.</li>
+<li><code>host = "0.0.0.0"</code> with <code>network_scope = "private"</code> (the default scope):
+  devices on your home, office or VPN network. The desktop app's default
+  (<code>0.0.0.0:8317</code>).</li>
+<li><code>host = "0.0.0.0"</code> with <code>network_scope = "any"</code>: anyone who can reach the
+  port, for example through router port forwarding. Requires
+  <code>require_bearer_auth = true</code>.</li>
+</ul>
+<p><code>airelays init --host 0.0.0.0 --port 8080 --network-scope private</code> writes
+these keys into a new config file (<code>--force</code> rewrites an existing one).
+<code>airelays serve --host</code>, <code>--port</code> and <code>--network-scope</code> override them for one
+server process. See <a href="../security/#who-can-connect">Who Can Connect</a> for the
+address ranges, the 403 codes, the internet setup steps and the
+<code>trust_x_forwarded_for</code> interplay.</p>
 <h2 id="important-environment-variables">Important Environment Variables<a class="headerlink" href="#important-environment-variables" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>AIRELAYS_CONFIG</code></li>
@@ -1276,6 +1321,10 @@ need before first starting the upgraded relay or reducing a policy.</p>
 <li><code>AIRELAYS_CLIENT_VERSION</code></li>
 <li><code>AIRELAYS_REQUEST_TIMEOUT_SECONDS</code></li>
 <li><code>AIRELAYS_REQUIRE_BEARER_AUTH</code></li>
+<li><code>AIRELAYS_NETWORK_SCOPE</code> (<code>private</code> default, <code>loopback</code>, or <code>any</code>; <code>any</code> requires bearer auth).
+  <code>airelays serve --network-scope &lt;scope&gt;</code> overrides it for one server process; an unknown value
+  stops the relay at startup. See <a href="../security/#who-can-connect">Who Can Connect</a>.</li>
+<li><code>AIRELAYS_TRUST_X_FORWARDED_FOR</code> (<code>false</code> default; refused with the Claude runtime)</li>
 <li><code>AIRELAYS_BEARER_TOKEN</code></li>
 <li><code>AIRELAYS_BEARER_TOKEN_FILE</code></li>
 <li><code>AIRELAYS_LOG_STREAM_LINES</code></li>
@@ -1445,10 +1494,10 @@ can select an older catalog.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

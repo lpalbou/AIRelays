@@ -19,7 +19,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -27,7 +27,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -994,8 +994,8 @@
 <h2 id="counts">Counts<a class="headerlink" href="#counts" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Planned: 3</li>
-<li>Proposed: 4</li>
-<li>Completed: 11</li>
+<li>Proposed: 5</li>
+<li>Completed: 14</li>
 <li>Deprecated: 1</li>
 <li>Recurrent: 0</li>
 </ul>
@@ -1019,16 +1019,20 @@
 <li><a href="../proposed/providers/">Provider runtimes</a></li>
 <li><a href="../proposed/providers/0015_claude_token_shape_validation_on_set_token/">0015_claude_token_shape_validation_on_set_token.md</a></li>
 <li><a href="../proposed/providers/0018_metered_embeddings_capability_slice/">0018_metered_embeddings_capability_slice.md</a> — single opt-in API key for <code>/v1/embeddings</code> only; both subscriptions verifiably cannot produce embeddings. Value uncertain (possibly reduces to key-management centralization, a double-edged trade); promotion requires a new ADR amending ADR 0002, a demonstrated recurring need, and explicit rejection of the local/direct/sidecar alternatives.</li>
+<li><a href="../proposed/providers/0028_disclose_dropped_content_part_fields/">0028_disclose_dropped_content_part_fields.md</a> — content-part fields the relay drops (e.g. <code>cache_control</code>) are disclosed like top-level ones; per-runtime prompt-caching docs (reported by RAGnarok, 2026-10-21).</li>
 </ul>
 <h2 id="completed-work">Completed Work<a class="headerlink" href="#completed-work" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../completed/platform/">Cross-platform runtime</a></li>
 <li><a href="../completed/platform/0025_uniform_cross_platform_runtime_first_slice/">0025_uniform_cross_platform_runtime_first_slice.md</a></li>
+<li><a href="../completed/platform/0029_tray_addresses_and_left_click/">0029_tray_addresses_and_left_click.md</a></li>
+<li><a href="../completed/platform/0030_internet_access_scope/">0030_internet_access_scope.md</a></li>
 <li><a href="../completed/providers/">Provider runtimes</a></li>
 <li><a href="../completed/providers/0001_provider_runtime_registry_for_subscription_relays/">0001_provider_runtime_registry_for_subscription_relays.md</a></li>
 <li><a href="../completed/providers/0010_experimental_claude_subscription_cli_adapter/">0010_experimental_claude_subscription_cli_adapter.md</a></li>
 <li><a href="../completed/providers/0011_claude_runtime_mainline_graduation/">0011_claude_runtime_mainline_graduation.md</a></li>
 <li><a href="../completed/providers/0026_chat_completions_usage_contract/">0026_chat_completions_usage_contract.md</a></li>
+<li><a href="../completed/providers/0031_models_table_and_pricing_reference/">0031_models_table_and_pricing_reference.md</a></li>
 <li><a href="../completed/accounts/">Multi-account pool</a></li>
 <li><a href="../completed/accounts/0012_balanced_multi_account_routing_and_pool_hardening/">0012_balanced_multi_account_routing_and_pool_hardening.md</a></li>
 <li><a href="../completed/accounts/0013_openai_usage_probe_caching_and_single_flight/">0013_openai_usage_probe_caching_and_single_flight.md</a></li>
@@ -1160,6 +1164,36 @@
 <td>Claude models gain the GPT feature set on the same endpoint; tool calls are returned to the client and never run.</td>
 <td>Two adversarial audits; <code>pytest</code> 605 on 3.11–3.13; live SDK 28/28 and openai-openapi validation (0 failures)</td>
 </tr>
+<tr>
+<td>0029</td>
+<td>Tray address submenu and left-click dashboard</td>
+<td>(worked directly; recorded post-completion)</td>
+<td><code>docs/backlog/completed/platform/0029_tray_addresses_and_left_click.md</code></td>
+<td>2026-10-25</td>
+<td>Completed</td>
+<td><strong>Copy Address</strong> submenu copies any local or LAN endpoint; left click opens the dashboard on macOS 27 (menu attached only while shown, matching tray-icon 0.25.1).</td>
+<td><code>cargo check</code>; <code>cargo test</code> 24 passed; manual tray click check pending on packaged builds</td>
+</tr>
+<tr>
+<td>0030</td>
+<td>Internet access scope with a mandatory API key</td>
+<td>(worked directly; recorded post-completion)</td>
+<td><code>docs/backlog/completed/platform/0030_internet_access_scope.md</code></td>
+<td>2026-10-25</td>
+<td>Completed</td>
+<td><code>[security] network_scope</code> (loopback / private / any) enforced by the relay before auth; <strong>Anyone on the internet</strong> behind an inline confirmation, forces Protected auth.</td>
+<td><code>pytest -q</code> 731 passed; <code>cargo test</code>; desktop browser tests 27 passed; <code>mkdocs build</code></td>
+</tr>
+<tr>
+<td>0031</td>
+<td>Models table and pricing reference</td>
+<td>(worked directly; recorded post-completion)</td>
+<td><code>docs/backlog/completed/providers/0031_models_table_and_pricing_reference.md</code></td>
+<td>2026-10-25</td>
+<td>Completed</td>
+<td>Models tab is one table per provider (accounts, reasoning, structured output, cost, notes); <code>airelays.pricing</code> in <code>/v1/models</code> carries providers' API list prices as a relative cost indicator.</td>
+<td><code>pytest -q</code> 731 passed; browser test <code>test_models_table_browser.py</code> 6 passed; live <code>/v1/models</code> check</td>
+</tr>
 </tbody>
 </table>
 <h2 id="deprecated-work">Deprecated Work<a class="headerlink" href="#deprecated-work" title="Permanent link">&para;</a></h2>
@@ -1229,10 +1263,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

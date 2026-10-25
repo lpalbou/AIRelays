@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -432,6 +432,56 @@
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#who-can-connect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who Can Connect
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Who Can Connect">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#internet-access-from-a-headless-relay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Internet access from a headless relay
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reverse-proxies-and-trust_x_forwarded_for" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reverse proxies and trust_x_forwarded_for
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#public-address-lookup-desktop-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Public address lookup (desktop app)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1064,6 +1114,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#who-can-connect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who Can Connect
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Who Can Connect">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#internet-access-from-a-headless-relay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Internet access from a headless relay
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reverse-proxies-and-trust_x_forwarded_for" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reverse proxies and trust_x_forwarded_for
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#public-address-lookup-desktop-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Public address lookup (desktop app)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#claude-guardrails" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1157,6 +1257,8 @@
 <li><code>GET /healthz</code></li>
 </ul>
 <p>Detailed diagnostics live behind <code>GET /v1/relay/status</code> unless you intentionally launch an open local relay.</p>
+<p>Clients outside the configured <a href="#who-can-connect">network scope</a> get <code>403</code>
+on every route, public ones included.</p>
 <h2 id="relay-token">Relay Token<a class="headerlink" href="#relay-token" title="Permanent link">&para;</a></h2>
 <p>The normal path is:</p>
 <div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init
@@ -1194,6 +1296,108 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
 <p>Equivalent environment override:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">AIRELAYS_REQUIRE_BEARER_AUTH</span><span class="o">=</span><span class="nb">false</span><span class="w"> </span>airelays<span class="w"> </span>serve<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
+<p>Open mode is refused together with <code>network_scope = "any"</code> on a non-loopback
+listener; see <a href="#who-can-connect">Who Can Connect</a>.</p>
+<h2 id="who-can-connect">Who Can Connect<a class="headerlink" href="#who-can-connect" title="Permanent link">&para;</a></h2>
+<p><code>[security] network_scope</code> decides which client addresses the relay serves.
+Set it in <code>config.toml</code>, with <code>AIRELAYS_NETWORK_SCOPE</code>, with <code>airelays serve
+--network-scope</code>, or write it into a new config with <code>airelays init
+--network-scope</code>. The check runs on every route, public ones included, before
+rate limits and authentication, so a client outside the scope cannot even try
+API keys:</p>
+<table>
+<thead>
+<tr>
+<th>Scope</th>
+<th>Who may connect</th>
+<th>Refused clients get</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>loopback</code></td>
+<td>this machine only</td>
+<td><code>403 client_not_on_this_machine</code></td>
+</tr>
+<tr>
+<td><code>private</code> (default)</td>
+<td>this machine and private networks</td>
+<td><code>403 client_not_on_private_network</code></td>
+</tr>
+<tr>
+<td><code>any</code></td>
+<td>every address (requires the API key)</td>
+<td>nothing; rate limits and auth still apply</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Private networks</strong> are loopback (<code>127.0.0.0/8</code>, <code>::1</code>), <code>10.0.0.0/8</code>,
+  <code>172.16.0.0/12</code>, <code>192.168.0.0/16</code>, <code>100.64.0.0/10</code> (CGNAT, used by
+  Tailscale), link-local <code>169.254.0.0/16</code>, IPv6 unique local <code>fc00::/7</code> and
+  IPv6 link-local <code>fe80::/10</code>, including IPv4-mapped IPv6 forms. Documentation
+  and benchmarking ranges are not private. This is what the desktop app's
+  <strong>Devices on my network</strong> means, enforced by the relay itself rather than by
+  the router.</li>
+<li><strong>A loopback listener is always <code>loopback</code>.</strong> When the relay listens on
+  <code>127.0.0.1</code>, <code>localhost</code> or <code>::1</code> (the CLI default), only this machine can
+  reach it, whatever <code>network_scope</code> says; <code>airelays status</code> then reports
+  <code>loopback (this machine only); configured any, narrowed by the loopback
+  listener</code>. To serve other devices, listen on <code>0.0.0.0</code> as well.</li>
+<li><strong><code>any</code> requires bearer auth.</strong> The relay refuses to start, and <code>airelays
+  init</code> refuses to write a config, when the effective scope is <code>any</code> and
+  <code>require_bearer_auth = false</code> (including <code>--no-auth</code>). Everyone who has the
+  key can spend your subscription quota, and the relay speaks plain HTTP.
+  Rate limits and failed-auth blocking apply per client IP.</li>
+<li>Refused requests return OpenAI's error object with type <code>permission_error</code>
+  and are logged as <code>endpoint_rejected</code> traffic records with reason
+  <code>network_scope</code>.</li>
+<li><code>airelays init</code> and <code>airelays status</code> print the scope as <strong>Who can
+  connect</strong>; <code>GET /v1/relay/status</code> reports <code>relay.network_scope</code> (configured),
+  <code>relay.effective_network_scope</code> and <code>security.network_scope</code> (enforced).</li>
+</ul>
+<h3 id="internet-access-from-a-headless-relay">Internet access from a headless relay<a class="headerlink" href="#internet-access-from-a-headless-relay" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>airelays<span class="w"> </span>init<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--network-scope<span class="w"> </span>any<span class="w">   </span><span class="c1"># add --force to rewrite an existing config</span>
+airelays<span class="w"> </span>login<span class="w"> </span>--device
+airelays<span class="w"> </span>serve
+</code></pre></div>
+<p><code>airelays init</code> writes <code>--host</code>, <code>--port</code> and <code>--network-scope</code> when it
+creates the config file. On an existing file it stops and asks for <code>--force</code>
+(the file is then rewritten from the current settings plus these flags);
+alternatively edit <code>[server] host</code> and <code>[security] network_scope</code> by hand. You can also leave the file alone and
+run <code>airelays serve --host 0.0.0.0 --network-scope any</code>. The relay token is
+kept; show it with <code>airelays token show</code>.</p>
+<p>Then make the relay reachable:</p>
+<ol>
+<li>Forward the relay's TCP port (default <code>8080</code> for the CLI, <code>8317</code> for the
+   desktop app) on your router to this machine's private address.</li>
+<li>On macOS, allow incoming connections for the relay when the application
+   firewall asks; on Linux, open the port in your host firewall.</li>
+<li>Test from outside your network, for example from a phone on mobile data.
+   From inside the same network the public address only answers when the
+   router supports NAT loopback (hairpinning).</li>
+<li>For real use, put the relay behind a TLS reverse proxy (or reach it over a
+   VPN such as Tailscale, which <code>private</code> already allows) so the API key and
+   prompts do not cross the internet in plain HTTP.</li>
+</ol>
+<h3 id="reverse-proxies-and-trust_x_forwarded_for">Reverse proxies and <code>trust_x_forwarded_for</code><a class="headerlink" href="#reverse-proxies-and-trust_x_forwarded_for" title="Permanent link">&para;</a></h3>
+<p>By default the scope applies to the TCP peer address. A reverse proxy on the
+same machine therefore appears as <code>127.0.0.1</code>, and every request it forwards
+passes a <code>loopback</code> or <code>private</code> scope. With <code>trust_x_forwarded_for = true</code>
+the scope, the rate limits and the failed-auth blocks apply to the first
+<code>X-Forwarded-For</code> address, the original client; a proxy that forwards
+internet traffic then needs <code>network_scope = "any"</code>. Enable it only behind a
+proxy that overwrites that header. The Claude runtime refuses
+<code>trust_x_forwarded_for</code>.</p>
+<h3 id="public-address-lookup-desktop-app">Public address lookup (desktop app)<a class="headerlink" href="#public-address-lookup-desktop-app" title="Permanent link">&para;</a></h3>
+<p>To show the <strong>Internet</strong> address, the desktop app asks a public echo service
+for this machine's public IP over HTTPS (<code>https://api.ipify.org</code>, then
+<code>https://checkip.amazonaws.com</code> as a fallback; IPv4 preferred). It does so
+only while <strong>Anyone on the internet</strong> is selected: it re-checks a found
+address every ten minutes and retries a failed lookup after a minute. With
+any other scope it contacts no such service and forgets the address. The
+address shown is your router's public IP; clients reach it only once the
+router forwards the port.</p>
 <h2 id="claude-guardrails">Claude Guardrails<a class="headerlink" href="#claude-guardrails" title="Permanent link">&para;</a></h2>
 <p>When the Claude runtime is enabled:</p>
 <ul>
@@ -1203,8 +1407,9 @@ airelays<span class="w"> </span>serve<span class="w"> </span>--no-auth<span clas
   tools off; client tool calls are returned, never run (see
   <a href="../api/#tool-calls-on-claude-models">docs/api.md</a>)</li>
 <li>the runtime runs the <code>claude</code> CLI on the relay's machine and is served on the
-  relay's listener; in network mode, devices on your network can use your
-  Claude accounts, so keep the API key required there</li>
+  relay's listener; in network mode, devices on your network (or, with
+  <code>network_scope = "any"</code>, anyone who has the key) can use your Claude
+  accounts, so keep the API key required there</li>
 </ul>
 <p>AIRelays uses only Claude accounts it owns: profiles added through
 <code>airelays claude login</code>, each with its own CLI-owned credential store, and an
@@ -1233,11 +1438,12 @@ for that release asset. Downloads are trusted through HTTPS to GitHub; the
 installers are not code-signed. See
 <a href="../desktop/README.md#about-and-updates">desktop/README.md</a>.</p>
 <h2 id="rate-limits">Rate Limits<a class="headerlink" href="#rate-limits" title="Permanent link">&para;</a></h2>
-<p>Default single-process protections:</p>
+<p>Default single-process protections, applied per client IP after the
+<a href="#who-can-connect">network scope</a> check:</p>
 <ul>
 <li><code>120</code> requests/minute per IP</li>
 <li>burst <code>40</code></li>
-<li><code>8</code> concurrent requests per IP</li>
+<li><code>50</code> concurrent requests per IP</li>
 <li>temporary IP block after repeated bad tokens</li>
 </ul>
 <h2 id="upload-ceilings">Upload Ceilings<a class="headerlink" href="#upload-ceilings" title="Permanent link">&para;</a></h2>
@@ -1318,10 +1524,10 @@ See <a href="../configuration/#traffic-log-retention">configuration</a> for deta
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

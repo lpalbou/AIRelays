@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -444,6 +444,28 @@
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#get-healthz" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /healthz
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getput-v1relaybalance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET/PUT /v1/relay/balance
+      
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#traffic-log-retention-api" class="md-nav__link">
@@ -1158,6 +1180,28 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#get-healthz" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /healthz
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getput-v1relaybalance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET/PUT /v1/relay/balance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#traffic-log-retention-api" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1415,13 +1459,25 @@
 
 
 <h1 id="api-notes">API Notes<a class="headerlink" href="#api-notes" title="Permanent link">&para;</a></h1>
-<h2 id="traffic-log-retention-api">Traffic log retention API<a class="headerlink" href="#traffic-log-retention-api" title="Permanent link">&para;</a></h2>
+<p>Every route below answers only clients inside the relay's
+<a href="../security/#who-can-connect">network scope</a>; others get <code>403</code> (see
+<a href="#errors">Errors</a>). <code>/v1/*</code> and <code>/no-tools/v1/*</code> also need the relay token
+unless the relay runs in open mode. For setup, see
+<a href="../getting-started/">Getting Started</a>; for how a request flows through the
+relay, see <a href="../architecture/">Architecture</a>.</p>
+<h2 id="get-healthz"><code>GET /healthz</code><a class="headerlink" href="#get-healthz" title="Permanent link">&para;</a></h2>
+<p>Public (no relay token), but subject to the network scope. Returns
+<code>{"ok": true, "app_name": "AIRelays", "version": "X.Y.Z"}</code> with the running
+relay's version. It does not check provider sign-ins; use
+<code>GET /v1/relay/status</code> or <code>airelays doctor</code> for readiness.</p>
+<h2 id="getput-v1relaybalance"><code>GET</code>/<code>PUT /v1/relay/balance</code><a class="headerlink" href="#getput-v1relaybalance" title="Permanent link">&para;</a></h2>
 <p><code>GET /v1/relay/balance</code> returns the account-routing strategy of each provider pool
 (<code>openai</code>, <code>claude</code>) and the accepted names; <code>PUT /v1/relay/balance</code> with
 <code>{"openai": "ping_pong"}</code> and/or <code>{"claude": ...}</code> switches the running relay's
 strategy for the next request, no restart (runtime only: the config file and
 <code>AIRELAYS_*_BALANCE</code> still decide the next start; 422 on an unknown name).
 <code>airelays balance [strategy] [--provider claude]</code> is the CLI front for both.</p>
+<h2 id="traffic-log-retention-api">Traffic log retention API<a class="headerlink" href="#traffic-log-retention-api" title="Permanent link">&para;</a></h2>
 <p><code>GET /v1/relay/logging</code> returns current policy and disk usage without deleting
 logs. <code>PUT /v1/relay/logging</code> validates, persists and applies a partial policy
 update immediately; omitted fields retain their saved values. These routes use
@@ -1608,8 +1664,10 @@ adaptation records when the request shape itself is repaired:</p>
 <li>Configured OpenAI <code>extra_models</code> and Claude <code>models</code> extend discovery. They are retained for compatibility and may not have catalog confirmation. A missing or incompatible Claude CLI retains configured ids and the last successful catalog; <code>providers.claude.models_discovery_error</code> in relay status reports discovery failures. Failed Claude probes are cached for the same interval to avoid repeatedly launching a failing CLI.</li>
 <li>With several OpenAI accounts, discovery returns the union of successful catalogs and preserves each model's metadata. <code>airelays.account_availability</code> reports <code>supported</code> and <code>total</code> account counts without disclosing account identities. A failed account catalog does not hide models returned by other accounts. Routing retains last-known membership during catalog outages rather than broadening a known subset.</li>
 <li><code>airelays.catalog_visibility</code> and <code>airelays.description</code> preserve upstream metadata. Entries marked <code>hide</code> appear as <strong>upstream-hidden</strong> in the desktop; AIRelays does not infer their underlying identity or promote them as recommended models.</li>
-<li>Catalog discovery reports provider availability and capabilities; it does not generate a test response for every model. Account limits and upstream availability still apply when serving a request.</li>
+<li><code>airelays.pricing</code> is a reference to the provider's published pay-as-you-go API list price, or <code>null</code> when none is published for that model (codename-only or upstream-hidden catalog entries, for example). It carries <code>input_per_million</code>, <code>cached_input_per_million</code> (null when not published), <code>output_per_million</code>, <code>currency</code> (<code>USD</code>), <code>unit</code> (<code>per_million_tokens</code>), <code>as_of</code> (the date the price was checked), <code>source</code> (the pricing page), <code>matched_family</code> (the priced model id it matched), <code>basis</code> (tier and context notes, such as the short-context rate) and <code>cost_tier</code> (1 to 5 by output price). A model id matches its own entry or a dated snapshot of it (<code>claude-haiku-4-5-20251001</code> → <code>claude-haiku-4-5</code>); <code>claude:*</code> aliases are priced through <code>resolved_model</code>, and other variants get no price rather than a sibling's.</li>
 </ul>
+<p>These prices are <strong>not</strong> what a relay request costs. AIRelays runs on subscription quota, and subscription plans are not billed per token; the list price is only a relative cost indicator between models. The table is static in <code>airelay.model_pricing</code>, checked on the OpenAI and Anthropic pricing pages on 2026-10-25, and changes only with a release. The desktop Models tab shows it as <strong>Cost / 1M</strong> (input / output, "—" when <code>null</code>) and <code>airelays models</code> prints it; the desktop's <strong>Try it</strong> examples default to the chat model with the lowest output price, then input price.
+- Catalog discovery reports provider availability and capabilities; it does not generate a test response for every model. Account limits and upstream availability still apply when serving a request.</p>
 <p><code>GET /v1/models/{model}</code> returns that model's entry from the list (ids match
 case-insensitively, as for requests), or 404 <code>model_not_found</code>. While the
 OpenAI catalog cannot be fetched, OpenAI ids return the catalog error instead.</p>
@@ -1764,6 +1822,10 @@ account) carries <code>image_usage</code>: the image-generation quota as last re
 the relay's own image count for the window; <code>image_limited</code> and
 <code>image_limited_for_seconds</code> appear while an account's image bucket is
 benched (text requests are unaffected).</p>
+<p><code>relay.network_scope</code> is the configured <a href="../security/#who-can-connect">network scope</a>,
+and <code>relay.effective_network_scope</code> and <code>security.network_scope</code> the scope the
+relay enforces (<code>loopback</code> whenever it listens on a loopback address).
+<code>security</code> also reports the rate limits and the calling client's allowance.</p>
 <p><code>GET /v1/relay/status?activity_only=true</code> returns only
 <code>{"requests_total": N}</code>. It requires the same authentication as the full
 status, but it does not scan storage or probe providers, is not itself
@@ -1774,13 +1836,16 @@ clients such as the desktop tray can poll it frequently.</p>
 account and provider, text windows and the image-generation quota alike
 (<code>--json</code> for the raw payloads).</p>
 <p><code>airelays status</code> reports local config, relay-token, and provider readiness
-state. <code>airelays doctor</code> runs the same local checks and also probes the OpenAI
+state, and the enforced network scope as <strong>Who can connect</strong> (<code>airelays init</code>
+prints the same line). <code>airelays doctor</code> runs the same local checks and also probes the OpenAI
 upstream <code>/models</code> route plus a tiny <code>/responses</code> smoke request when the OpenAI
 runtime is enabled and logged in, and reports a <code>CLAUDE_CODE_OAUTH_TOKEN</code> set in
 the relay's environment, which AIRelays ignores. Use
 <code>airelays doctor --skip-response</code> to skip the response smoke request.
 <code>airelays models</code> lists every model id the running relay accepts, grouped by
-provider (<code>--json</code> supported). <code>airelays accounts resets</code> shows each OpenAI
+provider, with reasoning modes, structured-output types, alias resolutions and,
+for priced models, <code>list price: $X in / $Y out per 1M</code> (<code>--json</code> prints the raw
+<code>/v1/models</code> payload). <code>airelays accounts resets</code> shows each OpenAI
 account's usage resets and <code>airelays accounts redeem &lt;email&gt;</code> spends one
 through the running relay (see the two <code>/v1/relay/accounts/resets</code> routes
 above; <code>--yes</code> skips the confirmation, <code>--credit &lt;id&gt;</code> picks a credit).</p>
@@ -2039,6 +2104,15 @@ for existing AIRelays clients:</p>
   parameters and features return 422 (see ADR 0001)</li>
 <li>a Claude answer in <code>json_object</code> mode that is not one JSON object returns
   502 <code>invalid_json_output</code>; retrying usually helps, or use <code>json_schema</code></li>
+<li>a client outside the relay's <a href="../security/#who-can-connect">network scope</a>
+  gets 403 with type <code>permission_error</code> and code
+  <code>client_not_on_private_network</code> (scope <code>private</code>) or
+  <code>client_not_on_this_machine</code> (scope <code>loopback</code>), on every route and before
+  rate limits and auth (see
+  <a href="../troubleshooting/#403-client_not_on_private_network-or-client_not_on_this_machine">Troubleshooting</a>)</li>
+<li>a missing or wrong relay token returns 401 <code>invalid_api_key</code>; repeated bad
+  tokens from one IP return 429 <code>ip_temporarily_blocked</code>, and per-IP limits
+  return 429 <code>rate_limit_exceeded</code> or <code>too_many_concurrent_requests</code></li>
 <li>a quota or cooldown rejection returns 429 with a <code>Retry-After</code> header when
   the reset time is known (OpenAI SDKs then wait, or stop retrying when the
   reset is more than two minutes away); a Claude CLI that is not signed in
@@ -2246,10 +2320,10 @@ carries <code>x-should-retry: false</code>, so OpenAI SDKs do not retry it:</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>
