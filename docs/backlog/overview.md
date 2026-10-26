@@ -6,7 +6,7 @@ AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provi
 
 ## Counts
 
-- Planned: 3
+- Planned: 4
 - Proposed: 5
 - Completed: 14
 - Deprecated: 1
@@ -14,17 +14,19 @@ AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provi
 
 ## Priority
 
-Planned track [cross-platform runtime](planned/platform/README.md) (ADR 0008): 0022 relay lifecycle and single-instance tray (P1), then 0023 headless service install and 0024 signed installers (P2). Proposed items 0014 (wall-clock bench expiry) and 0015 (Claude token shape validation) are low-urgency hardening. Proposed item 0018 (metered embeddings capability slice) is a deliberately uncertain product-boundary idea gated on a new ADR amending ADR 0002 — do not implement without promotion.
+Planned item 0032 (P1, providers): thinking off and reasoning-token reporting on Claude models — today a client cannot turn Claude reasoning off and cannot see what it pays for. Planned track [cross-platform runtime](planned/platform/README.md) (ADR 0008): 0022 relay lifecycle and single-instance tray (P1), then 0023 headless service install and 0024 signed installers (P2). Proposed items 0014 (wall-clock bench expiry) and 0015 (Claude token shape validation) are low-urgency hardening. Proposed item 0018 (metered embeddings capability slice) is a deliberately uncertain product-boundary idea gated on a new ADR amending ADR 0002 — do not implement without promotion.
 
 ## Planned Tracks
 
 - [Cross-platform runtime](planned/platform/README.md)
+- [Provider runtimes](planned/providers/README.md)
 
 ## Planned Items
 
 - [0022_relay_lifecycle_and_single_instance_tray.md](planned/platform/0022_relay_lifecycle_and_single_instance_tray.md)
 - [0023_headless_service_install.md](planned/platform/0023_headless_service_install.md)
 - [0024_signed_installers.md](planned/platform/0024_signed_installers.md)
+- [0032_claude_thinking_off_and_reasoning_token_reporting.md](planned/providers/0032_claude_thinking_off_and_reasoning_token_reporting.md) — `reasoning_effort: "none"` on Claude models (thinking off through the CLI) and `reasoning_tokens` in usage; measured 2026-10-26: Claude Haiku 5.5 spends 3–9k hidden tokens per call and no tested switch disables it yet.
 
 ## Proposed Work
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-No active planned items
+One active planned item: 0032.
 
 ## Purpose
 
@@ -10,7 +10,9 @@ These items define how AIRelays grows from one subscription-backed runtime into 
 
 ## Items
 
-This planned track is currently empty. The initial provider-runtime work now lives under [completed/providers/README.md](../../completed/providers/README.md).
+- [0032_claude_thinking_off_and_reasoning_token_reporting.md](0032_claude_thinking_off_and_reasoning_token_reporting.md) — thinking off (`reasoning_effort: "none"`) on Claude models and honest reasoning-token reporting.
+
+The initial provider-runtime work lives under [completed/providers/README.md](../../completed/providers/README.md).
 
 ## Order
 
