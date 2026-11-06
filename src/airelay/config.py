@@ -259,6 +259,9 @@ class Settings:
     # (50% left vs 100% left -> 1:2); "ping_pong" visits each account once in
     # pool order and starts over.
     openai_balance: str = "balanced"
+    # Opt-in: if an account rejects reasoning=none with the typed capability
+    # error, retry once with that account's lowest advertised reasoning level.
+    openai_reasoning_fallback: bool = False
     # Extra OpenAI model ids to advertise in /v1/models beyond the upstream
     # catalog (which lags what the backend actually serves).
     openai_extra_models: tuple[str, ...] = DEFAULT_OPENAI_EXTRA_MODELS
@@ -494,6 +497,11 @@ class Settings:
             openai_balance=_normalized_balance(
                 _env("AIRELAYS_OPENAI_BALANCE")
                 or _cfg(payload, "providers", "openai", "balance")
+            ),
+            openai_reasoning_fallback=_bool(
+                _env("AIRELAYS_OPENAI_REASONING_FALLBACK")
+                or _cfg(payload, "providers", "openai", "reasoning_fallback"),
+                False,
             ),
             openai_account_cooldown_seconds=_int(
                 _env("AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS")
@@ -758,6 +766,7 @@ max_file_mb = {self.log_max_file_mb}
 enabled = {str(self.enable_openai_provider).lower()}
 models_cache_ttl_seconds = {self.models_cache_ttl_seconds}
 balance = {_toml_str(self.openai_balance)}
+reasoning_fallback = {str(self.openai_reasoning_fallback).lower()}
 account_cooldown_seconds = {self.openai_account_cooldown_seconds}
 retry_attempts = {self.openai_retry_attempts}
 retry_backoff_seconds = [{", ".join(str(delay) for delay in self.openai_retry_backoff_seconds)}]
@@ -816,6 +825,7 @@ models = [{", ".join(_toml_str(model) for model in self.claude_models)}]
                     "enabled": self.enable_openai_provider,
                     "models_cache_ttl_seconds": self.models_cache_ttl_seconds,
                     "balance": self.openai_balance,
+                    "reasoning_fallback": self.openai_reasoning_fallback,
                     "account_cooldown_seconds": self.openai_account_cooldown_seconds,
                     "retry_attempts": self.openai_retry_attempts,
                     "retry_backoff_seconds": list(self.openai_retry_backoff_seconds),

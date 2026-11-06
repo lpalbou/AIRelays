@@ -499,3 +499,20 @@ def test_subscription_status_reports_reset_credit_counts_as_integers() -> None:
         "available_count": 1, "applicable_available_count": None, "extra": 2,
     }
     assert normalize_subscription_status_payload({})["rate_limit_reset_credits"] is None
+
+
+@pytest.mark.parametrize("path", ROUTES)
+@pytest.mark.parametrize("streaming", [False, True])
+def test_reasoning_fallback_metadata_survives_route_translation(tmp_path, path, streaming):
+    metadata = {"reasoning_fallback": {"requested": "none", "effective": "low",
+                                       "reason": "reasoning_effort_not_allowed"}}
+    response = _response()
+    response["airelays"] = metadata
+    async def events(payload, request_id, session_id):
+        yield _created_event("resp_1")
+        yield SSEEvent("response.completed", json.dumps({"response": response}))
+    result = _client_post(tmp_path, path, _body(path, stream=streaming),
+                          collect=None if streaming else response, stream=events if streaming else None)
+    assert result.status_code == 200
+    payload = _data_lines(result.text)[-2] if streaming else result.json()
+    assert payload["airelays"] == metadata

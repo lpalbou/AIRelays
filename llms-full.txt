@@ -404,7 +404,9 @@ The image-generation quota is a separate 24-hour upstream bucket that the usage 
 
 ## Configuration
 
-Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/config.toml` → defaults. Notable keys: `[server] host/port`, `[security] require_bearer_auth/network_scope/trust_x_forwarded_for`, `[logging] stream_lines`, `retention_days`, `max_total_mb`, and `max_file_mb`, `[providers.openai] enabled/balance/account_cooldown_seconds/retry_attempts/retry_backoff_seconds`, `[providers.claude] enabled/bin/models/balance/oauth_token_file`. Saved log-directory retention policy overrides the three logging defaults. See docs/configuration.md for the full file shape and limits.
+Order: CLI flags → `AIRELAYS_*` environment variables → `~/.config/airelays/config.toml` → defaults. Notable keys: `[server] host/port`, `[security] require_bearer_auth/network_scope/trust_x_forwarded_for`, `[logging] stream_lines`, `retention_days`, `max_total_mb`, and `max_file_mb`, `[providers.openai] enabled/balance/reasoning_fallback/account_cooldown_seconds/retry_attempts/retry_backoff_seconds`, `[providers.claude] enabled/bin/models/balance/oauth_token_file`. Saved log-directory retention policy overrides the three logging defaults. See docs/configuration.md for the full file shape and limits.
+
+`[providers.openai] reasoning_fallback = true` (default false; environment `AIRELAYS_OPENAI_REASONING_FALLBACK`) opts into one same-account retry at its lowest advertised reasoning level only after a typed `reasoning_effort_not_allowed` rejection of `none`, before output. It may use more reasoning tokens. Responses report `airelays.reasoning_fallback` (`requested`, `effective`, `reason`); chat/completion streams carry it on the final chunk. A failed fallback is returned without further automatic retries. Desktop Settings preserves this choice across restarts.
 
 ## Diagnostics
 

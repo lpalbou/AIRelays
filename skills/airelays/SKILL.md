@@ -83,6 +83,13 @@ export AIRELAYS_TOKEN="$(tr -d '\n' < ~/.airelays/relay-token)"
   HTTP status, so OpenAI SDKs raise their usual status exceptions. Ignored
   parameters are listed in the `x-airelays-ignored-parameters` response
   header; every response has `x-request-id`.
+- **Reasoning fallback is opt-in.** `[providers.openai] reasoning_fallback = true`
+  permits one same-account retry at the lowest advertised reasoning level only
+  after upstream explicitly rejects `none` with `reasoning_effort_not_allowed`.
+  It can use more reasoning tokens. Check `airelays.reasoning_fallback` in the
+  response (final chat/completion stream chunk) and the traffic log for the
+  requested and effective levels. A failed fallback is returned without another
+  automatic retry. Leave the option false when exact reasoning settings matter.
 
 ## Capability map
 

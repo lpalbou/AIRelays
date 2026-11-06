@@ -470,6 +470,8 @@ def create_app(settings: Settings) -> FastAPI:
             # OpenAI SDKs wait this long, or give up when it exceeds their
             # retry ceiling, instead of retrying a spent quota blindly.
             headers = {"Retry-After": str(max(1, math.ceil(resets)))}
+        if not exc.retry_allowed:
+            headers = {**(headers or {}), **NOT_RETRYABLE}
         return logged_json(request_id, payload, status_code=exc.status_code, headers=headers)
 
     @app.exception_handler(RequestValidationError)
@@ -1699,6 +1701,8 @@ def create_app(settings: Settings) -> FastAPI:
                             finish_reason=finish_reason,
                             include_usage=usage_requested,
                         )
+                        if isinstance(response_obj.get("airelays"), dict):
+                            final_chunk["airelays"] = response_obj["airelays"]
                         yield f"data: {json.dumps(final_chunk, ensure_ascii=True)}\n\n".encode("utf-8")
                         usage = completion_usage_from_responses(latest_usage)
                         if usage_requested and usage is not None:
@@ -1879,6 +1883,8 @@ def create_app(settings: Settings) -> FastAPI:
                             if event.event == "response.incomplete" else "stop",
                             include_usage=usage_requested,
                         )
+                        if isinstance(response_obj.get("airelays"), dict):
+                            final_chunk["airelays"] = response_obj["airelays"]
                         yield f"data: {json.dumps(final_chunk, ensure_ascii=True)}\n\n".encode("utf-8")
                         usage = completion_usage_from_responses(response_obj.get("usage"))
                         if usage_requested and usage is not None:

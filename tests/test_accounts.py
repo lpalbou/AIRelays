@@ -1763,3 +1763,159 @@ async def test_redeem_spends_credit_then_releases_bench_from_fresh_usage(tmp_pat
     # A caller-supplied key is forwarded unchanged (retry-safe redeems).
     await pool.redeem_reset_credit("again", "a@example.com", redeem_request_id="client-key")
     assert consumed[-1] == ("client-key", None)
+
+
+# ---------- Explicit reasoning fallback ----------
+
+class ReasoningBackend(FakeBackend):
+    def __init__(self, name="a", *, levels=("high", "low", "medium"), error_code="reasoning_effort_not_allowed",
+                 in_band=False, late_event=None, accepts_none=False, retry_error=None):
+        super().__init__(name)
+        self.levels, self.error_code = levels, error_code
+        self.in_band, self.late_event = in_band, late_event
+        self.accepts_none, self.retry_error = accepts_none, retry_error
+        self.payloads = []
+        self.closed = 0
+
+    async def list_models(self, request_id):
+        return {"models": [{"slug": "reasoning-model", "supported_reasoning_levels":
+                             [{"effort": level} for level in self.levels]}]}
+
+    async def collect_response(self, payload, request_id, session_id):
+        from airelay.backend import ChatGptCodexBackend
+        return await ChatGptCodexBackend.collect_response(self, payload, request_id, session_id)
+
+    async def stream_response_events(self, payload, request_id, session_id):
+        from copy import deepcopy
+        self.calls += 1
+        self.payloads.append(deepcopy(payload))
+        try:
+            yield SSEEvent("response.created", json.dumps({"response": {"id": f"attempt-{self.calls}"}}))
+            if self.late_event:
+                yield SSEEvent(self.late_event, json.dumps({"delta": "partial", "item": {"type": "function_call"}}))
+            if not self.accepts_none and payload["reasoning"]["effort"] == "none":
+                error = {"error": {"code": self.error_code, "type": "invalid_request_error", "message": "Refused"}}
+                if self.in_band:
+                    yield SSEEvent("response.failed", json.dumps({"response": error}))
+                    return
+                raise BackendError(403, json.dumps(error))
+            if self.retry_error:
+                raise self.retry_error
+            yield SSEEvent("response.completed", json.dumps({"response": {"model": "reasoning-model",
+                "id": f"attempt-{self.calls}", "status": "completed", "output": [], "airelays": {"other": "kept"}}}))
+        finally:
+            self.closed += 1
+
+
+def reasoning_request():
+    return {"model": "reasoning-model", "reasoning": {"effort": "none", "summary": "auto"},
+            "input": "test", "max_output_tokens": 16, "metadata": {"caller": "preserved"}}
+
+
+async def reasoning_result(pool, payload, streaming):
+    if not streaming:
+        return await pool.collect_response(payload, "reasoning-test", "session")
+    events = [event async for event in pool.stream_response_events(payload, "reasoning-test", "session")]
+    # The rejected first attempt's buffered response.created never escapes.
+    assert json.loads(events[0].data)["response"]["id"] == "attempt-2"
+    return json.loads(events[-1].data)["response"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("in_band", [False, True])
+async def test_reasoning_fallback_one_same_account_retry_preserves_request(tmp_path, streaming, in_band):
+    from copy import deepcopy
+    settings = _settings(tmp_path, openai_reasoning_fallback=True, openai_balance="ordered")
+    traffic = RecordingTraffic()
+    a, b = ReasoningBackend(in_band=in_band), ReasoningBackend("b")
+    pool = _pool(settings, [a, b], traffic)
+    payload = reasoning_request()
+    original = deepcopy(payload)
+    result = await reasoning_result(pool, payload, streaming)
+    assert payload == original
+    assert (a.calls, b.calls, a.closed) == (2, 0, 2)
+    assert a.payloads[0] == original
+    expected = deepcopy(original)
+    expected["reasoning"]["effort"] = "low"
+    assert a.payloads[1] == expected
+    assert result["airelays"] == {"other": "kept", "reasoning_fallback": {
+        "requested": "none", "effective": "low", "reason": "reasoning_effort_not_allowed"}}
+    assert traffic.phases().count("reasoning_fallback") == 1
+    assert "account_failover" not in traffic.phases()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("case", ["disabled", "unrelated", "no_levels", "unknown_levels", "not_none"])
+async def test_reasoning_fallback_requires_explicit_policy_typed_error_and_catalog(tmp_path, streaming, case):
+    traffic = RecordingTraffic()
+    a = ReasoningBackend(levels=() if case == "no_levels" else ("surprise",) if case == "unknown_levels" else ("low",),
+                         error_code="permission_denied" if case == "unrelated" else "reasoning_effort_not_allowed")
+    pool = _pool(_settings(tmp_path, openai_reasoning_fallback=case != "disabled"), [a], traffic)
+    payload = reasoning_request()
+    if case == "not_none":
+        payload["reasoning"]["effort"] = "high"
+        a.retry_error = BackendError(403, json.dumps({"error": {"code": "reasoning_effort_not_allowed"}}))
+    with pytest.raises(BackendError) as exc:
+        await reasoning_result(pool, payload, streaming)
+    assert exc.value.status_code == 403
+    assert a.calls == 1
+    assert "reasoning_fallback" not in traffic.phases()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_reasoning_none_acceptance_is_preserved_despite_catalog_absence(tmp_path, streaming):
+    traffic = RecordingTraffic()
+    a = ReasoningBackend(accepts_none=True)
+    pool = _pool(_settings(tmp_path, openai_reasoning_fallback=True), [a], traffic)
+    if streaming:
+        events = [event async for event in pool.stream_response_events(reasoning_request(), "req", None)]
+        result = json.loads(events[-1].data)["response"]
+    else:
+        result = await pool.collect_response(reasoning_request(), "req", None)
+    assert a.calls == 1
+    assert "reasoning_fallback" not in result["airelays"]
+    assert "reasoning_fallback" not in traffic.phases()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("late_event", ["response.output_text.delta", "response.output_item.added"])
+@pytest.mark.parametrize("in_band", [False, True])
+async def test_reasoning_never_replays_after_output_or_tool_event(tmp_path, streaming, late_event, in_band):
+    traffic = RecordingTraffic()
+    a = ReasoningBackend(late_event=late_event, in_band=in_band)
+    pool = _pool(_settings(tmp_path, openai_reasoning_fallback=True), [a], traffic)
+    if streaming and in_band:
+        events = [event async for event in pool.stream_response_events(reasoning_request(), "req", None)]
+        assert events[-1].event == "response.failed"
+    else:
+        with pytest.raises(BackendError):
+            if streaming:
+                _ = [event async for event in pool.stream_response_events(reasoning_request(), "req", None)]
+            else:
+                await pool.collect_response(reasoning_request(), "req", None)
+    assert a.calls == 1
+    assert "reasoning_fallback" not in traffic.phases()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("status", [403, 429, 503])
+async def test_failed_reasoning_fallback_never_rotates_or_enters_outer_retry(tmp_path, streaming, status):
+    from airelay.retry import retry_call, RetryPolicy
+    traffic = RecordingTraffic()
+    error = BackendError(status, json.dumps({"error": {"code": "reasoning_effort_not_allowed", "message": "still refused"}}))
+    a, b = ReasoningBackend(retry_error=error), ReasoningBackend("b", accepts_none=True)
+    pool = _pool(_settings(tmp_path, openai_balance="ordered", openai_reasoning_fallback=True), [a, b], traffic)
+    async def operation():
+        return await reasoning_result(pool, reasoning_request(), streaming)
+    with pytest.raises(BackendError) as exc:
+        await retry_call(operation, policy=RetryPolicy(attempts=3, backoff_seconds=(0,)),
+                         request_id="req", traffic=traffic)
+    assert exc.value is error
+    assert (a.calls, b.calls) == (2, 0)
+    assert traffic.phases().count("reasoning_fallback") == 1
+    assert "retry_backoff" not in traffic.phases()

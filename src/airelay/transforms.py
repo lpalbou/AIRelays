@@ -1559,7 +1559,7 @@ def responses_to_chat_completion(response: dict[str, Any], *, legacy_functions: 
         finish_reason = "tool_calls"
     if response.get("status") == "incomplete":
         finish_reason = incomplete_finish_reason(response)
-    return _with_usage({
+    result = _with_usage({
         "id": response.get("id"),
         "object": "chat.completion",
         "created": created_timestamp(response.get("created_at"), int(time.time())),
@@ -1573,6 +1573,10 @@ def responses_to_chat_completion(response: dict[str, Any], *, legacy_functions: 
             }
         ],
     }, completion_usage_from_responses(response.get("usage")))
+
+    if isinstance(response.get("airelays"), dict):
+        result["airelays"] = response["airelays"]
+    return result
 
 
 def incomplete_finish_reason(response: dict[str, Any]) -> str:
@@ -1607,7 +1611,7 @@ def responses_to_completion(response: dict[str, Any]) -> dict[str, Any]:
         finish_reason = incomplete_finish_reason(response)
     else:
         finish_reason = "stop"
-    return _with_usage({
+    result = _with_usage({
         "id": response.get("id"),
         "object": "text_completion",
         "created": created_timestamp(response.get("created_at"), int(time.time())),
@@ -1621,6 +1625,10 @@ def responses_to_completion(response: dict[str, Any]) -> dict[str, Any]:
             }
         ],
     }, completion_usage_from_responses(response.get("usage")))
+
+    if isinstance(response.get("airelays"), dict):
+        result["airelays"] = response["airelays"]
+    return result
 
 
 def chat_completion_chunk(

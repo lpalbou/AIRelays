@@ -154,6 +154,10 @@ models_cache_ttl_seconds = 300.0
 # percentage of each plan's capacity; "round_robin" sends equal request
 # counts; "ordered" drains the first account first.
 balance = "balanced"
+# Opt-in: if upstream explicitly rejects reasoning=none, retry once on the
+# same account at its lowest advertised reasoning level. This may use more
+# tokens. False preserves the exact requested reasoning setting.
+reasoning_fallback = false
 # Extra model ids to advertise in /v1/models beyond the upstream catalog,
 # for operator-confirmed models omitted from automatic discovery.
 extra_models = []
@@ -239,6 +243,17 @@ address ranges, the 403 codes, the internet setup steps and the
   `airelays balance <strategy>` switches the running relay live (`PUT /v1/relay/balance`), without a restart;
   the desktop Settings selects do the same.
 - `AIRELAYS_OPENAI_EXTRA_MODELS` (comma-separated ids advertised beyond the upstream catalog)
+- `AIRELAYS_OPENAI_REASONING_FALLBACK` (`false` default). When enabled, a typed
+  `reasoning_effort_not_allowed` rejection of `none` triggers one retry on the
+  same account with its lowest advertised reasoning level. No fallback occurs
+  merely because `none` is absent from a catalog, for unrelated errors, or after
+  output begins. If the fallback attempt fails, its error is returned without
+  further automatic retries. Successful responses expose
+  `airelays.reasoning_fallback` with `requested`, `effective`, and `reason`;
+  streaming chat/completion responses include it on the final chunk, and
+  Responses streams include it on response objects. Traffic logs record the
+  `reasoning_fallback` phase. The desktop Settings toggle preserves this policy
+  across restarts. Strict behavior is restored by disabling the option.
 - `AIRELAYS_OPENAI_ACCOUNT_COOLDOWN_SECONDS`
 - `AIRELAYS_OPENAI_RETRY_ATTEMPTS` (automatic retries for failed upstream calls; `3` default, `0` disables)
 - `AIRELAYS_OPENAI_RETRY_BACKOFF_SECONDS` (comma-separated wait before each retry; `5,20,60` default)

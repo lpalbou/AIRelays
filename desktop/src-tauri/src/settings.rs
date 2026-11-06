@@ -68,6 +68,8 @@ pub struct AppSettings {
     /// capacity; "round_robin" sends equal request counts; "ping_pong" takes
     /// turns in order; "ordered" drains the first account first.
     pub openai_balance: String,
+    /// Opt-in same-account retry when upstream refuses reasoning=none.
+    pub openai_reasoning_fallback: bool,
     /// Extra OpenAI model ids to advertise beyond the upstream catalog
     /// (which lags what the backend actually serves), comma-separated.
     pub openai_extra_models_csv: String,
@@ -126,6 +128,7 @@ impl Default for AppSettings {
             enable_openai_provider: true,
             models_cache_ttl_seconds: 300.0,
             openai_balance: "balanced".into(),
+            openai_reasoning_fallback: false,
             openai_extra_models_csv: String::new(),
             openai_retry_attempts: 3,
             openai_retry_backoff_csv: "5, 20, 60".into(),
@@ -324,6 +327,7 @@ impl AppSettings {
                     enabled: self.enable_openai_provider,
                     models_cache_ttl_seconds: self.models_cache_ttl_seconds,
                     balance: &self.openai_balance,
+                    reasoning_fallback: self.openai_reasoning_fallback,
                     retry_attempts: self.openai_retry_attempts,
                     // validate() gates every render path (save and launch),
                     // so this branch is defense-in-depth against a future
@@ -424,6 +428,7 @@ struct OpenAiSection<'a> {
     enabled: bool,
     models_cache_ttl_seconds: f64,
     balance: &'a str,
+    reasoning_fallback: bool,
     retry_attempts: u32,
     retry_backoff_seconds: Vec<f64>,
     extra_models: Vec<String>,
@@ -557,6 +562,18 @@ fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasoning_fallback_is_opt_in_and_survives_settings_round_trip() {
+        let legacy: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(!legacy.openai_reasoning_fallback);
+        let settings: AppSettings = serde_json::from_str(r#"{"openaiReasoningFallback":true}"#).unwrap();
+        let saved = serde_json::to_string(&settings).unwrap();
+        let restored: AppSettings = serde_json::from_str(&saved).unwrap();
+        assert!(restored.openai_reasoning_fallback);
+        let rendered: toml::Value = toml::from_str(&restored.render_config_toml().unwrap()).unwrap();
+        assert_eq!(rendered["providers"]["openai"]["reasoning_fallback"].as_bool(), Some(true));
+    }
 
     fn scratch_dir(label: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()

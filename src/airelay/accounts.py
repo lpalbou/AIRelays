@@ -854,6 +854,73 @@ class OpenAiAccountPool:
         if session_id:
             self._pin(session_id, account.slot.slug)
 
+    def _reasoning_fallback(
+        self, payload: dict[str, Any], error: Exception, account: _PooledAccount, request_id: str,
+    ) -> tuple[dict[str, Any], dict[str, str]] | None:
+        """A capability rejection can opt into reasoning, never silently.
+
+        Catalog absence alone is not a rejection: some accounts accept `none`
+        even when their catalog omits it. Preserve the original request until
+        upstream explicitly refuses it, and use only this account's catalog.
+        """
+        reasoning = payload.get("reasoning")
+        if (not self._settings.openai_reasoning_fallback
+                or not isinstance(reasoning, dict) or reasoning.get("effort") != "none"
+                or not isinstance(error, BackendError) or error.status_code not in (400, 403)
+                or error.response_started):
+            return None
+        try:
+            failure = json.loads(error.detail)
+        except (TypeError, ValueError):
+            return None
+        failure = failure.get("error") if isinstance(failure, dict) else None
+        if not isinstance(failure, dict) or failure.get("code") != "reasoning_effort_not_allowed":
+            return None
+        models = (account.models_payload or {}).get("models")
+        if not isinstance(models, list):
+            return None
+        model = str(payload.get("model", "")).lower()
+        catalog = next((item for item in models if isinstance(item, dict)
+                        and str(item.get("slug", "")).lower() == model), {})
+        levels = catalog.get("supported_reasoning_levels")
+        if not isinstance(levels, list):
+            return None
+        supported = {item.get("effort") for item in levels
+                     if isinstance(item, dict) and isinstance(item.get("effort"), str)}
+        # Explicit order, independent of catalog ordering. Unknown modes are
+        # not inferred; the original error is safer than an invented setting.
+        effective = next((level for level in ("minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+                          if level in supported), None)
+        if effective is None:
+            return None
+        metadata = {"requested": "none", "effective": effective,
+                    "reason": "reasoning_effort_not_allowed"}
+        self._traffic.write({"request_id": request_id, "phase": "reasoning_fallback",
+                             "account": account.slot.slug, "model": payload.get("model"), **metadata})
+        return {**payload, "reasoning": {**reasoning, "effort": effective}}, metadata
+
+    @staticmethod
+    def _annotate_reasoning(response: dict[str, Any], fallback: dict[str, str] | None) -> dict[str, Any]:
+        if fallback is None:
+            return response
+        # A relay-owned extension, separate from user-supplied `metadata`.
+        metadata = response.get("airelays")
+        return {**response, "airelays": {**(metadata if isinstance(metadata, dict) else {}),
+                                        "reasoning_fallback": fallback}}
+
+    @classmethod
+    def _annotate_reasoning_event(cls, event: SSEEvent, fallback: dict[str, str] | None) -> SSEEvent:
+        if fallback is None:
+            return event
+        try:
+            parsed = json.loads(event.data)
+        except ValueError:
+            return event
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("response"), dict):
+            return event
+        parsed["response"] = cls._annotate_reasoning(parsed["response"], fallback)
+        return SSEEvent(event=event.event, data=json.dumps(parsed))
+
     # ----- backend surface consumed by app.py -----
 
     async def collect_response(
@@ -865,17 +932,32 @@ class OpenAiAccountPool:
             await self._refresh_routing_models(request_id)
         attempts = self._attempt_order(session_id, model)
         last_error: Exception | None = None
+        fallback = None
         for index, account in enumerate(attempts):
             self._log_selection(request_id, account, index)
             try:
-                result = await account.backend.collect_response(payload, request_id, session_id)
+                try:
+                    result = await account.backend.collect_response(payload, request_id, session_id)
+                except BackendError as error:
+                    retry = self._reasoning_fallback(payload, error, account, request_id) if fallback is None else None
+                    if retry is None:
+                        raise
+                    payload, fallback = retry
+                    result = await account.backend.collect_response(payload, request_id, session_id)
                 self._repin(session_id, account)
                 if isinstance(result, dict):
                     self._tally.record(
                         account.slot.account_id, result.get("model"), result.get("usage")
                     )
-                return result
+                return self._annotate_reasoning(result, fallback)
             except (BackendError, AuthenticationError) as error:
+                if fallback is not None:
+                    # The one same-account fallback failed. Preserve its error
+                    # and stop: neither account failover nor outer transport
+                    # retry may expand this into repeated semantic changes.
+                    if isinstance(error, BackendError):
+                        error.retry_allowed = False
+                    raise
                 bench = self._failover_bench(error)
                 if bench is None:
                     # Request-scoped failure (client error): every account
@@ -910,67 +992,80 @@ class OpenAiAccountPool:
         if model:
             await self._refresh_routing_models(request_id)
         attempts = self._attempt_order(session_id, model)
+        fallback = None
         for index, account in enumerate(attempts):
             self._log_selection(request_id, account, index)
-            stream = account.backend.stream_response_events(payload, request_id, session_id)
-            started = False
-            buffered: list[SSEEvent] = []
-            try:
-                async for event in stream:
+            while True:
+                stream = account.backend.stream_response_events(payload, request_id, session_id)
+                started = False
+                buffered: list[SSEEvent] = []
+                try:
+                    async for event in stream:
+                        event = self._annotate_reasoning_event(event, fallback)
+                        if not started:
+                            if event.event in PRE_CONTENT_EVENTS:
+                                buffered.append(event)
+                                continue
+                            if event.event in FAILURE_EVENTS:
+                                # Convert a pre-content failure event into the
+                                # structured error so this attempt benches and
+                                # fails over exactly like the non-streaming
+                                # path (the 2026-08-01 incident grammar was
+                                # `created` → `error` → `response.failed`).
+                                try:
+                                    parsed = json.loads(event.data)
+                                except json.JSONDecodeError:
+                                    parsed = None
+                                raise failure_backend_error(stream_error_object(parsed))
+                            started = True
+                            self._repin(session_id, account)
+                            for pending in buffered:
+                                yield pending
+                            buffered = []
+                        if event.event in SUCCESS_TERMINAL_EVENTS:
+                            self._record_stream_usage(account, event)
+                        yield event
                     if not started:
-                        if event.event in PRE_CONTENT_EVENTS:
-                            buffered.append(event)
+                        # The upstream closed the stream before producing any
+                        # content, terminal, or failure event.
+                        raise failure_backend_error(None)
+                    return
+                except (BackendError, AuthenticationError) as error:
+                    # Failover is only honest before the first byte reached the
+                    # client; afterwards the stream must die visibly. Client
+                    # errors (bench is None) never rotate at all: the request
+                    # itself is what upstream rejected.
+                    if fallback is not None:
+                        if isinstance(error, BackendError):
+                            error.retry_allowed = False
+                        raise
+                    if not started:
+                        retry = self._reasoning_fallback(payload, error, account, request_id)
+                        if retry is not None:
+                            payload, fallback = retry
                             continue
-                        if event.event in FAILURE_EVENTS:
-                            # Convert a pre-content failure event into the
-                            # structured error so this attempt benches and
-                            # fails over exactly like the non-streaming
-                            # path (the 2026-08-01 incident grammar was
-                            # `created` → `error` → `response.failed`).
-                            try:
-                                parsed = json.loads(event.data)
-                            except json.JSONDecodeError:
-                                parsed = None
-                            raise failure_backend_error(stream_error_object(parsed))
-                        started = True
-                        self._repin(session_id, account)
-                        for pending in buffered:
-                            yield pending
-                        buffered = []
-                    if event.event in SUCCESS_TERMINAL_EVENTS:
-                        self._record_stream_usage(account, event)
-                    yield event
-                if not started:
-                    # The upstream closed the stream before producing any
-                    # content, terminal, or failure event.
-                    raise failure_backend_error(None)
-                return
-            except (BackendError, AuthenticationError) as error:
-                # Failover is only honest before the first byte reached the
-                # client; afterwards the stream must die visibly. Client
-                # errors (bench is None) never rotate at all: the request
-                # itself is what upstream rejected.
-                bench = self._failover_bench(error)
-                if bench is None or started:
-                    raise self._final_error(error) from error
-                cooldown, kind = bench
-                self._mark_limited(account, cooldown, self._error_reason(error), kind)
-                if index == len(attempts) - 1:
-                    raise self._final_error(error) from error
-                self._log_failover(
-                    request_id,
-                    _FailoverDecision(
-                        from_account=account.slot.slug,
-                        to_account=attempts[index + 1].slot.slug,
-                        reason=self._error_reason(error),
-                    ),
-                    cooldown,
-                )
-            finally:
-                # A consumer that stops mid-stream (in-band failure, client
-                # disconnect) must release the upstream HTTP stream now, not
-                # whenever the abandoned generator happens to be finalized.
-                await stream.aclose()
+                    bench = self._failover_bench(error)
+                    if bench is None or started:
+                        raise self._final_error(error) from error
+                    cooldown, kind = bench
+                    self._mark_limited(account, cooldown, self._error_reason(error), kind)
+                    if index == len(attempts) - 1:
+                        raise self._final_error(error) from error
+                    self._log_failover(
+                        request_id,
+                        _FailoverDecision(
+                            from_account=account.slot.slug,
+                            to_account=attempts[index + 1].slot.slug,
+                            reason=self._error_reason(error),
+                        ),
+                        cooldown,
+                    )
+                    break
+                finally:
+                    # A consumer that stops mid-stream (in-band failure, client
+                    # disconnect) must release the upstream HTTP stream now, not
+                    # whenever the abandoned generator happens to be finalized.
+                    await stream.aclose()
 
     # ----- images -----
 
