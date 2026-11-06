@@ -4,7 +4,7 @@ description: Run and use AIRelays, a local OpenAI-compatible HTTP relay backed b
 license: MIT
 compatibility: Python 3.11+ on macOS, Linux or Windows. Needs the user's own ChatGPT and/or Claude subscription sign-in (interactive, done by the user), and the `claude` CLI for Claude models.
 metadata:
-  package-version: "0.22.0"
+  package-version: "0.22.1"
 ---
 
 # AIRelays

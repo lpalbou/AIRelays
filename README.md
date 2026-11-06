@@ -457,9 +457,12 @@ Parameters that would change the output and cannot be honored (`stop`,
 `logprobs`, `logit_bias`, `web_search_options`, `moderation`, and others
 listed in [docs/api.md](docs/api.md)) are rejected with a 422 instead.
 
-**Reasoning effort is forwarded, not invented.** `reasoning_effort` (chat
+**Reasoning effort is preserved by default.** `reasoning_effort` (chat
 completions) and `reasoning: {"effort": ...}` (responses) pass through to
-the upstream unchanged. Every model's supported modes are published in
+the upstream unchanged. An optional [reasoning fallback](docs/configuration.md)
+retries an explicit upstream rejection of `none` once on the same account
+with its lowest advertised reasoning level; it may use more reasoning tokens.
+The response reports the requested and effective effort. Every model's supported modes are published in
 `/v1/models` under `airelays.reasoning`, using provider catalog metadata
 when available. Modes vary by model and may include `max` or `ultra`.
 Claude modes map to the local CLI's `--effort` flag; unsupported values
@@ -582,7 +585,7 @@ Important toggles:
 ## For AI agents
 
 If you are an AI agent, you can register and use our agent skill
-[`airelays`](https://github.com/lpalbou/AIRelays/tree/main/skills/airelays) to
+[`airelays`](https://github.com/lpalbou/AIRelays/tree/v0.22.1/skills/airelays) to
 become an expert on this package. Install it by copying the `skills/airelays/`
 folder of the version you use into your agent's skills directory (for example
 `~/.claude/skills` for Claude Code; see your agent's documentation for its
@@ -591,7 +594,7 @@ skills directory):
 ```bash
 SKILLS_DIR=~/.claude/skills
 tmp="$(mktemp -d)"
-git clone --depth 1 --branch main https://github.com/lpalbou/AIRelays.git "$tmp" \
+git clone --depth 1 --branch v0.22.1 https://github.com/lpalbou/AIRelays.git "$tmp" \
   && mkdir -p "$SKILLS_DIR" && cp -R "$tmp/skills/airelays" "$SKILLS_DIR/" \
   && echo "installed: $SKILLS_DIR/airelays"
 rm -rf "$tmp"

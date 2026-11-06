@@ -105,17 +105,29 @@ adaptation records when the request shape itself is repaired:
   `verbosity` is forwarded as the Responses `text.verbosity`, and
   `prompt_cache_key` is forwarded as-is.
 - **Reasoning effort:** `reasoning_effort` (chat completions and
-  completions) and `reasoning.effort` (responses) are forwarded verbatim
+  completions) and `reasoning.effort` (responses) are forwarded unchanged by default
   to OpenAI models; on `claude:*` models `reasoning_effort` maps to the
   local CLI's `--effort` flag on both text routes. An explicit JSON `null`
   is treated as absent. Each model's supported modes and default are published
   in `/v1/models` under `airelays.reasoning`. Unsupported Claude values are
   rejected with the supported list (the CLI would silently ignore them);
-  unsupported OpenAI values surface the upstream's own error. Modes and
+  unsupported OpenAI values surface the upstream's own error by default. Modes and
   defaults come from the provider catalog when available and vary by model.
   Omitting effort leaves the choice to the provider; Claude can use an
   adaptive default. An empty Claude modes list means no effort parameter
   is advertised for that model.
+- **Opt-in reasoning fallback (OpenAI):** enable `[providers.openai]
+  reasoning_fallback = true` to retry a typed `reasoning_effort_not_allowed`
+  rejection of `none` once on the same account at its lowest advertised effort.
+  This can use more reasoning tokens. Model and other settings are preserved;
+  catalog absence alone, unrelated errors, and failures after output starts do
+  not trigger fallback. Success includes the relay-owned extension
+  `airelays.reasoning_fallback = {"requested": "none", "effective": "low",
+  "reason": "reasoning_effort_not_allowed"}` (`effective` depends on the catalog).
+  Responses streams carry it in response objects; chat/completion streams carry
+  it on the final chunk. A failed fallback returns its original error without
+  further relay retries and sets `x-should-retry: false` for compatible SDKs.
+  See [configuration](configuration.md) for environment and desktop settings.
 - **Structured outputs:** `response_format.type=json_schema` is forwarded
   (translated) to OpenAI models. With `strict: true`, the schema is
   rewritten to OpenAI's strict-mode form: every property becomes required,
