@@ -36,7 +36,7 @@ airelays serve --help | grep -q -- --network-scope \
 ```
 
 On macOS and Linux the one-line installer also works:
-`curl -fsSL https://raw.githubusercontent.com/lpalbou/AIRelays/main/scripts/install-headless.sh | bash`.
+`curl -fsSL https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/scripts/install-headless.sh | bash`.
 
 Compare the printed version with `metadata.package-version`; when they differ,
 the docs of the installed version win. A running relay reports its version
@@ -229,13 +229,13 @@ user before choosing `any`.
 | 422 naming a parameter | the relay cannot honor it | remove it; see the capability limits above |
 | 404 `model_not_found` | id not in the catalog | pick an id from `/v1/models` |
 
-Everything else: <https://raw.githubusercontent.com/lpalbou/AIRelays/main/docs/troubleshooting.md>.
+Everything else: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/docs/troubleshooting.md>.
 
 ## Go deeper
 
-- Getting started: <https://raw.githubusercontent.com/lpalbou/AIRelays/main/docs/getting-started.md>
-- API notes (routes, fields, errors): <https://raw.githubusercontent.com/lpalbou/AIRelays/main/docs/api.md>
-- GPT vs Claude capability matrix: <https://raw.githubusercontent.com/lpalbou/AIRelays/main/docs/capabilities.md>
-- Network scope, auth, internet setup: <https://raw.githubusercontent.com/lpalbou/AIRelays/main/docs/security.md>
-- Configuration keys and environment variables: <https://raw.githubusercontent.com/lpalbou/AIRelays/main/docs/configuration.md>
-- Whole doc set in one file: <https://raw.githubusercontent.com/lpalbou/AIRelays/main/llms-full.txt>
+- Getting started: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/docs/getting-started.md>
+- API notes (routes, fields, errors): <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/docs/api.md>
+- GPT vs Claude capability matrix: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/docs/capabilities.md>
+- Network scope, auth, internet setup: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/docs/security.md>
+- Configuration keys and environment variables: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/docs/configuration.md>
+- Whole doc set in one file: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/llms-full.txt>
