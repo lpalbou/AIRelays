@@ -554,6 +554,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#openai-rejects-reasoning-off" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI rejects reasoning off
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#desktop-app-install" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1240,6 +1251,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#openai-rejects-reasoning-off" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI rejects reasoning off
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#desktop-app-install" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1579,6 +1601,18 @@
 
 
 <h1 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h1>
+<h2 id="openai-rejects-reasoning-off">OpenAI rejects reasoning off<a class="headerlink" href="#openai-rejects-reasoning-off" title="Permanent link">&para;</a></h2>
+<p>A <code>reasoning_effort_not_allowed</code> error means the selected subscription account
+refused the requested effort. Check <code>/v1/models</code> for the account pool's advertised
+modes. To permit minimum reasoning when <code>none</code> is rejected, enable the desktop
+Settings option <strong>Allow minimum reasoning when an account refuses reasoning off</strong>
+or set <code>[providers.openai] reasoning_fallback = true</code> and restart the relay.</p>
+<p>The relay attempts <code>none</code> first, then retries once on the same account with its
+lowest advertised effort. Inspect the <code>reasoning_fallback</code> traffic event or
+<code>airelays.reasoning_fallback</code> response metadata for the effective value. It may
+use more reasoning tokens. If the retry fails, the error is returned without
+further automatic retries. Leave the option disabled when exact reasoning
+settings are required. See <a href="../configuration/">configuration</a>.</p>
 <h2 id="desktop-app-install">Desktop app install<a class="headerlink" href="#desktop-app-install" title="Permanent link">&para;</a></h2>
 <p>The desktop builds are not notarized (macOS) or code-signed (Windows), so
 the operating system may warn when you install them by hand. The one-line

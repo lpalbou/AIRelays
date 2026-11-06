@@ -703,6 +703,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#can-reasoning-off-fall-back-when-an-openai-account-refuses-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can reasoning off fall back when an OpenAI account refuses it?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#which-model-is-behind-a-claude-alias" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1339,6 +1350,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#can-reasoning-off-fall-back-when-an-openai-account-refuses-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can reasoning off fall back when an OpenAI account refuses it?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#which-model-is-behind-a-claude-alias" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1559,6 +1581,13 @@ provider catalogs when available, including <code>max</code> and <code>ultra</co
 reported. Omitted effort uses the provider's default; Claude can use an
 adaptive default. See
 <a href="../api/">API notes</a> for details.</p>
+<h2 id="can-reasoning-off-fall-back-when-an-openai-account-refuses-it">Can reasoning off fall back when an OpenAI account refuses it?<a class="headerlink" href="#can-reasoning-off-fall-back-when-an-openai-account-refuses-it" title="Permanent link">&para;</a></h2>
+<p>Yes, explicitly opt in with <code>[providers.openai] reasoning_fallback = true</code>
+or the desktop Settings toggle. The relay first sends <code>none</code> unchanged. Only
+a typed <code>reasoning_effort_not_allowed</code> rejection permits one same-account
+retry at the lowest advertised effort. This may use more reasoning tokens;
+<code>airelays.reasoning_fallback</code> reports the requested and effective values.
+The default is strict. See <a href="../configuration/">configuration</a>.</p>
 <h2 id="which-model-is-behind-a-claude-alias">Which model is behind a Claude alias?<a class="headerlink" href="#which-model-is-behind-a-claude-alias" title="Permanent link">&para;</a></h2>
 <p>The Models tab and <code>airelays models</code> show the concrete model reported by
 the installed Claude CLI. For example, a CLI can resolve <code>claude:fable</code>
