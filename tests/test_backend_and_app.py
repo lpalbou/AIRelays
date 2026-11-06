@@ -3306,7 +3306,10 @@ def test_local_routes_reject_when_no_runtime_is_enabled(tmp_path) -> None:
     assert "OpenAI or the Claude runtime" in conversations_response.json()["detail"]
 
 
-def test_wrong_token_attempts_trigger_temporary_ip_block(tmp_path) -> None:
+def test_wrong_token_attempts_trigger_temporary_ip_block(tmp_path, monkeypatch) -> None:
+    # Keep the Retry-After contract independent of OS clock resolution and
+    # floating-point cancellation at large monotonic timestamps.
+    monkeypatch.setattr("airelay.security.time", SimpleNamespace(monotonic=lambda: 1000.0))
     settings = make_settings(
         tmp_path,
         require_bearer_auth=True,

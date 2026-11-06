@@ -1,5 +1,20 @@
 # Troubleshooting
 
+## OpenAI rejects reasoning off
+
+A `reasoning_effort_not_allowed` error means the selected subscription account
+refused the requested effort. Check `/v1/models` for the account pool's advertised
+modes. To permit minimum reasoning when `none` is rejected, enable the desktop
+Settings option **Allow minimum reasoning when an account refuses reasoning off**
+or set `[providers.openai] reasoning_fallback = true` and restart the relay.
+
+The relay attempts `none` first, then retries once on the same account with its
+lowest advertised effort. Inspect the `reasoning_fallback` traffic event or
+`airelays.reasoning_fallback` response metadata for the effective value. It may
+use more reasoning tokens. If the retry fails, the error is returned without
+further automatic retries. Leave the option disabled when exact reasoning
+settings are required. See [configuration](configuration.md).
+
 ## Desktop app install
 
 The desktop builds are not notarized (macOS) or code-signed (Windows), so

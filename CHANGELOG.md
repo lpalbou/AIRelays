@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.22.1
+
+### Fixed
+
+- OpenAI subscription accounts can opt into one same-account retry when upstream
+  rejects `reasoning_effort: none` with `reasoning_effort_not_allowed`. The retry
+  uses that account's lowest advertised reasoning level and preserves the model
+  and other request settings. Strict behavior remains the default; enable
+  `[providers.openai] reasoning_fallback = true` or the desktop Settings toggle.
+- Reasoning fallback does not replay output or tool events, retry unrelated
+  errors, or repeatedly retry a failed fallback. A failed fallback returns its
+  error and tells compatible clients not to retry automatically.
+- Successful fallbacks disclose requested and effective effort in
+  `airelays.reasoning_fallback` response metadata and traffic logs, including
+  the final chat/completion stream chunk. The desktop saves the opt-in choice
+  across restarts. See [configuration](docs/configuration.md) for details.
+
 ## 0.22.0
 
 ### Added

@@ -169,6 +169,15 @@ reported. Omitted effort uses the provider's default; Claude can use an
 adaptive default. See
 [API notes](api.md) for details.
 
+## Can reasoning off fall back when an OpenAI account refuses it?
+
+Yes, explicitly opt in with `[providers.openai] reasoning_fallback = true`
+or the desktop Settings toggle. The relay first sends `none` unchanged. Only
+a typed `reasoning_effort_not_allowed` rejection permits one same-account
+retry at the lowest advertised effort. This may use more reasoning tokens;
+`airelays.reasoning_fallback` reports the requested and effective values.
+The default is strict. See [configuration](configuration.md).
+
 ## Which model is behind a Claude alias?
 
 The Models tab and `airelays models` show the concrete model reported by
