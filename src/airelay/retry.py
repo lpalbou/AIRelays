@@ -57,7 +57,7 @@ class RetryPolicy:
 
 
 def is_retriable(error: BackendError) -> bool:
-    return error.status_code == _RETRIABLE_EXACT or error.status_code >= _RETRIABLE_MIN
+    return error.retry_allowed and (error.status_code == _RETRIABLE_EXACT or error.status_code >= _RETRIABLE_MIN)
 
 
 def _resets_in_seconds(error: BackendError) -> float | None:

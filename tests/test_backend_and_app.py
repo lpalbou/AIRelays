@@ -3641,3 +3641,25 @@ def test_reset_credit_routes_surface_pool_errors(tmp_path) -> None:
     assert "name one with `account`" in redeem.text
     assert listing.status_code == 404
     assert "Unknown account `zzz`" in listing.text
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_failed_bounded_fallback_tells_sdk_not_to_retry(tmp_path, status):
+    app = create_app(make_settings(tmp_path))
+    async def fail(payload, request_id, session_id):
+        error = BackendError(status, '{"error":{"code":"fallback_failed","message":"Upstream failed"}}')
+        error.retry_allowed = False
+        raise error
+    with TestClient(app) as client:
+        client.app.state.backend.collect_response = fail
+        result = client.post('/v1/chat/completions', json={"model": "gpt-5.4-mini",
+                            "messages": [{"role": "user", "content": "test"}]})
+    assert result.status_code == status
+    assert result.headers['x-should-retry'] == 'false'
+    assert result.json()['error']['code'] == 'fallback_failed'
+
+
+def test_reasoning_capability_code_alone_is_a_client_error():
+    from airelay.backend import failure_backend_error
+    error = failure_backend_error({"code": "reasoning_effort_not_allowed", "message": "Refused"})
+    assert error.status_code == 400

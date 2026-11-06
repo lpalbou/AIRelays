@@ -19,6 +19,11 @@ class BackendError(RuntimeError):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+        # Collected Responses still stream upstream. Capability fallback must
+        # never replay a request that already produced output/tool events.
+        self.response_started = False
+        # A bounded semantic fallback must not be repeated by transport retry.
+        self.retry_allowed = True
         # The image bucket as reported by the failing image response's
         # headers (a 429 still carries them), so the pool can bench the
         # image quota without a second call. None on every other route.
@@ -70,6 +75,7 @@ _CLIENT_ERROR_CODES = frozenset(
         "invalid_value",
         "unsupported_value",
         "unsupported_parameter",
+        "reasoning_effort_not_allowed",
         "unknown_parameter",
         "string_above_max_length",
     }
@@ -385,28 +391,37 @@ class ChatGptCodexBackend:
         succeeded = False
         saw_failure = False
         failure: dict[str, Any] | None = None
-        async for event in self.stream_response_events(payload, request_id, session_id):
-            try:
-                parsed = json.loads(event.data)
-            except json.JSONDecodeError:
-                continue
-            response = parsed.get("response")
-            if isinstance(response, dict):
-                latest_response = {**(latest_response or {}), **response}
-            if event.event in SUCCESS_TERMINAL_EVENTS:
-                succeeded = True
-            elif event.event in FAILURE_EVENTS:
-                saw_failure = True
-                if failure is None:
-                    failure = stream_error_object(parsed)
-            if event.event == "response.output_item.done":
-                item = parsed.get("item")
-                output_index = parsed.get("output_index")
-                if isinstance(item, dict) and isinstance(output_index, int):
-                    output_by_index[output_index] = item
+        response_started = False
+        try:
+            async for event in self.stream_response_events(payload, request_id, session_id):
+                if event.event not in ("response.created", "response.in_progress", *FAILURE_EVENTS):
+                    response_started = True
+                try:
+                    parsed = json.loads(event.data)
+                except json.JSONDecodeError:
+                    continue
+                response = parsed.get("response")
+                if isinstance(response, dict):
+                    latest_response = {**(latest_response or {}), **response}
+                if event.event in SUCCESS_TERMINAL_EVENTS:
+                    succeeded = True
+                elif event.event in FAILURE_EVENTS:
+                    saw_failure = True
+                    if failure is None:
+                        failure = stream_error_object(parsed)
+                if event.event == "response.output_item.done":
+                    item = parsed.get("item")
+                    output_index = parsed.get("output_index")
+                    if isinstance(item, dict) and isinstance(output_index, int):
+                        output_by_index[output_index] = item
+        except BackendError as error:
+            error.response_started = error.response_started or response_started
+            raise
         if not succeeded:
             if saw_failure:
-                raise failure_backend_error(failure)
+                error = failure_backend_error(failure)
+                error.response_started = response_started
+                raise error
             if latest_response is None:
                 raise BackendError(502, "Upstream stream ended without a response payload.")
             raise failure_backend_error(None)

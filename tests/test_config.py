@@ -230,3 +230,14 @@ def test_serve_balance_flag_overrides_config(tmp_path: Path, monkeypatch) -> Non
     args = build_parser().parse_args(["serve", "--config", str(tmp_path / "missing.toml"), "--balance", "ping_pong"])
     assert _base_settings(args).openai_balance == "ping_pong"
     assert _base_settings(argparse.Namespace(config=str(tmp_path / "missing.toml"))).openai_balance == "ordered"
+
+
+def test_reasoning_fallback_defaults_strict_and_round_trips(tmp_path, monkeypatch):
+    monkeypatch.delenv("AIRELAYS_OPENAI_REASONING_FALLBACK", raising=False)
+    path = tmp_path / "config.toml"
+    assert Settings.from_sources(path).openai_reasoning_fallback is False
+    settings = Settings(config_path=path, data_dir=tmp_path / "data", openai_reasoning_fallback=True)
+    settings.write_config_file(force=True)
+    assert Settings.from_sources(path).openai_reasoning_fallback is True
+    monkeypatch.setenv("AIRELAYS_OPENAI_REASONING_FALLBACK", "false")
+    assert Settings.from_sources(path).openai_reasoning_fallback is False
