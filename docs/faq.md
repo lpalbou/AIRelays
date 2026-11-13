@@ -178,6 +178,16 @@ retry at the lowest advertised effort. This may use more reasoning tokens;
 `airelays.reasoning_fallback` reports the requested and effective values.
 The default is strict. See [configuration](configuration.md).
 
+## Does headless mode discover the same OpenAI models as the desktop app?
+
+Yes. Both use the same relay implementation and query each enrolled account's
+upstream catalog. Codex is optional; automatic client-version discovery checks
+common installations outside PATH and uses a bundled version floor when no
+client is installed. With the same accounts and configuration, both modes
+return the same model list and account coverage. Balancing and failover use
+only accounts that advertise the requested model. See
+[model discovery](api.md#get-v1models).
+
 ## Which model is behind a Claude alias?
 
 The Models tab and `airelays models` show the concrete model reported by

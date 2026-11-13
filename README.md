@@ -271,14 +271,14 @@ curl http://127.0.0.1:8080/v1/models \
   -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN'
 ```
 
-OpenAI text request:
+OpenAI text request (replace `<MODEL_ID>` with an id from the model list above):
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
   -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
   -H 'content-type: application/json' \
   -d '{
-    "model": "gpt-5.5",
+    "model": "<MODEL_ID>",
     "messages": [{"role": "user", "content": "Reply with exactly: OPENAI AIRelays OK"}]
   }'
 ```
@@ -378,7 +378,7 @@ Use the relay token as the client credential when you point an OpenAI-compatible
 
 - models starting with `claude:` or `claude-` use the Claude runtime when it is enabled
 - other model ids use the OpenAI runtime when it is enabled
-- OpenAI model discovery queries the upstream catalog using the installed Codex client version, with a bundled version floor for standalone installations. Optional `[providers.openai] extra_models` entries extend the catalog; other unlisted ids are rejected locally when the catalog is available.
+- OpenAI model discovery works the same in headless and desktop mode. It queries the upstream catalog using the installed Codex client version, including common installations outside PATH, with a bundled version floor when Codex is absent or older. Installing Codex is optional. Optional `[providers.openai] extra_models` entries extend the catalog; other unlisted ids are rejected locally when the catalog is available.
 - Claude model discovery queries the installed CLI and exposes both aliases and concrete model ids. The Models tab and `airelays models` show each reported alias resolution, such as `claude:fable` resolving to `claude-fable-5-1`.
 - The Models tab refreshes automatically every five minutes while reachable. Its Refresh button, or `GET /v1/models?refresh=true`, requests fresh provider catalogs. See [model discovery](docs/api.md#get-v1models) for cache and availability limits.
 - With multiple OpenAI accounts, `/v1/models` is the union of their catalogs. Balancing, conversation affinity, and failover stay within each model's supporting account subset. The Models tab shows account coverage and labels entries the upstream hides from its own picker.
@@ -475,7 +475,7 @@ curl http://127.0.0.1:8317/v1/chat/completions \
   -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
   -H 'content-type: application/json' \
   -d '{
-    "model": "gpt-5.5",
+    "model": "<MODEL_ID>",
     "reasoning_effort": "medium",
     "messages": [{"role": "user", "content": "..."}]
   }'
@@ -585,7 +585,7 @@ Important toggles:
 ## For AI agents
 
 If you are an AI agent, you can register and use our agent skill
-[`airelays`](https://github.com/lpalbou/AIRelays/tree/v0.22.1/skills/airelays) to
+[`airelays`](https://github.com/lpalbou/AIRelays/tree/v0.22.2/skills/airelays) to
 become an expert on this package. Install it by copying the `skills/airelays/`
 folder of the version you use into your agent's skills directory (for example
 `~/.claude/skills` for Claude Code; see your agent's documentation for its
@@ -594,7 +594,7 @@ skills directory):
 ```bash
 SKILLS_DIR=~/.claude/skills
 tmp="$(mktemp -d)"
-git clone --depth 1 --branch v0.22.1 https://github.com/lpalbou/AIRelays.git "$tmp" \
+git clone --depth 1 --branch v0.22.2 https://github.com/lpalbou/AIRelays.git "$tmp" \
   && mkdir -p "$SKILLS_DIR" && cp -R "$tmp/skills/airelays" "$SKILLS_DIR/" \
   && echo "installed: $SKILLS_DIR/airelays"
 rm -rf "$tmp"

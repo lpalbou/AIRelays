@@ -97,7 +97,8 @@ airelays doctor
 airelays serve --host 127.0.0.1 --port 8080
 ```
 
-Verify:
+Verify with the model list, then replace `<MODEL_ID>` in the text request
+with an id from that list. Available models depend on your accounts.
 
 ```bash
 curl http://127.0.0.1:8080/v1/models \
@@ -107,7 +108,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
   -H 'authorization: Bearer YOUR_AIRELAYS_TOKEN' \
   -H 'content-type: application/json' \
   -d '{
-    "model": "gpt-5.5",
+    "model": "<MODEL_ID>",
     "messages": [{"role": "user", "content": "Reply with exactly: OPENAI AIRelays OK"}]
   }'
 ```
@@ -183,7 +184,8 @@ Start AIRelays with the Claude runtime enabled:
 airelays serve --host 127.0.0.1 --port 8080
 ```
 
-Verify:
+Verify with the model list, then replace `<MODEL_ID>` in the text request
+with an id from that list. Available models depend on your accounts.
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \

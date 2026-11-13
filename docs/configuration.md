@@ -287,8 +287,14 @@ airelays serve --bearer-token-file /path/to/relay-token --port 8080
 ## Provider Notes
 
 `[upstream] client_version = "auto"` discovers the installed Codex CLI's
-version for model-catalog requests, with a tested minimum of `0.153.4` for
-standalone installations. The local version probe is bounded to three
+version for model-catalog requests, with a tested minimum of `0.167.2` for
+standalone installations. Headless and desktop servers use the same discovery;
+Codex is optional. Discovery checks PATH, common user and system install
+locations, NVM installations, and the Codex desktop app's native client.
+NVM's sibling Node executable is available to the version probe even when
+the service or desktop PATH omits it. Catalogs are fetched separately with
+each AIRelays account's credentials; another application's cached catalog
+is never used. The local version probe is bounded to three
 seconds and cached for five minutes. Updating Codex allows discovery to
 follow newer version-gated catalogs without adding model names to AIRelays.
 The former shipped value `0.124.0` is treated as `auto`, including existing

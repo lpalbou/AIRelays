@@ -63,6 +63,11 @@ language is remembered.
 
 ### Models, Traffic, Settings
 
+Model discovery uses the same relay implementation as headless mode. Codex
+is optional, and common installations outside PATH are discovered automatically.
+With multiple accounts, the list combines their catalogs and routing uses
+each model's supporting accounts. See [model discovery](../docs/api.md#get-v1models).
+
 - **Models** shows one table per provider: Model (click or Enter copies the
   id), Accounts (coverage bar), Reasoning (the default mode highlighted),
   Structured output, **Cost / 1M** and Notes. Cost is the provider's

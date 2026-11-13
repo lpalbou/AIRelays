@@ -98,6 +98,13 @@ reload both provider catalogs. OpenAI discovery uses `client_version =
 "auto"` by default; an explicit older version pin can select an older
 catalog. Update the installed Codex CLI to follow newer catalogs.
 
+Headless services and the desktop app use the same discovery. Codex is
+optional: AIRelays uses a bundled client-version floor when no client is
+installed. Common installations outside PATH, including NVM, are discovered
+automatically. After updating AIRelays or Codex, restart the relay and refresh
+the list. With multiple accounts, `airelays.account_availability` shows how
+many account catalogs advertise each model; requests use that supporting subset.
+
 For Claude, update the configured `claude` CLI and inspect the alias's
 `airelays.resolved_model` in `/v1/models`. Concrete ids are also listed.
 If discovery fails, inspect `providers.claude.models_discovery_error` in

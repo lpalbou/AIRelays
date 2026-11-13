@@ -6,7 +6,7 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 
 - [README.md](README.md): overview, install (CLI and desktop), quick start, compatibility layer
 - [docs/getting-started.md](docs/getting-started.md): setup, custom CLI configuration, multi-account sign-in, verification
-- [docs/configuration.md](docs/configuration.md): config file shape, listener and network scope, environment overrides, opt-in reasoning fallback, and traffic-log retention
+- [docs/configuration.md](docs/configuration.md): config file shape, listener and network scope, environment overrides, headless/desktop model discovery, opt-in reasoning fallback, and traffic-log retention
 - [docs/security.md](docs/security.md): relay auth, who can connect (`network_scope`) and internet setup, open local relay mode, Claude guardrails, desktop update integrity
 - [docs/capabilities.md](docs/capabilities.md): what works on GPT models and on Claude models, side by side
 - [docs/api.md](docs/api.md): routes, compatibility adaptations, model metadata and reference pricing, errors, provider limits
@@ -80,6 +80,7 @@ AIRelays is a local OpenAI-compatible HTTP server with provider-scoped runtimes.
 - `response_format` structured outputs work on chat completions for both runtimes (Claude: `json_schema` enforced natively by the CLI's `--json-schema`, `json_object` checked to be one JSON object; OpenAI: `json_schema` and native `json_object`); supported types per model are published under `airelays.structured_output`
 - failed upstream OpenAI calls retry automatically with exponential backoff (default 3 retries, 5s/20s/60s; configurable, `0` disables) before returning an OpenAI-shaped error with the real HTTP status
 - `airelays doctor` runs local setup checks plus live OpenAI `/models` and optional `/responses` probes
+- Headless and desktop servers share OpenAI model discovery, including common Codex installations outside PATH. Codex is optional; the bundled catalog-version floor is `0.167.2`. Each account is queried separately; `/v1/models` combines their catalogs and routing respects per-model account coverage.
 
 - OpenAI reasoning fallback is opt-in (`[providers.openai] reasoning_fallback = true`): only an explicit `reasoning_effort_not_allowed` rejection of `none` permits one same-account retry at its lowest advertised effort, before output. It may use more reasoning tokens; response metadata `airelays.reasoning_fallback` reports requested/effective effort. Strict behavior is the default. See docs/configuration.md.
 

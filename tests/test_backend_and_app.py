@@ -3503,10 +3503,20 @@ async def test_backend_reset_credit_calls_use_codex_contract(tmp_path) -> None:
     assert seen[2]["body"] == {"redeem_request_id": "redeem-key-2", "credit_id": "RateLimitResetCredit_d646"}
 
 
-def test_reset_credits_route_lists_per_account_with_upstream_facts(tmp_path) -> None:
+def test_reset_credits_route_lists_per_account_with_upstream_facts(tmp_path, monkeypatch) -> None:
     """One entry per account: the held credits with their expiry, and the
     usage report's applicable count (held but not applicable → not
     redeemable now). An unreadable account carries its error, not a 503."""
+    from datetime import datetime, timezone
+    from functools import partial
+
+    from airelay.transforms import normalize_reset_credits_payload
+
+    # Keep the captured credit unexpired regardless of the test run date.
+    monkeypatch.setattr(
+        "airelay.app.normalize_reset_credits_payload",
+        partial(normalize_reset_credits_payload, now=datetime(2026, 10, 18, tzinfo=timezone.utc)),
+    )
     settings = make_settings(tmp_path)
     app = create_app(settings)
     calls: dict[str, object] = {}

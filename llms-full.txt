@@ -6,7 +6,7 @@
 
 - README.md: overview, install (CLI and desktop), quick start, compatibility layer
 - docs/getting-started.md: setup, custom CLI configuration, multi-account sign-in, verification
-- docs/configuration.md: config file shape, listener and network scope, environment overrides
+- docs/configuration.md: config file shape, listener and network scope, environment overrides, headless/desktop model discovery
 - docs/security.md: relay auth, who can connect (`network_scope`) and internet setup, open local relay mode, Claude guardrails
 - docs/capabilities.md: what works on GPT models and on Claude models, side by side
 - docs/api.md: routes, compatibility adaptations, model metadata and reference pricing, errors, provider limits
@@ -320,6 +320,26 @@ Refusals use OpenAI's error object with type `permission_error` and are logged a
 
 Headless internet setup: `airelays init --host 0.0.0.0 --network-scope any` (it writes host, port and scope when it creates the config and stops on an existing one unless `--force` rewrites it), `airelays login --device`, `airelays serve`. Then forward the relay's TCP port (CLI `8080`, desktop `8317`) on the router to this machine, allow it in the host firewall, and test from outside the network (NAT loopback is needed to reach the public address from inside). Put the relay behind a TLS reverse proxy or a VPN: it speaks plain HTTP. A reverse proxy on the same machine appears as `127.0.0.1` unless `trust_x_forwarded_for = true`, which applies the scope, rate limits and blocks to the first `X-Forwarded-For` address (then the proxy needs `network_scope = "any"`); the Claude runtime refuses `trust_x_forwarded_for`.
 
+## Model Discovery (from docs/configuration.md and docs/getting-started.md)
+
+Choose model ids from `GET /v1/models` before sending a text request; available models depend on your accounts.
+
+`[upstream] client_version = "auto"` discovers the installed Codex CLI's
+version for model-catalog requests, with a tested minimum of `0.167.2` for
+standalone installations. Headless and desktop servers use the same discovery;
+Codex is optional. Discovery checks PATH, common user and system install
+locations, NVM installations, and the Codex desktop app's native client.
+NVM's sibling Node executable is available to the version probe even when
+the service or desktop PATH omits it. Catalogs are fetched separately with
+each AIRelays account's credentials; another application's cached catalog
+is never used. The local version probe is bounded to three
+seconds and cached for five minutes. Updating Codex allows discovery to
+follow newer version-gated catalogs without adding model names to AIRelays.
+The former shipped value `0.124.0` is treated as `auto`, including existing
+desktop configuration files. Other explicit version pins are honored and
+can select an older catalog.
+
+
 ## Multiple OpenAI Accounts
 
 `/v1/models` returns the union of enrolled accounts' catalogs. Balancing,
@@ -334,7 +354,7 @@ One person can enroll several of their own OpenAI subscriptions; `airelays login
 
 ## Routes
 
-- `GET /v1/models` (and `GET /v1/models/{model}`) — models from all enabled providers, with an `airelays` extension block per record (provider, `reasoning`, `structured_output`, `resolved_model`, `account_availability`, and `pricing`: the provider's published API list price in USD per 1M tokens with `input_per_million`, `cached_input_per_million`, `output_per_million`, `as_of`, `source`, `matched_family`, `basis`, `cost_tier`, or `null` when unpublished; exact ids and dated snapshots match, `claude:*` aliases are priced through `resolved_model`, no sibling price is inferred; not what a subscription request costs). OpenAI queries its authenticated upstream catalog using the installed Codex version (`client_version = "auto"`, tested floor `0.153.4`; the former `0.124.0` default also uses automatic mode). Claude queries its CLI initialization catalog without submitting generation prompts and exposes both aliases and concrete model ids. Configured overrides extend discovery; `extra_models` defaults to empty. `airelays.discovery_source` distinguishes provider catalogs from configured overrides, and `airelays.resolved_model` shows the concrete Claude model behind an alias. `GET /v1/models?refresh=true` bypasses provider caches, including all OpenAI account catalogs; the desktop Refresh button uses it, and the Models tab reloads every five minutes while reachable. Failed Claude discovery retains configured ids and the last successful catalog, with its error in relay status. Catalog listing does not guarantee a successful generation under current account limits.
+- `GET /v1/models` (and `GET /v1/models/{model}`) — models from all enabled providers, with an `airelays` extension block per record (provider, `reasoning`, `structured_output`, `resolved_model`, `account_availability`, and `pricing`: the provider's published API list price in USD per 1M tokens with `input_per_million`, `cached_input_per_million`, `output_per_million`, `as_of`, `source`, `matched_family`, `basis`, `cost_tier`, or `null` when unpublished; exact ids and dated snapshots match, `claude:*` aliases are priced through `resolved_model`, no sibling price is inferred; not what a subscription request costs). OpenAI queries its authenticated upstream catalog using the installed Codex version (`client_version = "auto"`, tested floor `0.167.2`; the former `0.124.0` default also uses automatic mode). Claude queries its CLI initialization catalog without submitting generation prompts and exposes both aliases and concrete model ids. Configured overrides extend discovery; `extra_models` defaults to empty. `airelays.discovery_source` distinguishes provider catalogs from configured overrides, and `airelays.resolved_model` shows the concrete Claude model behind an alias. `GET /v1/models?refresh=true` bypasses provider caches, including all OpenAI account catalogs; the desktop Refresh button uses it, and the Models tab reloads every five minutes while reachable. Failed Claude discovery retains configured ids and the last successful catalog, with its error in relay status. Catalog listing does not guarantee a successful generation under current account limits.
 - `POST /v1/responses`, `POST /v1/chat/completions`, `POST /v1/completions` — text generation on both runtimes (see the capability matrix above)
 - `POST /v1/images/generations`, `POST /v1/images/edits` — image generation and edits on the OpenAI runtime (`gpt-image-2`, listed in `/v1/models`); image variations stay `501`
 - `GET /v1/subscription/status` (alias `GET /v1/account/rate_limits`) — normalized usage; `?provider=claude`, `?account=`, `?all_accounts=true`, `?raw=true`

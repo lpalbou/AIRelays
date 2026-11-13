@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.22.2
+
+### Fixed
+
+- OpenAI model discovery finds common Codex installations outside PATH,
+  including NVM and the Codex desktop app's native client, in both headless
+  and desktop mode. NVM clients can report their version even when Node is
+  absent from the server's inherited PATH.
+- Standalone installations use a Codex catalog-version floor of `0.167.2`,
+  making newer version-gated models discoverable without installing Codex.
+  Discovery still queries each enrolled account separately; model coverage,
+  balancing, and failover respect each account's catalog.
+
 ## 0.22.1
 
 ### Fixed

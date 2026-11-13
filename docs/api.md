@@ -218,7 +218,7 @@ adaptation records when the request shape itself is repaired:
 
 Returns an OpenAI-style models list built from the enabled provider runtimes.
 
-- OpenAI models come from the authenticated ChatGPT/Codex upstream catalog. The default client version setting, `auto`, follows the installed `codex --version`, with a tested version floor when the CLI is missing or older. Model names are not hard-coded into automatic discovery.
+- OpenAI models come from the authenticated ChatGPT/Codex upstream catalog. Headless and desktop servers share discovery. The default client version setting, `auto`, follows the installed `codex --version`, including common installations outside PATH, with a tested version floor when the CLI is missing or older. Codex is optional; model names are not hard-coded into automatic discovery. See [provider configuration](configuration.md#provider-notes) for discovery locations and explicit version pins.
 - Claude models come from the installed CLI's initialization catalog, including its alias resolutions and per-model reasoning modes. Discovery sends no generation prompt. Both `claude:*` aliases and discovered concrete `claude-*` ids are accepted. No Claude models are listed until an AIRelays Claude account is connected.
 - models starting with `claude:` or `claude-` route to the Claude runtime when it is enabled
 - other model ids route to the OpenAI runtime when it is enabled

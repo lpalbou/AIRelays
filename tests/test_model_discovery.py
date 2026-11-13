@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +17,7 @@ from airelay.providers import ClaudeCliRuntime, ProviderError, ProviderRegistry
 
 discover_claude_models = ClaudeCliRuntime._discover_models
 control_request = ClaudeCliRuntime._control_request
+installed_codex = model_discovery._installed_codex
 
 
 def settings(tmp_path, **kwargs):
@@ -76,12 +79,60 @@ def test_catalog_version_migrates_old_default_and_follows_cli(configured, monkey
     def run(command, **kwargs):
         calls.append(command)
         assert kwargs["timeout"] == 3
-        return SimpleNamespace(stdout="codex-cli 0.160.1\n")
+        return SimpleNamespace(stdout="codex-cli 0.170.1\n")
 
     monkeypatch.setattr(model_discovery.subprocess, "run", run)
-    assert model_discovery.codex_catalog_version(configured) == "0.160.1"
-    assert model_discovery.codex_catalog_version(configured) == "0.160.1"
+    assert model_discovery.codex_catalog_version(configured) == "0.170.1"
+    assert model_discovery.codex_catalog_version(configured) == "0.170.1"
     assert calls == [["/bin/codex", "--version"]]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX desktop/NVM layout")
+def test_desktop_finds_nvm_codex_without_interactive_shell(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(model_discovery.shutil, "which", lambda name: None)
+    monkeypatch.setattr(model_discovery.os, "access", lambda path, mode: path.is_relative_to(tmp_path))
+    # Numeric version order; NVM's newest Node need not have Codex installed.
+    for version in ("v9.0.0", "v24.14.0", "v25.0.0"):
+        directory = tmp_path / ".nvm/versions/node" / version / "bin"
+        directory.mkdir(parents=True)
+        if version != "v25.0.0":
+            executable = directory / "codex"
+            executable.touch()
+            executable.chmod(0o755)
+    executable = installed_codex()
+    assert executable == str(tmp_path / ".nvm/versions/node/v24.14.0/bin/codex")
+    monkeypatch.setattr(model_discovery, "_installed_codex", lambda: executable)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    def run(command, **kwargs):
+        assert command == [executable, "--version"]
+        assert kwargs["env"]["PATH"] == f"{Path(executable).parent}:/usr/bin:/bin"
+        return SimpleNamespace(stdout="codex-cli 0.170.1\n")
+
+    monkeypatch.setattr(model_discovery.subprocess, "run", run)
+    assert model_discovery.codex_catalog_version("auto") == "0.170.1"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX native client layout")
+def test_desktop_finds_codex_app_client(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(model_discovery.shutil, "which", lambda name: None)
+    monkeypatch.setattr(model_discovery.os, "access", lambda path, mode: path.is_relative_to(tmp_path))
+    executable = tmp_path / ".codex/packages/app-server-daemon/releases/0.170.1-aarch64-apple-darwin/bin/codex"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    executable.chmod(0o755)
+    assert installed_codex() == str(executable)
+    monkeypatch.setattr(model_discovery.shutil, "which", lambda name: "/preferred/codex")
+    assert installed_codex() == "/preferred/codex"
+
+
+def test_desktop_uses_floor_when_no_client_found(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(model_discovery.shutil, "which", lambda name: None)
+    monkeypatch.setattr(model_discovery.os, "access", lambda *args: False)
+    assert installed_codex() is None
 
 
 def test_catalog_version_explicit_pin(monkeypatch):

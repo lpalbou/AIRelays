@@ -4,7 +4,7 @@ description: Run and use AIRelays, a local OpenAI-compatible HTTP relay backed b
 license: MIT
 compatibility: Python 3.11+ on macOS, Linux or Windows. Needs the user's own ChatGPT and/or Claude subscription sign-in (interactive, done by the user), and the `claude` CLI for Claude models.
 metadata:
-  package-version: "0.22.1"
+  package-version: "0.22.2"
 ---
 
 # AIRelays
@@ -36,7 +36,7 @@ airelays serve --help | grep -q -- --network-scope \
 ```
 
 On macOS and Linux the one-line installer also works:
-`curl -fsSL https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/scripts/install-headless.sh | bash`.
+`curl -fsSL https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.2/scripts/install-headless.sh | bash`.
 
 Compare the printed version with `metadata.package-version`; when they differ,
 the docs of the installed version win. A running relay reports its version
@@ -173,6 +173,16 @@ Each `/v1/models` entry has an `airelays` block: `provider`,
 Send `reasoning_effort` only with a listed mode: Claude models reject other
 values with 422, and OpenAI models forward them to the upstream unchanged.
 
+Headless and desktop servers share OpenAI discovery. Codex is optional:
+`[upstream] client_version = "auto"` checks PATH and common installations
+(including NVM and the Codex desktop client), then uses a bundled floor
+when no client is installed or the installed version is older. Explicit
+version pins can select an older catalog. Use `GET /v1/models?refresh=true`
+to refresh every account's catalog. `airelays.account_availability` reports
+`supported` and `total` counts; balancing and failover stay within the
+requested model's supporting accounts. Never substitute a personal Codex
+cached catalog for the relay's own account catalogs.
+
 ### Check remaining quota before a large job
 
 ```bash
@@ -229,13 +239,13 @@ user before choosing `any`.
 | 422 naming a parameter | the relay cannot honor it | remove it; see the capability limits above |
 | 404 `model_not_found` | id not in the catalog | pick an id from `/v1/models` |
 
-Everything else: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/docs/troubleshooting.md>.
+Everything else: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.2/docs/troubleshooting.md>.
 
 ## Go deeper
 
-- Getting started: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/docs/getting-started.md>
-- API notes (routes, fields, errors): <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/docs/api.md>
-- GPT vs Claude capability matrix: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/docs/capabilities.md>
-- Network scope, auth, internet setup: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/docs/security.md>
-- Configuration keys and environment variables: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/docs/configuration.md>
-- Whole doc set in one file: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.1/llms-full.txt>
+- Getting started: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.2/docs/getting-started.md>
+- API notes (routes, fields, errors): <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.2/docs/api.md>
+- GPT vs Claude capability matrix: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.2/docs/capabilities.md>
+- Network scope, auth, internet setup: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.2/docs/security.md>
+- Configuration keys and environment variables: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.2/docs/configuration.md>
+- Whole doc set in one file: <https://raw.githubusercontent.com/lpalbou/AIRelays/v0.22.2/llms-full.txt>

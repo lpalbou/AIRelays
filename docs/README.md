@@ -8,7 +8,7 @@ This is the index of the AIRelays documentation. Start with the
 - [Desktop App](../desktop/README.md)
   - the cross-platform tray app: Connect card and **Try it** examples, who can connect, Models table, Traffic detail, tray menu, install, updates, and supervision
 - [Configuration](configuration.md)
-  - config file shape, listener and network scope, environment overrides, provider toggles, and traffic-log retention
+  - config file shape, listener and network scope, environment overrides, model discovery in headless and desktop mode, provider toggles, and traffic-log retention
 - [Security](security.md)
   - relay auth, who can connect (`network_scope`) and internet setup, open local relay mode, Claude guardrails, and desktop update integrity
 - [Capabilities](capabilities.md)
