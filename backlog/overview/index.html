@@ -19,7 +19,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -993,23 +993,25 @@
 <p>AIRelays is a local OpenAI-shaped relay with provider-scoped runtimes. The provider-runtime expansion is complete and released: the ChatGPT subscription path is the primary runtime (with balanced multi-account routing) and the Claude runtime is a first-class local adapter as of 0.4.0. Open work is the cross-platform runtime track (ADR 0008) plus proposed hardening follow-ups.</p>
 <h2 id="counts">Counts<a class="headerlink" href="#counts" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Planned: 3</li>
+<li>Planned: 4</li>
 <li>Proposed: 5</li>
 <li>Completed: 14</li>
 <li>Deprecated: 1</li>
 <li>Recurrent: 0</li>
 </ul>
 <h2 id="priority">Priority<a class="headerlink" href="#priority" title="Permanent link">&para;</a></h2>
-<p>Planned track <a href="../planned/platform/">cross-platform runtime</a> (ADR 0008): 0022 relay lifecycle and single-instance tray (P1), then 0023 headless service install and 0024 signed installers (P2). Proposed items 0014 (wall-clock bench expiry) and 0015 (Claude token shape validation) are low-urgency hardening. Proposed item 0018 (metered embeddings capability slice) is a deliberately uncertain product-boundary idea gated on a new ADR amending ADR 0002 — do not implement without promotion.</p>
+<p>Planned item 0032 (P1, providers): thinking off and reasoning-token reporting on Claude models — today a client cannot turn Claude reasoning off and cannot see what it pays for. Planned track <a href="../planned/platform/">cross-platform runtime</a> (ADR 0008): 0022 relay lifecycle and single-instance tray (P1), then 0023 headless service install and 0024 signed installers (P2). Proposed items 0014 (wall-clock bench expiry) and 0015 (Claude token shape validation) are low-urgency hardening. Proposed item 0018 (metered embeddings capability slice) is a deliberately uncertain product-boundary idea gated on a new ADR amending ADR 0002 — do not implement without promotion.</p>
 <h2 id="planned-tracks">Planned Tracks<a class="headerlink" href="#planned-tracks" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../planned/platform/">Cross-platform runtime</a></li>
+<li><a href="../planned/providers/">Provider runtimes</a></li>
 </ul>
 <h2 id="planned-items">Planned Items<a class="headerlink" href="#planned-items" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../planned/platform/0022_relay_lifecycle_and_single_instance_tray/">0022_relay_lifecycle_and_single_instance_tray.md</a></li>
 <li><a href="../planned/platform/0023_headless_service_install/">0023_headless_service_install.md</a></li>
 <li><a href="../planned/platform/0024_signed_installers/">0024_signed_installers.md</a></li>
+<li><a href="../planned/providers/0032_claude_thinking_off_and_reasoning_token_reporting/">0032_claude_thinking_off_and_reasoning_token_reporting.md</a> — <code>reasoning_effort: "none"</code> on Claude models (thinking off through the CLI) and <code>reasoning_tokens</code> in usage; measured 2026-10-26: Claude Haiku 5.5 spends 3–9k hidden tokens per call and no tested switch disables it yet.</li>
 </ul>
 <h2 id="proposed-work">Proposed Work<a class="headerlink" href="#proposed-work" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1266,7 +1268,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

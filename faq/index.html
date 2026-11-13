@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -714,6 +714,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#does-headless-mode-discover-the-same-openai-models-as-the-desktop-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does headless mode discover the same OpenAI models as the desktop app?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#which-model-is-behind-a-claude-alias" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1361,6 +1372,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#does-headless-mode-discover-the-same-openai-models-as-the-desktop-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does headless mode discover the same OpenAI models as the desktop app?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#which-model-is-behind-a-claude-alias" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1588,6 +1610,14 @@ a typed <code>reasoning_effort_not_allowed</code> rejection permits one same-acc
 retry at the lowest advertised effort. This may use more reasoning tokens;
 <code>airelays.reasoning_fallback</code> reports the requested and effective values.
 The default is strict. See <a href="../configuration/">configuration</a>.</p>
+<h2 id="does-headless-mode-discover-the-same-openai-models-as-the-desktop-app">Does headless mode discover the same OpenAI models as the desktop app?<a class="headerlink" href="#does-headless-mode-discover-the-same-openai-models-as-the-desktop-app" title="Permanent link">&para;</a></h2>
+<p>Yes. Both use the same relay implementation and query each enrolled account's
+upstream catalog. Codex is optional; automatic client-version discovery checks
+common installations outside PATH and uses a bundled version floor when no
+client is installed. With the same accounts and configuration, both modes
+return the same model list and account coverage. Balancing and failover use
+only accounts that advertise the requested model. See
+<a href="../api/#get-v1models">model discovery</a>.</p>
 <h2 id="which-model-is-behind-a-claude-alias">Which model is behind a Claude alias?<a class="headerlink" href="#which-model-is-behind-a-claude-alias" title="Permanent link">&para;</a></h2>
 <p>The Models tab and <code>airelays models</code> show the concrete model reported by
 the installed Claude CLI. For example, a CLI can resolve <code>claude:fable</code>
@@ -1675,7 +1705,7 @@ temporary IP block. See
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

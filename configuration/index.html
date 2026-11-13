@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -1376,8 +1376,14 @@ address ranges, the 403 codes, the internet setup steps and the
 </code></pre></div>
 <h2 id="provider-notes">Provider Notes<a class="headerlink" href="#provider-notes" title="Permanent link">&para;</a></h2>
 <p><code>[upstream] client_version = "auto"</code> discovers the installed Codex CLI's
-version for model-catalog requests, with a tested minimum of <code>0.153.4</code> for
-standalone installations. The local version probe is bounded to three
+version for model-catalog requests, with a tested minimum of <code>0.167.2</code> for
+standalone installations. Headless and desktop servers use the same discovery;
+Codex is optional. Discovery checks PATH, common user and system install
+locations, NVM installations, and the Codex desktop app's native client.
+NVM's sibling Node executable is available to the version probe even when
+the service or desktop PATH omits it. Catalogs are fetched separately with
+each AIRelays account's credentials; another application's cached catalog
+is never used. The local version probe is bounded to three
 seconds and cached for five minutes. Updating Codex allows discovery to
 follow newer version-gated catalogs without adding model names to AIRelays.
 The former shipped value <code>0.124.0</code> is treated as <code>auto</code>, including existing
@@ -1512,7 +1518,7 @@ can select an older catalog.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

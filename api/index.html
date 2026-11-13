@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -1661,7 +1661,7 @@ adaptation records when the request shape itself is repaired:</p>
 <h2 id="get-v1models"><code>GET /v1/models</code><a class="headerlink" href="#get-v1models" title="Permanent link">&para;</a></h2>
 <p>Returns an OpenAI-style models list built from the enabled provider runtimes.</p>
 <ul>
-<li>OpenAI models come from the authenticated ChatGPT/Codex upstream catalog. The default client version setting, <code>auto</code>, follows the installed <code>codex --version</code>, with a tested version floor when the CLI is missing or older. Model names are not hard-coded into automatic discovery.</li>
+<li>OpenAI models come from the authenticated ChatGPT/Codex upstream catalog. Headless and desktop servers share discovery. The default client version setting, <code>auto</code>, follows the installed <code>codex --version</code>, including common installations outside PATH, with a tested version floor when the CLI is missing or older. Codex is optional; model names are not hard-coded into automatic discovery. See <a href="../configuration/#provider-notes">provider configuration</a> for discovery locations and explicit version pins.</li>
 <li>Claude models come from the installed CLI's initialization catalog, including its alias resolutions and per-model reasoning modes. Discovery sends no generation prompt. Both <code>claude:*</code> aliases and discovered concrete <code>claude-*</code> ids are accepted. No Claude models are listed until an AIRelays Claude account is connected.</li>
 <li>models starting with <code>claude:</code> or <code>claude-</code> route to the Claude runtime when it is enabled</li>
 <li>other model ids route to the OpenAI runtime when it is enabled</li>
@@ -2335,7 +2335,7 @@ carries <code>x-should-retry: false</code>, so OpenAI SDKs do not retry it:</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

@@ -1,0 +1,1248 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="AIRelays is an independent local relay that exposes an OpenAI-compatible API over a subscription-backed upstream login.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AIRelays/backlog/planned/providers/0032_claude_thinking_off_and_reasoning_token_reporting/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Planned: thinking off (reasoning_effort: "none") on Claude models, and honest reasoning-token reporting - AIRelays</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#planned-thinking-off-reasoning_effort-none-on-claude-models-and-honest-reasoning-token-reporting" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../.." title="AIRelays" class="md-header__button md-logo" aria-label="AIRelays" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AIRelays
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Planned: thinking off (reasoning_effort: "none") on Claude models, and honest reasoning-token reporting
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/AIRelays" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/AIRelays
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../.." title="AIRelays" class="md-nav__button md-logo" aria-label="AIRelays" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AIRelays
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/AIRelays" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/AIRelays
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../docs-index/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docs Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Capabilities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../subscription-status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subscription Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../disclaimer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Disclaimer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" >
+        
+          
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_13">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Design
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADR Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../adr/0001-no-silent-degradation-truncation-or-budget-invention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    No Silent Degradation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../adr/0002-chatgpt-subscription-backend-compatibility-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subscription Compatibility Boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../adr/0003-local-config-and-default-deny-relay-security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Config And Relay Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../adr/0004-provider-runtime-boundary-and-experimental-local-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provider Runtime Boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../adr/0005-bounded-traffic-log-retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bounded Traffic-Log Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../adr/0006-isolated-claude-subscription-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Isolated Claude Subscription Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../adr/0007-relay-owned-claude-accounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Relay-Owned Claude Accounts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../adr/0008-uniform-cross-platform-runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uniform Cross-Platform Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-code-reality-read-2026-10-26-airelays-0220-at-6728f6f" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current code reality (read 2026-10-26, AIRelays 0.22.0 at 6728f6f)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-measured-2026-10-26-claude-code-cli-21310-model-claude-haiku-5-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence (measured 2026-10-26, Claude Code CLI 2.1.310, model claude-haiku-5-5)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plan
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceptance-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance criteria
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="planned-thinking-off-reasoning_effort-none-on-claude-models-and-honest-reasoning-token-reporting">Planned: thinking off (<code>reasoning_effort: "none"</code>) on Claude models, and honest reasoning-token reporting<a class="headerlink" href="#planned-thinking-off-reasoning_effort-none-on-claude-models-and-honest-reasoning-token-reporting" title="Permanent link">&para;</a></h1>
+<h2 id="metadata">Metadata<a class="headerlink" href="#metadata" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Created: 2026-10-26</li>
+<li>Status: Planned</li>
+<li>Area: providers (Claude runtime, <code>src/airelay/providers.py</code>)</li>
+<li>Reported by: AbstractCore knowledge-graph extraction benchmark (2026-10-25/26), which could not run Claude
+  Haiku 5.5 "thinking off" through AIRelays and found its results silently included hidden reasoning.</li>
+</ul>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>OpenAI-compatible clients turn reasoning off with <code>reasoning_effort: "none"</code>. AIRelays accepts it on OpenAI models
+(<code>OPENAI_REASONING_MODES</code> starts with <code>none</code>, and the Codex upstream runs at <code>none</code> by default). On Claude models it is
+rejected with 422, so a client has no way to ask for a Claude answer without thinking. AbstractCore's unified
+<code>thinking=False</code> now sends exactly <code>reasoning_effort: "none"</code> (abstractcore commit f34a84a1), so every
+AbstractCore-driven "thinking off" request to a Claude model through AIRelays either fails or, if the client omits the
+field, runs with the CLI's adaptive thinking at its default effort.</p>
+<p>The cost is real and invisible today:</p>
+<ul>
+<li>Claude Haiku 5.5 spends 3–9k hidden output tokens per call even for a short prose answer; visible output comes out at
+  0.3–1.2 characters per billed token, against about 4.5 for GPT models on the same relay.</li>
+<li>Long structured outputs run out of budget: in the benchmark, 4 of 9 Claude calls with <code>max_tokens</code> 12000 ended
+  <code>finish_reason: "length"</code> with truncated or empty content, while GPT models finished the same task in 1.7–4k tokens.</li>
+<li><code>usage</code> reports these tokens as plain <code>completion_tokens</code>; <code>completion_tokens_details.reasoning_tokens</code> is absent, so
+  clients cannot tell reasoning from answer tokens.</li>
+</ul>
+<p>Thinking off is a real capability of the model: the Anthropic API documents disabling thinking for Haiku 5.5 at
+effort <code>high</code> or below. The open question is how to reach it through the <code>claude</code> CLI on a subscription, which is the
+only upstream AIRelays uses for Claude (ADR 0004; <code>strip_api_key_env = true</code>).</p>
+<h2 id="current-code-reality-read-2026-10-26-airelays-0220-at-6728f6f">Current code reality (read 2026-10-26, AIRelays 0.22.0 at 6728f6f)<a class="headerlink" href="#current-code-reality-read-2026-10-26-airelays-0220-at-6728f6f" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>src/airelay/providers.py</code>: <code>CLAUDE_REASONING_MODES = ("low", "medium", "high", "xhigh", "max")</code>; the comment above it
+  states the CLI's <code>--effort</code> flag accepts exactly these and silently falls back on unknown values.</li>
+<li><code>_claude_effort()</code> validates <code>reasoning_effort</code> against the model's modes and raises 422
+  <code>unsupported_for_provider</code> for anything else, including <code>"none"</code> (good: no silent degradation, but no way to say off).</li>
+<li><code>ProviderModel.reasoning_default</code> is documented as "the claude CLI applies its own adaptive default, which is
+  model-controlled (reported as null)".</li>
+<li><code>ClaudeRuntime._build_command()</code> runs <code>claude -p --model &lt;m&gt; --tools "" --setting-sources "" --strict-mcp-config
+  --disable-slash-commands --no-session-persistence [--system-prompt …] [--effort &lt;e&gt;] [--json-schema …]
+  --input-format stream-json --output-format stream-json --verbose</code>. <code>--setting-sources ""</code> means no user or project
+  Claude settings are loaded; nothing in the command or in <code>_subprocess_env()</code> touches thinking.</li>
+<li><code>--settings settings.json</code> is passed only for tool requests (<code>_tool_arguments</code>, a <code>PreToolUse</code> guard hook), never to
+  control thinking.</li>
+<li>Usage comes from the streamed message events (backlog 0026); thinking blocks are not counted separately.</li>
+</ul>
+<h2 id="evidence-measured-2026-10-26-claude-code-cli-21310-model-claude-haiku-5-5">Evidence (measured 2026-10-26, Claude Code CLI 2.1.310, model <code>claude-haiku-5-5</code>)<a class="headerlink" href="#evidence-measured-2026-10-26-claude-code-cli-21310-model-claude-haiku-5-5" title="Permanent link">&para;</a></h2>
+<p>Prompt: "Write exactly 250 words of plain prose explaining what Git is." (about 1,550 visible characters, roughly 400
+tokens). Thinking presence read from the <code>--verbose</code> JSON transcript (<code>content</code> block types); the thinking block text is
+redacted (0 characters) in every case.</p>
+<table>
+<thead>
+<tr>
+<th>Route / flags</th>
+<th>Thinking switch</th>
+<th>Thinking block</th>
+<th>Output tokens</th>
+<th>Visible chars</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AIRelays <code>/v1/chat/completions</code></td>
+<td>field omitted</td>
+<td>(not visible)</td>
+<td>4,000, <code>finish_reason</code> length</td>
+<td>0</td>
+</tr>
+<tr>
+<td>AIRelays <code>/v1/chat/completions</code></td>
+<td><code>reasoning_effort: "none"</code></td>
+<td>—</td>
+<td>HTTP 422 (unsupported)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>AIRelays <code>/v1/chat/completions</code></td>
+<td><code>thinking: {"type": "disabled"}</code></td>
+<td>(not visible)</td>
+<td>unchanged vs default (extraction task: 11,662 vs 11,765)</td>
+<td>same</td>
+</tr>
+<tr>
+<td>AIRelays <code>/v1/messages</code></td>
+<td>native <code>thinking</code></td>
+<td>—</td>
+<td>HTTP 404 (route does not exist)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>CLI with the relay's exact flags</td>
+<td>none</td>
+<td>yes</td>
+<td>3,713</td>
+<td>1,538</td>
+</tr>
+<tr>
+<td>CLI with the relay's exact flags</td>
+<td>env <code>CLAUDE_CODE_DISABLE_THINKING=1</code></td>
+<td>yes</td>
+<td>3,483</td>
+<td>1,544</td>
+</tr>
+<tr>
+<td>CLI, user settings loaded</td>
+<td>env <code>MAX_THINKING_TOKENS=0</code></td>
+<td>yes</td>
+<td>5,200</td>
+<td>1,537</td>
+</tr>
+<tr>
+<td>CLI, user settings loaded</td>
+<td>env <code>CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1</code></td>
+<td>yes</td>
+<td>3,759</td>
+<td>1,550</td>
+</tr>
+<tr>
+<td>CLI, user settings loaded</td>
+<td><code>--settings {"alwaysThinkingEnabled": false}</code></td>
+<td>yes</td>
+<td>2,627–3,789</td>
+<td>~1,500</td>
+</tr>
+<tr>
+<td>CLI, user settings loaded</td>
+<td><code>--settings {"thinkingEnabled": false}</code> / <code>{"disableThinking": true}</code></td>
+<td>yes</td>
+<td>3,259 / 3,075</td>
+<td>~1,530</td>
+</tr>
+<tr>
+<td>CLI, user settings loaded</td>
+<td>all of the above + <code>--effort low</code></td>
+<td>yes</td>
+<td>2,800–3,268</td>
+<td>~1,550</td>
+</tr>
+</tbody>
+</table>
+<p>Thinking-related names present in the CLI binary (candidates, not all verified to exist as public switches):
+<code>CLAUDE_CODE_DISABLE_THINKING</code>, <code>CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING</code>, <code>DISABLE_INTERLEAVED_THINKING</code>,
+<code>MAX_THINKING_TOKENS</code>, <code>CLAUDE_CODE_EFFORT_LEVEL</code>, settings keys <code>alwaysThinkingEnabled</code>, <code>thinkingEnabled</code>,
+<code>disableThinking</code>, <code>thinkingBudget</code>, <code>effortLevel</code>.</p>
+<p>Not yet tested with the relay's exact flags (a shell quoting error voided these probes): <code>--effort low|medium</code> alone,
+<code>--settings</code> thinking keys, and all switches combined; other models (<code>sonnet</code>, <code>opus</code>, <code>fable</code>); the stream-json
+<code>initialize</code> control request (the Agent SDK path) with a thinking option such as <code>maxThinkingTokens: 0</code>.</p>
+<h2 id="plan">Plan<a class="headerlink" href="#plan" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Probe matrix (spike, untracked script).</strong> For each Claude model the relay lists × each candidate mechanism
+   (env switches, <code>--settings</code> JSON keys, <code>--effort</code> levels ≤ high, combinations, stream-json <code>initialize</code> control options)
+   run the relay's exact command and record: thinking block present or not (stream-json events), output tokens,
+   visible characters, latency. Success criterion for "off": no thinking block and output tokens within ~1.3× the
+   visible-text token count. Record the CLI version; re-run on CLI upgrades.</li>
+<li><strong>If a mechanism works:</strong> accept <code>reasoning_effort: "none"</code> for the models where it was verified (per-model
+   <code>reasoning_modes</code>, discovered or verified, not a blanket constant), map it in <code>_build_command</code> / <code>_subprocess_env</code>
+   to that mechanism, and advertise <code>none</code> in <code>/v1/models</code>. <code>none</code> must never fall back silently: if the CLI still emits
+   thinking under it (detected from the stream), fail loudly or flag the response (<code>x-airelays-…</code> header and a
+   disclosure), never claim "off".</li>
+<li><strong>If no mechanism works on the subscription path:</strong> keep the 422 but make it actionable (say thinking cannot be
+   disabled through the Claude CLI for this model, suggest <code>low</code>), document it in <code>docs/capabilities.md</code>, and set
+   <code>reasoning_default</code> / <code>/v1/models</code> metadata so clients can see that Claude always reasons here.</li>
+<li><strong>Either way, report reasoning tokens.</strong> Split usage into answer vs reasoning from the stream (thinking block deltas
+   or a per-block token count when available) and return <code>completion_tokens_details.reasoning_tokens</code>, so clients can
+   size <code>max_tokens</code> and see what they pay for. Extends backlog 0026's usage contract.</li>
+<li>Docs: <code>docs/capabilities.md</code> (Claude reasoning: modes, default, off support per model), <code>docs/api.md</code>,
+   CHANGELOG; regenerate <code>llms-full.txt</code>.</li>
+</ol>
+<h2 id="acceptance-criteria">Acceptance criteria<a class="headerlink" href="#acceptance-criteria" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>POST /v1/chat/completions</code> with <code>model: claude-haiku-5-5</code>, <code>reasoning_effort: "none"</code> either returns an answer with
+  no thinking (verified: no thinking block in the CLI stream, <code>reasoning_tokens</code> 0, prose ≥ 3 visible characters per
+  output token) or a 422 that says why, per model, matching <code>/v1/models</code>.</li>
+<li><code>usage.completion_tokens_details.reasoning_tokens</code> is present for Claude responses and non-zero whenever the stream
+  contained thinking.</li>
+<li>A regression test pins the command/env for each <code>reasoning_effort</code> value and fails if <code>none</code> is accepted without the
+  verified mechanism.</li>
+</ul>
+<h2 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Changing the user's global Claude settings (<code>~/.claude/settings.json</code>) or relying on them: the relay deliberately runs
+  with <code>--setting-sources ""</code>.</li>
+<li>Switching Claude to an API-key upstream; that is a separate product decision under ADR 0002/0004.</li>
+</ul>
+<h2 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>pytest -q</code>; the probe matrix re-run live on haiku, sonnet and opus with results recorded in the completion report;
+  an end-to-end check through AbstractCore: <code>create_llm("openai-compatible", model="claude-haiku-5-5", …)</code> with
+  <code>thinking=False</code> returns content with <code>reasoning_tokens</code> 0.</li>
+</ul>
+<h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Backlog 0026 (chat-completions usage contract), 0027 (stream-json runner, tools on Claude), 0011 (Claude runtime).</li>
+<li>ADR 0004 (provider runtime boundary and local adapters).</li>
+<li>AbstractCore: <code>docs/reasoning-control.md</code> precedence rule (commit f34a84a1); benchmark notes in
+  <code>abstractcore/untracked/hy-memory/kg/judge/FINAL.md</code>.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>
